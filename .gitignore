@@ -1,0 +1,33 @@
+# env
+.env
+.env.local
+backend/.env
+
+# deps
+node_modules/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# build
+.next/
+.vercel/
+tsconfig.tsbuildinfo
+dist/
+
+# db
+*.db
+*.sqlite
+
+# test artifacts
+allure-results/
+allure-html/
+reports/
+.pytest_cache/
+.coverage
+
+# IDE
+.DS_Store
+*.swp

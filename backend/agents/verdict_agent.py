@@ -1,0 +1,161 @@
+"""
+Verdict Agent — synthesizes all agent outputs into a final, actionable recommendation.
+Uses Claude Sonnet. Actively checks for contradictions between signals before issuing verdict.
+"""
+import json
+import os
+from dataclasses import dataclass
+from typing import Optional
+
+import anthropic
+
+from agents.price_agent import PriceData
+from agents.analyst_agent import AnalystData
+
+_SONNET = "claude-sonnet-4-6"
+
+_SYSTEM = """You are FinanceCompanion's chief advisor — a confident, data-driven analyst
+who gives working professionals clear, actionable stock guidance.
+
+Rules:
+- Issue exactly one verdict: BUY, HOLD, SELL, or WATCH
+- Always include a specific entry target price and exit target price
+- Cite the single most important reason for your verdict
+- If signals contradict each other (e.g., technical BUY but analyst SELL), address the conflict directly
+- Leveraged ETFs: apply stricter rules — max hold 1-3 days, never recommend holding through earnings
+- Never hedge with "it depends" — commit to a position with clear reasoning
+- Output must be valid JSON matching the schema exactly
+"""
+
+_SCHEMA = """{
+  "verdict": "BUY|HOLD|SELL|WATCH",
+  "entry_target": <float or null>,
+  "exit_target": <float or null>,
+  "reasoning": "<2-3 sentences, specific and confident>",
+  "conflict_flags": "<any contradictions between signals, or empty string>",
+  "is_important_day": <true|false>,
+  "importance_reason": "<why this day is significant, or empty string>"
+}"""
+
+
+@dataclass
+class VerdictResult:
+    verdict: str
+    entry_target: Optional[float]
+    exit_target: Optional[float]
+    reasoning: str
+    conflict_flags: str
+    is_important_day: bool = False
+    importance_reason: str = ""
+
+
+async def generate_verdict(
+    ticker: str,
+    price: PriceData,
+    news: str,
+    events: list[dict],
+    analyst: AnalystData,
+    ripple: str,
+    stock_memory: str,
+    is_leveraged: bool = False,
+    recent_analyses: list[dict] | None = None,
+) -> VerdictResult:
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return VerdictResult(
+            verdict="WATCH", entry_target=None, exit_target=None,
+            reasoning="ANTHROPIC_API_KEY not set — cannot generate verdict.",
+            conflict_flags="",
+        )
+
+    history_block = ""
+    if recent_analyses:
+        lines = ["=== RECENT HISTORY (last 5 trading days) ==="]
+        for a in recent_analyses:
+            flag = " ⭐ IMPORTANT" if a.get("is_important_day") else ""
+            lines.append(
+                f"  {a['date']}:{flag} {a['verdict']}  ${a.get('current_price', 'N/A')}"
+                + (f"  [{a.get('importance_reason', '')}]" if a.get("importance_reason") else "")
+            )
+        history_block = "\n".join(lines)
+
+    direction = "▲" if price.day_change_pct >= 0 else "▼"
+    events_text = "\n".join(
+        f"  • {e['date']} — {e['description']}" for e in events
+    ) or "  • None upcoming"
+
+    prompt = f"""
+Ticker: {ticker} {"[LEVERAGED ETF — apply strict hold rules]" if is_leveraged else ""}
+
+=== PRICE DATA ===
+Current:         ${price.current_price:.2f}  ({direction}{abs(price.day_change_pct):.1f}% today)
+52-Week Range:   ${price.week_52_low:.2f} – ${price.week_52_high:.2f}
+Position:        {price.range_position_pct:.0f}% of 52-week range (0=at low, 100=at high)
+Volume:          {price.volume:,} vs {price.avg_volume:,} avg
+50-Day MA:       ${price.ma_50:.2f}
+200-Day MA:      ${price.ma_200:.2f}
+RSI:             {price.rsi if price.rsi else 'N/A'}
+
+=== ANALYST CONSENSUS ===
+Consensus:       {analyst.consensus} ({analyst.analyst_count} analysts)
+Price Target:    ${analyst.target_mean:.2f} mean  |  low ${analyst.target_low or 0:.2f}  |  high ${analyst.target_high or 0:.2f}
+Upside to Mean:  {analyst.upside_pct:.1f}% vs current
+{f"⚠ {analyst.conflict_notes}" if analyst.conflict_notes else ""}
+
+=== NEWS SUMMARY ===
+{news}
+
+=== UPCOMING EVENTS ===
+{events_text}
+
+=== RIPPLE ANALYSIS ===
+{ripple}
+
+=== STOCK MEMORY (historical context) ===
+{stock_memory or "No prior memory — first analysis."}
+
+{history_block}
+
+{f"=== DATA CONFLICTS ===" + chr(10) + price.conflict_notes if price.conflict_notes else ""}
+
+Based on all the above, issue a verdict. Flag is_important_day=true if today involves a verdict
+reversal from prior history, major catalyst, earnings within 5 days, or index event.
+If signals are weak or contradictory and you are not confident, issue WATCH — it is better
+to give no advice than wrong advice. Output JSON only, matching this schema:
+{_SCHEMA}
+"""
+
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+    resp = await client.messages.create(
+        model=_SONNET, max_tokens=500,
+        system=_SYSTEM,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    raw = resp.content[0].text.strip()
+
+    # Strip markdown code fences if present
+    if raw.startswith("```"):
+        raw = raw.split("```")[1]
+        if raw.startswith("json"):
+            raw = raw[4:]
+    raw = raw.strip()
+
+    try:
+        data = json.loads(raw)
+        return VerdictResult(
+            verdict=data.get("verdict", "WATCH"),
+            entry_target=data.get("entry_target"),
+            exit_target=data.get("exit_target"),
+            reasoning=data.get("reasoning", ""),
+            conflict_flags=data.get("conflict_flags", ""),
+            is_important_day=bool(data.get("is_important_day", False)),
+            importance_reason=data.get("importance_reason", ""),
+        )
+    except Exception:
+        return VerdictResult(
+            verdict="WATCH",
+            entry_target=None,
+            exit_target=None,
+            reasoning=raw[:500],
+            conflict_flags="JSON parse error — raw reasoning stored.",
+        )
