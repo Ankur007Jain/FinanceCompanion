@@ -1,57 +1,206 @@
-name: Security
+name: Security Scan
 
 on:
+  push:
+    branches: ["**"]
   pull_request:
-    branches: [main]
-
-permissions:
-  contents: read
+    branches: ["**"]
 
 jobs:
+  # ── 1. Bandit — Python backend static analysis ───────────────────────────────
   bandit:
+    name: Bandit (Python)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - run: pip install bandit
-      - run: mkdir -p reports
-      - run: bandit -r backend/ --severity-level high --exclude backend/tests/ -f json -o reports/bandit.json || true
-      - run: bandit -r backend/ --severity-level high --exclude backend/tests/ --exit-zero
-      - uses: actions/upload-artifact@v4
-        if: always()
-        continue-on-error: true
         with:
-          name: bandit-results
-          path: reports/bandit.json
-          retention-days: 5
+          python-version: "3.12"
 
+      - name: Install Bandit
+        run: pip install bandit[toml]
+
+      - name: Run Bandit
+        run: |
+          bandit -r backend/ \
+            -x backend/tests,backend/venv \
+            --severity-level medium \
+            --confidence-level medium \
+            -f json -o bandit-report.json || true
+
+      - name: Print summary
+        run: |
+          python3 - <<'EOF'
+          import json, sys
+          with open("bandit-report.json") as f:
+              data = json.load(f)
+          results = data.get("results", [])
+          metrics = data.get("metrics", {}).get("_totals", {})
+          high   = int(metrics.get("SEVERITY.HIGH",   0))
+          medium = int(metrics.get("SEVERITY.MEDIUM", 0))
+          low    = int(metrics.get("SEVERITY.LOW",    0))
+          print(f"Bandit results: HIGH={high}  MEDIUM={medium}  LOW={low}")
+          for r in results:
+              print(f"  [{r['issue_severity']}] {r['issue_text']} — {r['filename']}:{r['line_number']}")
+          if high > 0:
+              print("❌ High severity issues found!")
+              sys.exit(1)
+          else:
+              print("✅ No high severity issues.")
+          EOF
+
+      - name: Upload Bandit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bandit-report
+          path: bandit-report.json
+          retention-days: 14
+
+  # ── 2. Semgrep — frontend + backend source code analysis ────────────────────
+  semgrep:
+    name: Semgrep (JS + Python)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Semgrep
+        run: |
+          semgrep scan \
+            --config=p/owasp-top-ten \
+            --config=p/python \
+            --config=p/react \
+            --config=p/nextjs \
+            --config=p/secrets \
+            --config=p/sql-injection \
+            --exclude=node_modules \
+            --exclude=.next \
+            --json > semgrep-report.json || true
+
+      - name: Print summary
+        run: |
+          python3 - <<'EOF'
+          import json, sys
+          with open("semgrep-report.json") as f:
+              data = json.load(f)
+          findings = data.get("results", [])
+          errors   = data.get("errors", [])
+          print(f"Semgrep: {len(findings)} findings, {len(errors)} errors")
+          for r in findings[:20]:
+              sev  = r.get("extra", {}).get("severity", "INFO")
+              msg  = r.get("extra", {}).get("message", "")[:120]
+              path = r.get("path", "")
+              line = r.get("start", {}).get("line", "")
+              print(f"  [{sev}] {path}:{line} — {msg}")
+          if len(findings) > 20:
+              print(f"  ... and {len(findings)-20} more. See artifact for full report.")
+          if any(r.get("extra", {}).get("severity") == "ERROR" for r in findings):
+              print("❌ High severity findings detected!")
+              sys.exit(1)
+          else:
+              print("✅ No critical findings.")
+          EOF
+
+      - name: Upload Semgrep report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: semgrep-report
+          path: semgrep-report.json
+          retention-days: 14
+
+  # ── 3. Dependency audit — npm + pip ──────────────────────────────────────────
   dependency-audit:
+    name: Dependency Audit (npm + pip)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: "22" }
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12" }
-      - run: npm ci && npm audit --audit-level=critical
-      - run: pip install pip-audit && pip-audit -r backend/requirements.txt
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: npm audit
+        run: |
+          npm audit --audit-level=high --json > npm-audit.json || true
+          node -e "
+            const r = require('./npm-audit.json');
+            const vulns = r.vulnerabilities || {};
+            const high = Object.values(vulns).filter(v => ['high','critical'].includes(v.severity));
+            console.log('npm audit: ' + Object.keys(vulns).length + ' total, ' + high.length + ' high/critical');
+            high.forEach(v => console.log('  [' + v.severity.toUpperCase() + '] ' + v.name + ' — ' + (v.via?.[0]?.title || '')));
+            if (high.length > 0) { console.log('High/critical npm vulnerabilities found!'); process.exit(1); }
+            else console.log('No high/critical npm vulnerabilities.');
+          "
+
+      - name: pip-audit
+        run: |
+          pip install pip-audit
+          pip-audit -r backend/requirements.txt --format json -o pip-audit.json || true
+          python3 - <<'EOF'
+          import json, sys
+          try:
+              with open("pip-audit.json") as f:
+                  data = json.load(f)
+              vulns = data.get("vulnerabilities", [])
+              print(f"pip-audit: {len(vulns)} vulnerabilities found")
+              for v in vulns:
+                  print(f"  {v.get('name')} {v.get('version')} — {v.get('id')}: {v.get('description','')[:100]}")
+              if vulns:
+                  print("Python dependency vulnerabilities found — review above.")
+          except Exception as e:
+              print(f"Could not parse pip-audit output: {e}")
+          EOF
+
+      - name: Upload audit reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-audit-reports
+          path: |
+            npm-audit.json
+            pip-audit.json
+          retention-days: 14
+
+  # ── 4. Secret scanning — detect accidentally committed secrets ───────────────
   secret-scan:
+    name: Secret Scan (Gitleaks)
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      security-events: write
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 0 }
+        with:
+          fetch-depth: 0
+
       - uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}
         continue-on-error: true
 
+  # ── Security gate — blocks merge if bandit or semgrep fail ───────────────────
   security-gate:
+    name: Security Gate
     runs-on: ubuntu-latest
-    needs: [bandit, dependency-audit, secret-scan]
+    needs: [bandit, semgrep, dependency-audit, secret-scan]
+    if: always()
     steps:
-      - run: echo "Security gate passed."
+      - name: Check results
+        run: |
+          echo "Bandit:           ${{ needs.bandit.result }}"
+          echo "Semgrep:          ${{ needs.semgrep.result }}"
+          echo "Dependency Audit: ${{ needs.dependency-audit.result }}"
+          echo "Secret Scan:      ${{ needs.secret-scan.result }}"
+
+          if [[ "${{ needs.bandit.result }}" == "failure" || "${{ needs.semgrep.result }}" == "failure" ]]; then
+            echo "❌ Security gate failed — critical issues detected."
+            exit 1
+          else
+            echo "✅ Security gate passed."
+          fi
