@@ -39,8 +39,7 @@ jobs:
 
             Call the backend for all watchlisted tickers:
             ```bash
-            curl -sf "${{ secrets.BACKEND_URL }}/jobs/admin/tickers" \
-              -H "x-admin-secret: ${{ secrets.ADMIN_SECRET }}" || echo '{"tickers":[]}'
+            curl -sf "${{ secrets.BACKEND_URL }}/jobs/admin/tickers?x_admin_secret=${{ secrets.ADMIN_SECRET }}" || echo '{"tickers":[]}'
             ```
 
             If the result is empty or the backend is unreachable, use the seed universe: NFLX, MRVL, SOXQ, SOXL, MVLL
@@ -132,9 +131,8 @@ jobs:
             ## Step 4 — POST each result to the backend
 
             ```bash
-            curl -s -X POST "${{ secrets.BACKEND_URL }}/jobs/ingest-analysis" \
+            curl -s -X POST "${{ secrets.BACKEND_URL }}/jobs/ingest-analysis?x_job_secret=${{ secrets.JOB_SECRET }}" \
               -H "Content-Type: application/json" \
-              -H "x-job-secret: ${{ secrets.JOB_SECRET }}" \
               -d '<full JSON with ticker, analysis_date, price fields + verdict fields>'
             ```
 
