@@ -7,7 +7,6 @@ export default async function DashboardPage() {
   if (!session?.user) redirect("/signin");
   return (
     <DashboardClient
-      userEmail={session.user.email!}
       userName={session.user.name || ""}
       idToken={(session as any).idToken || ""}
     />
