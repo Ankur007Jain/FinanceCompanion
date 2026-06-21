@@ -104,4 +104,12 @@ _migrate_db()
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "FinanceCompanion API"}
+    db_url = os.getenv("DATABASE_URL", "")
+    db_type = "postgresql" if db_url.startswith("postgresql") else "sqlite"
+    return {
+        "status": "ok",
+        "service": "FinanceCompanion API",
+        "version": app.version,
+        "db": db_type,
+        "ai_configured": bool(os.getenv("ANTHROPIC_API_KEY")),
+    }

@@ -1,4 +1,4 @@
-name: CI / QA / Security
+name: Agentic CI Pipeline
 
 # Unified pipeline — all jobs in one file, parallelised where possible.
 #
