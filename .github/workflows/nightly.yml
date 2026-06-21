@@ -29,6 +29,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           mode: agent
+          model: claude-sonnet-4-6
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           direct_prompt: |
             You are FinanceCompanion's nightly stock analysis agent. Today is $(date +%Y-%m-%d).
