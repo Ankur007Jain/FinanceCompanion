@@ -1,6 +1,8 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 
@@ -229,26 +231,131 @@ export default function ChatClient({
               <div
                 key={i}
                 style={{
-                  marginBottom: "1rem",
+                  marginBottom: "1.25rem",
                   display: "flex",
+                  alignItems: "flex-end",
+                  gap: "0.6rem",
                   justifyContent: msg.role === "user" ? "flex-end" : "flex-start",
                 }}
               >
+                {msg.role === "assistant" && (
+                  <div style={{
+                    width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+                    background: "var(--t-primary)", display: "flex", alignItems: "center",
+                    justifyContent: "center", marginBottom: 2,
+                  }}>
+                    <span style={{ fontSize: "1rem" }}>📈</span>
+                  </div>
+                )}
                 <div
                   style={{
-                    maxWidth: "75%",
+                    maxWidth: "78%",
                     padding: "0.75rem 1rem",
-                    borderRadius: msg.role === "user" ? "1rem 1rem 0.25rem 1rem" : "1rem 1rem 1rem 0.25rem",
-                    background: msg.role === "user" ? "var(--t-primary)" : "var(--t-ai-bubble)",
+                    borderRadius: msg.role === "user" ? "1.25rem 1.25rem 0.25rem 1.25rem" : "1.25rem 1.25rem 1.25rem 0.25rem",
+                    background: msg.role === "user" ? "var(--t-primary)" : "var(--t-surface)",
                     border: msg.role === "assistant" ? "1px solid var(--t-border)" : "none",
-                    color: "var(--t-text)",
-                    fontSize: "0.9rem",
-                    lineHeight: 1.6,
-                    whiteSpace: "pre-wrap",
+                    color: msg.role === "user" ? "#fff" : "var(--t-text)",
+                    fontSize: "0.875rem",
+                    lineHeight: 1.65,
+                    boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
                   }}
                 >
-                  {msg.content || (msg.role === "assistant" && streaming ? "▌" : "")}
+                  {msg.role === "user" ? (
+                    <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
+                  ) : msg.content ? (
+                    <ReactMarkdown
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        h1: ({ children }) => (
+                          <h1 style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "1rem", fontWeight: 700, margin: "1rem 0 0.5rem", color: "var(--t-text)" }}>
+                            <span style={{ width: 3, height: 20, borderRadius: 2, background: "var(--t-primary)", flexShrink: 0, display: "inline-block" }} />
+                            {children}
+                          </h1>
+                        ),
+                        h2: ({ children }) => (
+                          <h2 style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, margin: "0.85rem 0 0.4rem", color: "var(--t-text)" }}>
+                            <span style={{ width: 3, height: 16, borderRadius: 2, background: "var(--t-primary)", opacity: 0.65, flexShrink: 0, display: "inline-block" }} />
+                            {children}
+                          </h2>
+                        ),
+                        h3: ({ children }) => (
+                          <h3 style={{ fontSize: "0.875rem", fontWeight: 700, margin: "0.75rem 0 0.3rem", color: "var(--t-text)", letterSpacing: "0.02em" }}>{children}</h3>
+                        ),
+                        p: ({ children }) => (
+                          <p style={{ margin: "0 0 0.6rem", lineHeight: 1.65, color: "var(--t-text)", opacity: 0.92 }}>{children}</p>
+                        ),
+                        ul: ({ children }) => (
+                          <ul style={{ margin: "0 0 0.6rem", padding: 0, listStyle: "none" }}>{children}</ul>
+                        ),
+                        ol: ({ children }) => (
+                          <ol style={{ margin: "0 0 0.6rem", paddingLeft: "1.25rem" }}>{children}</ol>
+                        ),
+                        li: ({ children, ...props }) => {
+                          const ordered = (props as { ordered?: boolean }).ordered;
+                          return ordered ? (
+                            <li style={{ lineHeight: 1.65, paddingLeft: "0.25rem", color: "var(--t-primary)", marginBottom: "0.3rem" }}>
+                              <span style={{ color: "var(--t-text)" }}>{children}</span>
+                            </li>
+                          ) : (
+                            <li style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", lineHeight: 1.65, marginBottom: "0.3rem" }}>
+                              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--t-primary)", flexShrink: 0, marginTop: "0.55em" }} />
+                              <span style={{ flex: 1, color: "var(--t-text)" }}>{children}</span>
+                            </li>
+                          );
+                        },
+                        blockquote: ({ children }) => (
+                          <blockquote style={{ margin: "0.6rem 0", padding: "0.6rem 0.9rem", borderLeft: "3px solid var(--t-primary)", background: "var(--t-primary-light)", borderRadius: "0 0.5rem 0.5rem 0", fontSize: "0.85rem", lineHeight: 1.6 }}>
+                            {children}
+                          </blockquote>
+                        ),
+                        table: ({ children }) => (
+                          <div style={{ margin: "0.6rem 0", overflowX: "auto", borderRadius: "0.5rem", border: "1px solid var(--t-border)" }}>
+                            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>{children}</table>
+                          </div>
+                        ),
+                        thead: ({ children }) => <thead style={{ background: "var(--t-primary-light)" }}>{children}</thead>,
+                        tr: ({ children }) => <tr style={{ borderBottom: "1px solid var(--t-border)" }}>{children}</tr>,
+                        th: ({ children }) => (
+                          <th style={{ padding: "0.45rem 0.75rem", textAlign: "left", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--t-primary)" }}>{children}</th>
+                        ),
+                        td: ({ children }) => (
+                          <td style={{ padding: "0.45rem 0.75rem", color: "var(--t-text)", opacity: 0.9 }}>{children}</td>
+                        ),
+                        strong: ({ children }) => (
+                          <strong style={{ fontWeight: 600, color: "var(--t-text)" }}>{children}</strong>
+                        ),
+                        em: ({ children }) => <em style={{ fontStyle: "italic", opacity: 0.8 }}>{children}</em>,
+                        hr: () => <div style={{ height: 1, background: "var(--t-border)", margin: "0.75rem 0" }} />,
+                        code: ({ children, className }) => {
+                          const isBlock = className?.includes("language-");
+                          return isBlock ? (
+                            <pre style={{ margin: "0.6rem 0", borderRadius: "0.5rem", background: "#1e293b", padding: "0.75rem 1rem", overflowX: "auto" }}>
+                              <code style={{ fontSize: "0.78rem", fontFamily: "monospace", color: "#e2e8f0", lineHeight: 1.6 }}>{children}</code>
+                            </pre>
+                          ) : (
+                            <code style={{ padding: "0.15rem 0.4rem", borderRadius: "0.3rem", background: "var(--t-primary-light)", color: "var(--t-primary)", fontSize: "0.8rem", fontFamily: "monospace" }}>{children}</code>
+                          );
+                        },
+                      }}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
+                  ) : (
+                    <span style={{ display: "flex", alignItems: "center", gap: "0.5rem", color: "var(--t-text-muted)", fontSize: "0.82rem" }}>
+                      <span style={{ animation: "spin 1.2s linear infinite", display: "inline-block" }}>⟳</span>
+                      Analysing your question…
+                    </span>
+                  )}
                 </div>
+                {msg.role === "user" && (
+                  <div style={{
+                    width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
+                    background: "var(--t-primary)", display: "flex", alignItems: "center",
+                    justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: "0.8rem", marginBottom: 2,
+                  }}>
+                    {userName?.[0]?.toUpperCase() ?? "U"}
+                  </div>
+                )}
               </div>
             ))}
 
