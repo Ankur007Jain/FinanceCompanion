@@ -13,6 +13,7 @@ jobs:
   nightly-analysis:
     name: "Nightly Stock Analysis Agent"
     runs-on: ubuntu-latest
+    environment: Production
     steps:
       - uses: actions/checkout@v4
 
