@@ -134,3 +134,26 @@ class SendMessageRequest(BaseModel):
 class NightlyJobRequest(BaseModel):
     secret: str
     tickers: Optional[list[str]] = None  # None = run all watchlisted tickers
+
+
+class IngestAnalysisRequest(BaseModel):
+    ticker: str
+    analysis_date: date
+    current_price: Optional[float] = None
+    price_change_pct: Optional[float] = None
+    week52_high: Optional[float] = None
+    week52_low: Optional[float] = None
+    week52_position_pct: Optional[float] = None
+    ma50: Optional[float] = None
+    ma200: Optional[float] = None
+    rsi: Optional[float] = None
+    analyst_consensus: Optional[str] = None
+    analyst_upside_pct: Optional[float] = None
+    verdict: str
+    entry_target: Optional[float] = None
+    exit_target: Optional[float] = None
+    reasoning: Optional[str] = None
+    news_summary: Optional[str] = None
+    ripple_analysis: Optional[str] = None
+    is_important_day: bool = False
+    importance_reason: Optional[str] = None
