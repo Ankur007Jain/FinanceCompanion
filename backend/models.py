@@ -34,6 +34,18 @@ class WatchlistItem(Base):
     added_at = Column(DateTime, default=datetime.utcnow)
 
 
+class MarketDataCache(Base):
+    """Raw yfinance data per ticker per day — prevents redundant API calls."""
+    __tablename__ = "market_data_cache"
+    ticker = Column(String, primary_key=True)
+    cache_date = Column(Date, primary_key=True)
+    info_json = Column(Text)        # yf.Ticker.info dict
+    history_json = Column(Text)     # 1-year daily OHLCV as JSON
+    news_json = Column(Text)        # raw news list
+    calendar_json = Column(Text)    # earnings calendar
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class StockAnalysis(Base):
     """Nightly analysis result — global per ticker, not per user."""
     __tablename__ = "stock_analyses"
@@ -63,10 +75,34 @@ class StockAnalysis(Base):
     target_price_high = Column(Float)
     target_price_low = Column(Float)
 
+    # Fundamentals (extracted from yfinance .info — same fetch, no extra API call)
+    pe_trailing = Column(Float)
+    pe_forward = Column(Float)
+    revenue_growth = Column(Float)       # e.g. 0.12 = 12% YoY
+    earnings_growth = Column(Float)
+    profit_margin = Column(Float)
+    debt_to_equity = Column(Float)
+    free_cashflow = Column(Float)
+    return_on_equity = Column(Float)
+    beta = Column(Float)
+    short_float_pct = Column(Float)      # % of float sold short
+    short_ratio = Column(Float)          # days to cover
+    inst_ownership_pct = Column(Float)
+    insider_ownership_pct = Column(Float)
+    sp500_52w_change = Column(Float)     # S&P 500 return over same period (relative strength context)
+    stock_52w_change = Column(Float)
+    dividend_yield = Column(Float)
+    market_cap = Column(Float)
+    sector = Column(String)
+    industry = Column(String)
+    fundamentals_json = Column(Text)     # full dump for future use
+
     # Verdict (output of Verdict Agent)
     verdict = Column(String)  # BUY / HOLD / SELL / WATCH
     entry_target = Column(Float)
     exit_target = Column(Float)
+    stop_loss = Column(Float)
+    hold_period = Column(String)  # e.g. "3-5 days", "2-4 weeks", "1-3 months"
     reasoning = Column(Text)
 
     # Agent outputs

@@ -40,7 +40,7 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
 
     try:
         loop = asyncio.get_event_loop()
-        yf = await loop.run_in_executor(None, fetch_yf_data, ticker)
+        yf = await loop.run_in_executor(None, fetch_yf_data, ticker, db)
     except Exception as e:
         logger.error(f"[{ticker}] yfinance fetch failed: {e}")
         return
@@ -121,9 +121,31 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         target_price_mean=analyst.target_mean,
         target_price_high=analyst.target_high,
         target_price_low=analyst.target_low,
+        pe_trailing=analyst.pe_trailing,
+        pe_forward=analyst.pe_forward,
+        revenue_growth=analyst.revenue_growth,
+        earnings_growth=analyst.earnings_growth,
+        profit_margin=analyst.profit_margin,
+        debt_to_equity=analyst.debt_to_equity,
+        free_cashflow=analyst.free_cashflow,
+        return_on_equity=analyst.return_on_equity,
+        beta=analyst.beta,
+        short_float_pct=analyst.short_float_pct,
+        short_ratio=analyst.short_ratio,
+        inst_ownership_pct=analyst.inst_ownership_pct,
+        insider_ownership_pct=analyst.insider_ownership_pct,
+        sp500_52w_change=analyst.sp500_52w_change,
+        stock_52w_change=analyst.stock_52w_change,
+        dividend_yield=analyst.dividend_yield,
+        market_cap=analyst.market_cap,
+        sector=analyst.sector,
+        industry=analyst.industry,
+        fundamentals_json=analyst.fundamentals_json,
         verdict=verdict.verdict,
         entry_target=verdict.entry_target,
         exit_target=verdict.exit_target,
+        stop_loss=verdict.stop_loss,
+        hold_period=verdict.hold_period,
         reasoning=verdict.reasoning,
         news_summary=news,
         events_json=json.dumps(events),

@@ -35,14 +35,19 @@ jobs:
           direct_prompt: |
             You are FinanceCompanion's nightly stock analysis agent. Today is $(date +%Y-%m-%d).
 
-            ## Step 1 — Get tickers
+            ## Step 1 — Get tickers (skip already-analyzed ones)
 
-            Call the backend for all watchlisted tickers:
+            First, get all watchlisted tickers:
             ```bash
             curl -sf "${{ secrets.BACKEND_URL }}/jobs/admin/tickers?x_admin_secret=${{ secrets.ADMIN_SECRET }}" || echo '{"tickers":[]}'
             ```
-
             If the result is empty or the backend is unreachable, use the seed universe: NFLX, MRVL, SOXQ, SOXL, MVLL
+
+            Then get tickers already analyzed today (skip these — data already saved, no need to re-fetch):
+            ```bash
+            curl -sf "${{ secrets.BACKEND_URL }}/jobs/admin/analyzed-today?x_admin_secret=${{ secrets.ADMIN_SECRET }}" || echo '{"analyzed":[]}'
+            ```
+            Remove any ticker in `analyzed` from your work list before proceeding. Log which tickers you are skipping.
 
             ## Step 2 — Fetch market data for each ticker
 
@@ -118,8 +123,10 @@ jobs:
             ```json
             {
               "verdict": "BUY|HOLD|SELL|WATCH",
-              "entry_target": <float or null>,
-              "exit_target": <float or null>,
+              "entry_target": <float or null — specific price to enter, or null if not actionable>,
+              "exit_target": <float or null — price target to take profit>,
+              "stop_loss": <float or null — price at which to cut losses>,
+              "hold_period": "<e.g. '3-5 days', '2-4 weeks', '1-3 months' — or null if WATCH/SELL>",
               "reasoning": "<10-15 lines: price action, technicals, analyst view, news, risk>",
               "news_summary": "<3-4 sentences synthesising today's news>",
               "ripple_analysis": "<2nd/3rd order effects of today's news on this specific ticker>",
@@ -136,7 +143,7 @@ jobs:
               -d '<full JSON with ticker, analysis_date, price fields + verdict fields>'
             ```
 
-            Map fields: price→current_price, change_pct→price_change_pct, hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct, ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct.
+            Map fields: price→current_price, change_pct→price_change_pct, hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct, ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct. Include stop_loss and hold_period directly.
 
             ## Step 5 — Print summary table
 
