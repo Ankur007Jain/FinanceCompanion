@@ -33,13 +33,46 @@ export default function ChatClient({
   const [searchingLabel, setSearchingLabel] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const readerRef = useRef<ReadableStreamDefaultReader | null>(null);
+  const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingRef = useRef("");
 
   useEffect(() => { loadConversations(); }, []);
+  useEffect(() => {
+    if (activeConvId) loadMessages(activeConvId);
+    else setMessages([]);
+  }, [activeConvId]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
   async function loadConversations() {
     const r = await fetch(`${API}/conversations?id_token=${encodeURIComponent(idToken)}`);
     if (r.ok) setConversations(await r.json());
+  }
+
+  async function loadMessages(convId: string) {
+    setMessages([]);
+    const r = await fetch(`${API}/conversations/${convId}/messages?id_token=${encodeURIComponent(idToken)}`);
+    if (r.ok) {
+      const msgs = await r.json();
+      setMessages(msgs.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content })));
+    }
+  }
+
+  function applyChunk(text: string) {
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last?.role === "assistant") {
+        if (text.length <= last.content.length) return prev;
+        const updated = [...prev];
+        updated[updated.length - 1] = { ...last, content: text };
+        return updated;
+      }
+      return [...prev, { role: "assistant" as const, content: text }];
+    });
+  }
+
+  function flushChunk() {
+    if (throttleRef.current) { clearTimeout(throttleRef.current); throttleRef.current = null; }
+    applyChunk(pendingRef.current);
   }
 
   async function newConversation() {
@@ -53,14 +86,15 @@ export default function ChatClient({
       setActiveConvId(conv.id);
       setMessages([]);
       loadConversations();
+      return conv.id;
     }
+    return null;
   }
 
   async function send() {
     if (!input.trim() || streaming) return;
-    if (!activeConvId) await newConversation();
-
-    const convId = activeConvId;
+    let convId = activeConvId;
+    if (!convId) convId = await newConversation();
     if (!convId) return;
 
     const userMsg: Message = { role: "user", content: input };
@@ -69,8 +103,10 @@ export default function ChatClient({
     setStreaming(true);
     setSearchingLabel("");
 
-    const assistantMsg: Message = { role: "assistant", content: "" };
-    setMessages((prev) => [...prev, assistantMsg]);
+    setMessages(prev => [...prev, { role: "assistant", content: "" }]);
+
+    let fullText = "";
+    pendingRef.current = "";
 
     try {
       const res = await fetch(`${API}/conversations/${convId}/messages/stream`, {
@@ -97,14 +133,14 @@ export default function ChatClient({
           try {
             const event = JSON.parse(line.slice(6).trim());
             if (event.type === "chunk") {
-              setMessages((prev) => {
-                const updated = [...prev];
-                updated[updated.length - 1] = {
-                  ...updated[updated.length - 1],
-                  content: updated[updated.length - 1].content + event.text,
-                };
-                return updated;
-              });
+              fullText += event.text;
+              pendingRef.current = fullText;
+              if (!throttleRef.current) {
+                throttleRef.current = setTimeout(() => {
+                  throttleRef.current = null;
+                  applyChunk(pendingRef.current);
+                }, 250);
+              }
             } else if (event.type === "tool_start") {
               setSearchingLabel("Searching the web…");
             } else if (event.type === "tool_result") {
@@ -113,14 +149,13 @@ export default function ChatClient({
             } else if (event.type === "title") {
               loadConversations();
             } else if (event.type === "done") {
+              flushChunk();
               setSearchingLabel("");
             } else if (event.type === "error") {
-              setMessages((prev) => {
+              flushChunk();
+              setMessages(prev => {
                 const updated = [...prev];
-                updated[updated.length - 1] = {
-                  ...updated[updated.length - 1],
-                  content: `Error: ${event.message}`,
-                };
+                updated[updated.length - 1] = { ...updated[updated.length - 1], content: `Error: ${event.message}` };
                 return updated;
               });
             }
@@ -193,7 +228,7 @@ export default function ChatClient({
           {conversations.map((c) => (
             <button
               key={c.id}
-              onClick={() => { setActiveConvId(c.id); setMessages([]); }}
+              onClick={() => setActiveConvId(c.id)}
               style={{
                 textAlign: "left",
                 padding: "0.6rem 1rem",

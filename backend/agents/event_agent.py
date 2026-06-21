@@ -16,10 +16,9 @@ def _finnhub_client() -> Optional[finnhub.Client]:
     return finnhub.Client(api_key=key) if key else None
 
 
-def _yf_earnings(ticker: str) -> Optional[str]:
+def _yf_earnings(ticker: str, prefetched=None) -> Optional[str]:
     try:
-        t = yf.Ticker(ticker)
-        cal = t.calendar
+        cal = prefetched.calendar if prefetched is not None else yf.Ticker(ticker).calendar
         if cal is None:
             return None
         if hasattr(cal, "columns") and "Earnings Date" in cal.columns:
@@ -59,10 +58,10 @@ def _upcoming_fed_dates() -> list[dict]:
     ]
 
 
-async def fetch_events(ticker: str) -> list[dict]:
+async def fetch_events(ticker: str, prefetched=None) -> list[dict]:
     loop = asyncio.get_event_loop()
     yf_date, fh_date = await asyncio.gather(
-        loop.run_in_executor(None, _yf_earnings, ticker),
+        loop.run_in_executor(None, _yf_earnings, ticker, prefetched),
         loop.run_in_executor(None, _finnhub_earnings, ticker),
     )
 

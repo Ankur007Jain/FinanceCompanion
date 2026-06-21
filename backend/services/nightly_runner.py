@@ -15,6 +15,7 @@ from agents.analyst_agent import fetch_analyst_data
 from agents.event_agent import fetch_events
 from agents.news_agent import fetch_news
 from agents.price_agent import fetch_price_data
+from agents.yf_fetcher import fetch_yf_data
 from agents.ripple_agent import analyze_ripple
 from agents.verdict_agent import generate_verdict
 from models import StockAnalysis, WatchlistItem
@@ -35,14 +36,23 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         logger.info(f"[{ticker}] Already analyzed today — skipping.")
         return
 
+    logger.info(f"[{ticker}] Fetching yfinance data...")
+
+    try:
+        loop = asyncio.get_event_loop()
+        yf = await loop.run_in_executor(None, fetch_yf_data, ticker)
+    except Exception as e:
+        logger.error(f"[{ticker}] yfinance fetch failed: {e}")
+        return
+
     logger.info(f"[{ticker}] Starting parallel data agents...")
 
     try:
         price, news, events, analyst = await asyncio.gather(
-            fetch_price_data(ticker),
-            fetch_news(ticker, company_name),
-            fetch_events(ticker),
-            fetch_analyst_data(ticker),
+            fetch_price_data(ticker, yf_data=yf),
+            fetch_news(ticker, company_name, yf_data=yf),
+            fetch_events(ticker, prefetched=yf),
+            fetch_analyst_data(ticker, prefetched=yf),
         )
         analyst.upside_pct = analyst.upside_pct  # recalc with real price
         if price.current_price:

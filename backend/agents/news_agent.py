@@ -18,10 +18,9 @@ def _finnhub_client() -> Optional[finnhub.Client]:
     return finnhub.Client(api_key=key) if key else None
 
 
-def _yf_news(ticker: str) -> list[str]:
+def _yf_news(ticker: str, yf_data=None) -> list[str]:
     try:
-        t = yf.Ticker(ticker)
-        items = t.news or []
+        items = (yf_data.news if yf_data is not None else yf.Ticker(ticker).news) or []
         return [
             f"{n.get('title', '')} — {n.get('publisher', '')} ({n.get('providerPublishTime', '')})"
             for n in items[:8]
@@ -55,10 +54,10 @@ def _deduplicate(yf_lines: list[str], fh_lines: list[str]) -> str:
     return "\n".join(merged[:12])
 
 
-async def fetch_news(ticker: str, company_name: str = "") -> str:
+async def fetch_news(ticker: str, company_name: str = "", yf_data=None) -> str:
     loop = asyncio.get_event_loop()
     yf_lines, fh_lines = await asyncio.gather(
-        loop.run_in_executor(None, _yf_news, ticker),
+        loop.run_in_executor(None, _yf_news, ticker, yf_data),
         loop.run_in_executor(None, _finnhub_news, ticker),
     )
     raw = _deduplicate(yf_lines, fh_lines)
