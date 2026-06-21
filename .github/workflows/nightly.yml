@@ -13,6 +13,7 @@ jobs:
   nightly-analysis:
     name: "Nightly Stock Analysis Agent"
     runs-on: ubuntu-latest
+    environment: Production
     steps:
       - uses: actions/checkout@v4
 
@@ -27,6 +28,9 @@ jobs:
       - name: Run nightly analysis agent
         uses: anthropics/claude-code-action@beta
         with:
+          mode: agent
+          model: claude-sonnet-4-6
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           direct_prompt: |
             You are FinanceCompanion's nightly stock analysis agent. Today is $(date +%Y-%m-%d).
 
