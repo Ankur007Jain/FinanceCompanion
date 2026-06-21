@@ -1,0 +1,533 @@
+name: Agent QA Pipeline
+
+# Self-healing QA pipeline — agents run on every PR to main.
+#
+#  [pytest] ──┐
+#             ├──→ [fix-gates]  (only on gate failure, human push — heals CI)
+#  [jest]  ──┘
+#             ├──→ [qa-agent]   (reads diff, writes missing tests, finds bugs)
+#                      ↓
+#                 [check-bugs]
+#                      ↓ (if bugs found)
+#                 [fix-agent]   (fixes source files, never test files)
+#                      ↓
+#                  [re-test]    (verifies fixes, appends to qa-report)
+#                      ↓
+#                 [docs-agent]  (syncs CHANGELOG + TECHNICAL.md)
+#                      ↓
+#                  [summary]    (posts full qa-report as PR comment)
+#
+# Self-healing: if pytest or jest fails, fix-gates reads logs and commits a fix.
+# If the agent fix doesn't resolve it, the pipeline fails loudly.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write
+
+env:
+  BASE_REF: ${{ github.event.pull_request.base.ref }}
+  HEAD_REF: ${{ github.event.pull_request.head.ref }}
+
+jobs:
+  # ── Gate: CI must pass before agents run ─────────────────────────────────────
+  pytest:
+    name: "Gate — pytest"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      DATABASE_URL: sqlite:///./test.db
+      ANTHROPIC_API_KEY: test-key
+      GOOGLE_CLIENT_ID: test-client-id
+      FINNHUB_API_KEY: test-key
+      JOB_SECRET: test-job-secret
+      ADMIN_SECRET: test-admin-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run pytest
+        id: run-pytest
+        continue-on-error: true
+        run: pytest tests/ -v --tb=short 2>&1 | tee pytest-output.txt
+      - name: Upload pytest output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pytest-output
+          path: backend/pytest-output.txt
+          if-no-files-found: ignore
+      - name: Fail if pytest failed
+        if: steps.run-pytest.outcome == 'failure'
+        run: exit 1
+
+  jest:
+    name: "Gate — jest"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - name: Run jest
+        id: run-jest
+        continue-on-error: true
+        run: npx jest --ci --no-coverage 2>&1 | tee jest-output.txt
+        env:
+          NEXT_PUBLIC_BACKEND_URL: http://localhost:8001
+      - name: Upload jest output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jest-output
+          path: jest-output.txt
+          if-no-files-found: ignore
+      - name: Fail if jest failed
+        if: steps.run-jest.outcome == 'failure'
+        run: exit 1
+
+  # ── Self-healing: fix gate failures, commit back, re-trigger ─────────────────
+  fix-gates:
+    name: "Fix Gate Failures"
+    runs-on: ubuntu-latest
+    needs: [pytest, jest]
+    if: failure() && !contains(github.triggering_actor, '[bot]')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+
+      - name: Download pytest output
+        uses: actions/download-artifact@v4
+        with:
+          name: pytest-output
+          path: reports/
+        continue-on-error: true
+
+      - name: Download jest output
+        uses: actions/download-artifact@v4
+        with:
+          name: jest-output
+          path: reports/
+        continue-on-error: true
+
+      - name: Run fix agent
+        uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          direct_prompt: |
+            You are a senior Software Engineer. CI gate tests are failing on this PR. Fix the source code so all tests pass.
+
+            Step 1: Read reports/pytest-output.txt and reports/jest-output.txt (if they exist).
+            Identify every failing test, its error message, and the suspected source file.
+
+            Step 2: For each failure:
+            1. Read the failing test to understand what it expects
+            2. Read the suspected source file
+            3. Fix the root cause in the SOURCE file — never edit test files
+            4. Re-run just that test to confirm it passes:
+               - pytest: `cd backend && pytest {test_file}::{test_name} -v`
+               - jest:   `npx jest --testNamePattern "{test_name}" --no-coverage`
+
+            Step 3: Run the full suites to confirm nothing else broke:
+            - `cd backend && DATABASE_URL=sqlite:///./test.db ANTHROPIC_API_KEY=test-key GOOGLE_CLIENT_ID=test-client-id FINNHUB_API_KEY=test-key JOB_SECRET=test-job-secret ADMIN_SECRET=test-admin-secret pytest tests/ -v --tb=short 2>&1 | tail -30`
+            - `NEXT_PUBLIC_BACKEND_URL=http://localhost:8001 npx jest --ci --no-coverage 2>&1 | tail -20`
+
+            Step 4: Commit your fixes:
+            ```
+            git add {source files changed — NEVER test files}
+            git commit -m "fix: resolve gate failures (auto-fix)"
+            ```
+
+            Hard rules:
+            - Edit SOURCE files only. Never edit test files.
+            - Fix root causes, not symptoms.
+            - Verify each fix by re-running the specific failing test before committing.
+            - If you cannot fix a failure with confidence, do NOT commit — fail loudly instead.
+
+  # ── Phase 1: QA Agent — find bugs, write tests, produce qa-report ────────────
+  qa-agent:
+    name: "QA Agent"
+    runs-on: ubuntu-latest
+    needs: [pytest, jest]
+    if: ${{ !contains(github.triggering_actor, '[bot]') }}
+    env:
+      DATABASE_URL: sqlite:///./test.db
+      ANTHROPIC_API_KEY: test-key
+      GOOGLE_CLIENT_ID: test-client-id
+      FINNHUB_API_KEY: test-key
+      JOB_SECRET: test-job-secret
+      ADMIN_SECRET: test-admin-secret
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:8001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+
+      - name: Clear stale qa-report
+        run: rm -f reports/qa-report.md && mkdir -p reports
+
+      - name: Run QA agent
+        uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          direct_prompt: |
+            You are a senior Automation Test Engineer. Follow these steps exactly — use bash tools to run commands, write files, and commit results.
+
+            Base branch: ${{ env.BASE_REF }}
+
+            Step 1: Run `git diff ${{ env.BASE_REF }}..HEAD --stat` and `git log ${{ env.BASE_REF }}..HEAD --oneline`.
+            Read every changed source file in the diff.
+
+            Step 2: For every new or changed FastAPI endpoint or Python function, write a pytest test in the appropriate file under backend/tests/.
+            For every new or changed TypeScript helper or component logic, write a jest test in __tests__/.
+            Test conventions:
+            - Backend tests go in backend/tests/test_*.py and use the existing conftest.py fixtures
+            - Frontend tests go in __tests__/*.test.ts — pure logic only, no React renderer needed
+            - Never call real external APIs (yfinance, Finnhub, Anthropic) in tests — mock them
+            - Auth is mocked via: patch("routers.auth.id_token.verify_oauth2_token", return_value={"email": "test@example.com", "name": "Test"})
+
+            Step 3: Run the full backend suite:
+            `cd backend && pytest tests/ -v --tb=short 2>&1 | tail -60`
+            Then run the frontend suite:
+            `npx jest --ci --no-coverage 2>&1 | tail -30`
+            Capture all failures.
+
+            Step 4: Write reports/qa-report.md with this exact structure:
+            ```
+            ## QA Report — ${{ env.BASE_REF }}..HEAD — {timestamp}
+            ### Summary
+            {X} passing, {Y} failing, {Z} bugs found
+            ### Bugs Found
+            | # | Test | Error | Suspected source |
+            |---|------|-------|-----------------|
+            ### New Tests Written
+            | File | Tests added |
+            |------|-------------|
+            ```
+            If no bugs: write the table with no data rows. Never omit the table headers.
+
+            Step 5: Commit:
+            ```
+            git add backend/tests/ __tests__/ reports/qa-report.md
+            git commit -m "ci: qa-report for ${{ env.BASE_REF }}..HEAD"
+            ```
+
+      - name: Upload qa-report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-report
+          path: reports/qa-report.md
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ── Check report: did QA Agent find bugs? ─────────────────────────────────────
+  check-bugs:
+    name: "Bugs Found?"
+    runs-on: ubuntu-latest
+    needs: qa-agent
+    outputs:
+      bugs: ${{ steps.parse.outputs.bugs }}
+    steps:
+      - name: Download qa-report
+        uses: actions/download-artifact@v4
+        with:
+          name: qa-report
+          path: reports/
+        continue-on-error: true
+
+      - name: Parse report
+        id: parse
+        run: |
+          python3 - << 'EOF'
+          import sys, os
+          from pathlib import Path
+
+          report = Path("reports/qa-report.md")
+          found = False
+          if report.exists():
+              in_bugs = False
+              for line in report.read_text(encoding="utf-8").splitlines():
+                  if line.lstrip("#").strip().startswith("Bugs Found") and line.startswith("#"):
+                      in_bugs = True
+                      continue
+                  if in_bugs and line.startswith("#"):
+                      break
+                  if in_bugs and line.startswith("| ") and \
+                     not line.startswith("| #") and "---" not in line:
+                      cells = [c.strip() for c in line.split("|")]
+                      first  = cells[1] if len(cells) > 1 else ""
+                      second = cells[2] if len(cells) > 2 else ""
+                      if first == "-" or "no bug" in second.lower():
+                          continue
+                      found = True
+                      break
+
+          result = "true" if found else "false"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as fh:
+              fh.write(f"bugs={result}\n")
+          print(f"bugs={result}")
+          EOF
+
+  # ── Phase 2: Fix Agent — only runs when bugs were found ──────────────────────
+  fix-agent:
+    name: "Fix Agent"
+    runs-on: ubuntu-latest
+    needs: check-bugs
+    if: needs.check-bugs.outputs.bugs == 'true'
+    env:
+      DATABASE_URL: sqlite:///./test.db
+      ANTHROPIC_API_KEY: test-key
+      GOOGLE_CLIENT_ID: test-client-id
+      FINNHUB_API_KEY: test-key
+      JOB_SECRET: test-job-secret
+      ADMIN_SECRET: test-admin-secret
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+
+      - name: Download qa-report
+        uses: actions/download-artifact@v4
+        with:
+          name: qa-report
+          path: reports/
+
+      - name: Run fix agent
+        uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          direct_prompt: |
+            You are a senior Software Engineer. Fix every bug listed in reports/qa-report.md.
+
+            Step 1: Read reports/qa-report.md. Extract every row from the "Bugs Found" table —
+            note the test name, error message, and suspected source file for each.
+
+            Step 2: For each bug:
+            1. Read the failing test to understand what it expects
+            2. Read the suspected source file
+            3. Run the specific failing test to see the actual error:
+               `cd backend && pytest {test_file}::{test_name} -v 2>&1`
+            4. Edit the source file to fix the root cause
+            5. Re-run the same test to confirm it passes
+
+            Step 3: Run the full suites to confirm nothing else broke:
+            `cd backend && pytest tests/ -v --tb=short 2>&1 | tail -30`
+            `npx jest --ci --no-coverage 2>&1 | tail -20`
+            If your fix broke something else, fix that too before committing.
+
+            Step 4: Commit:
+            ```
+            git add {source files you changed — NOT test files}
+            git commit -m "fix: bugs resolved from qa-report"
+            ```
+
+            Hard rules:
+            - Edit SOURCE files only. Never edit test files.
+            - Fix root causes, not symptoms.
+            - Always verify by re-running the failing test before committing.
+
+  # ── Phase 2b: Re-test — verify fixes ─────────────────────────────────────────
+  re-test:
+    name: "Re-test (verify fixes)"
+    runs-on: ubuntu-latest
+    needs: fix-agent
+    env:
+      DATABASE_URL: sqlite:///./test.db
+      ANTHROPIC_API_KEY: test-key
+      GOOGLE_CLIENT_ID: test-client-id
+      FINNHUB_API_KEY: test-key
+      JOB_SECRET: test-job-secret
+      ADMIN_SECRET: test-admin-secret
+      NEXT_PUBLIC_BACKEND_URL: http://localhost:8001
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+
+      - name: Run verification agent
+        uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          direct_prompt: |
+            You are a senior Automation Test Engineer verifying that fixes resolved all reported bugs.
+
+            Step 1: Run the full backend suite:
+            `cd backend && pytest tests/ -v --tb=short 2>&1 | tail -50`
+            Then the frontend suite:
+            `npx jest --ci --no-coverage 2>&1 | tail -20`
+
+            Step 2: Update reports/qa-report.md — append a "## Verification" section at the bottom:
+            - Total passing / failing counts after fixes
+            - For each bug in the original "Bugs Found" table: ✅ resolved or ❌ still failing
+
+            Step 3: Commit:
+            ```
+            git add reports/qa-report.md
+            git commit -m "ci: qa-report verification after fixes"
+            ```
+
+      - name: Upload updated qa-report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-report-final
+          path: reports/qa-report.md
+          retention-days: 14
+          if-no-files-found: ignore
+
+  # ── Phase 3: Docs Agent ───────────────────────────────────────────────────────
+  docs-agent:
+    name: "Docs Agent"
+    runs-on: ubuntu-latest
+    needs: [check-bugs, fix-agent]
+    if: always() && needs.check-bugs.result == 'success'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.ref }}
+
+      - name: Run docs agent
+        uses: anthropics/claude-code-action@beta
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          direct_prompt: |
+            You are a senior Technical Writer. Update project documentation to reflect the changes in this PR.
+
+            Step 1: Run `git diff ${{ env.BASE_REF }}..HEAD --stat` and `git log ${{ env.BASE_REF }}..HEAD --oneline`.
+            Read each changed source file.
+
+            Step 2: Read CLAUDE.md — it contains the architecture and stack reference for this project.
+            Update Docs/DATA_SOURCES.md or Docs/YFINANCE_FIELD_AUDIT.md if any data pipeline changes
+            are in the diff (new fields, new agents, new caching behavior).
+
+            Step 3: Update CHANGELOG.md — rewrite ONLY the `## [Unreleased]` section at the top:
+            - Group by: Added / Changed / Fixed / Removed (include only applicable groups)
+            - One bullet per logical change; combine commits that touch the same feature
+            - Plain English, concise; no commit hashes
+            - Do NOT touch any versioned section
+
+            Step 4: Commit everything in one commit:
+            ```
+            git add CHANGELOG.md Docs/
+            git commit -m "docs: sync docs and changelog for ${{ env.HEAD_REF }}"
+            ```
+            If nothing needs updating, do not commit.
+
+  # ── Summary: post QA report as PR comment ────────────────────────────────────
+  summary:
+    name: "Post Summary"
+    runs-on: ubuntu-latest
+    needs: [docs-agent, re-test]
+    if: always()
+    steps:
+      - name: Download qa-report-final
+        id: dl-final
+        uses: actions/download-artifact@v4
+        with:
+          name: qa-report-final
+          path: reports/
+        continue-on-error: true
+
+      - name: Download qa-report (fallback)
+        if: steps.dl-final.outcome != 'success'
+        uses: actions/download-artifact@v4
+        with:
+          name: qa-report
+          path: reports/
+        continue-on-error: true
+
+      - name: Post PR comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let report = '_QA report not generated._';
+            try {
+              const raw = fs.readFileSync('reports/qa-report.md', 'utf8');
+              report = raw.length > 3000
+                ? raw.slice(0, 3000) + '\n\n…_(truncated — see artifact for full report)_'
+                : raw;
+            } catch {}
+
+            const body = [
+              '## Agent QA Pipeline Results',
+              '',
+              '<details><summary>QA Report</summary>',
+              '',
+              report,
+              '',
+              '</details>',
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });
