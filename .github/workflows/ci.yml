@@ -82,7 +82,13 @@ jobs:
           AUTH_SECRET: test-secret-32-chars-long-padded!!
           AUTH_GOOGLE_ID: test
           AUTH_GOOGLE_SECRET: test
-      - run: sleep 5 && npx playwright test
+      - name: Wait for frontend
+        run: |
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:3000 && break
+            sleep 3
+          done
+      - run: npx playwright test
         env:
           E2E_BASE_URL: http://localhost:3000
       - uses: actions/upload-artifact@v4
