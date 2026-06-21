@@ -400,6 +400,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             You are a senior Software Engineer. CI gate tests are failing on this PR. Fix the source code so all tests pass.
 
@@ -411,11 +412,11 @@ jobs:
             2. Read the suspected source file
             3. Fix the root cause in the SOURCE file — never edit test files
             4. Re-run the specific test to confirm it passes:
-               - pytest: `cd backend && DATABASE_URL=sqlite:///./test.db ANTHROPIC_API_KEY=test-key GOOGLE_CLIENT_ID=test-client-id FINNHUB_API_KEY=test-key JOB_SECRET=test-job-secret ADMIN_SECRET=test-admin-secret pytest {test_file}::{test_name} -v`
+               - pytest: `cd backend && ANTHROPIC_API_KEY=test-key pytest {test_file}::{test_name} -v`
                - jest:   `NEXT_PUBLIC_BACKEND_URL=http://localhost:8001 npx jest --testNamePattern "{test_name}" --no-coverage`
 
             Step 3: Run the full suites to confirm nothing else broke:
-            - `cd backend && DATABASE_URL=sqlite:///./test.db ANTHROPIC_API_KEY=test-key GOOGLE_CLIENT_ID=test-client-id FINNHUB_API_KEY=test-key JOB_SECRET=test-job-secret ADMIN_SECRET=test-admin-secret pytest tests/ -v --tb=short 2>&1 | tail -30`
+            - `cd backend && ANTHROPIC_API_KEY=test-key pytest tests/ -v --tb=short 2>&1 | tail -30`
             - `NEXT_PUBLIC_BACKEND_URL=http://localhost:8001 npx jest --ci --no-coverage 2>&1 | tail -20`
 
             Step 4: Commit:
@@ -435,7 +436,6 @@ jobs:
     if: github.event_name == 'pull_request' && !contains(github.actor, '[bot]')
     env:
       DATABASE_URL: sqlite:///./test.db
-      ANTHROPIC_API_KEY: test-key
       GOOGLE_CLIENT_ID: test-client-id
       FINNHUB_API_KEY: test-key
       JOB_SECRET: test-job-secret
@@ -461,6 +461,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             You are a senior Automation Test Engineer reviewing a PR for FinanceCompanion.
 
@@ -477,7 +478,7 @@ jobs:
             - Never call real external APIs (yfinance, Finnhub, Anthropic) — mock them
 
             Step 3: Run full suites and capture failures:
-            `cd backend && pytest tests/ -v --tb=short 2>&1 | tail -60`
+            `cd backend && ANTHROPIC_API_KEY=test-key pytest tests/ -v --tb=short 2>&1 | tail -60`
             `npx jest --ci --no-coverage 2>&1 | tail -30`
 
             Step 4: Write reports/qa-report.md:
@@ -561,6 +562,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             You are a security engineer. Fix the real vulnerabilities found by Bandit and Semgrep.
 
@@ -726,7 +728,6 @@ jobs:
     if: needs.check-bugs.outputs.bugs == 'true' && github.event_name == 'pull_request'
     env:
       DATABASE_URL: sqlite:///./test.db
-      ANTHROPIC_API_KEY: test-key
       GOOGLE_CLIENT_ID: test-client-id
       FINNHUB_API_KEY: test-key
       JOB_SECRET: test-job-secret
@@ -754,6 +755,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             You are a senior Software Engineer. Fix every bug in reports/qa-report.md.
 
@@ -767,7 +769,7 @@ jobs:
             5. Re-run to confirm it passes
 
             Step 3: Verify full suite is green:
-            `cd backend && pytest tests/ -v --tb=short 2>&1 | tail -30`
+            `cd backend && ANTHROPIC_API_KEY=test-key pytest tests/ -v --tb=short 2>&1 | tail -30`
             `npx jest --ci --no-coverage 2>&1 | tail -20`
 
             Step 4:
@@ -788,7 +790,6 @@ jobs:
     if: github.event_name == 'pull_request'
     env:
       DATABASE_URL: sqlite:///./test.db
-      ANTHROPIC_API_KEY: test-key
       GOOGLE_CLIENT_ID: test-client-id
       FINNHUB_API_KEY: test-key
       JOB_SECRET: test-job-secret
@@ -813,11 +814,12 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             Verify that fixes resolved all bugs from reports/qa-report.md.
 
             Step 1:
-            `cd backend && pytest tests/ -v --tb=short 2>&1 | tail -50`
+            `cd backend && ANTHROPIC_API_KEY=test-key pytest tests/ -v --tb=short 2>&1 | tail -50`
             `npx jest --ci --no-coverage 2>&1 | tail -20`
 
             Step 2: Append to reports/qa-report.md:
@@ -852,6 +854,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             You are a Technical Writer. Update docs to reflect this PR's changes.
 
