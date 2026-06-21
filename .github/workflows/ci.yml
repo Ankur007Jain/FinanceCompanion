@@ -16,7 +16,7 @@ name: Agentic CI Pipeline
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: [main]
 
@@ -29,13 +29,6 @@ permissions:
 env:
   BASE_REF: ${{ github.event.pull_request.base.ref || 'main' }}
   HEAD_REF: ${{ github.event.pull_request.head.ref || github.ref_name }}
-  # Shared test env — available to all jobs that set `env:` or reference these
-  TEST_DB_URL: sqlite:///./test.db
-  TEST_ANTHROPIC_KEY: test-key
-  TEST_GOOGLE_CLIENT: test-client-id
-  TEST_FINNHUB_KEY: test-key
-  TEST_JOB_SECRET: test-job-secret
-  TEST_ADMIN_SECRET: test-admin-secret
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TIER 1 — run in parallel on every push
@@ -50,12 +43,12 @@ jobs:
       run:
         working-directory: backend
     env:
-      DATABASE_URL: ${{ env.TEST_DB_URL }}
-      ANTHROPIC_API_KEY: ${{ env.TEST_ANTHROPIC_KEY }}
-      GOOGLE_CLIENT_ID: ${{ env.TEST_GOOGLE_CLIENT }}
-      FINNHUB_API_KEY: ${{ env.TEST_FINNHUB_KEY }}
-      JOB_SECRET: ${{ env.TEST_JOB_SECRET }}
-      ADMIN_SECRET: ${{ env.TEST_ADMIN_SECRET }}
+      DATABASE_URL: sqlite:///./test.db
+      ANTHROPIC_API_KEY: test-key
+      GOOGLE_CLIENT_ID: test-client-id
+      FINNHUB_API_KEY: test-key
+      JOB_SECRET: test-job-secret
+      ADMIN_SECRET: test-admin-secret
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -303,12 +296,12 @@ jobs:
     needs: [pytest, jest]
     if: github.event_name == 'pull_request'
     env:
-      DATABASE_URL: ${{ env.TEST_DB_URL }}
-      ANTHROPIC_API_KEY: ${{ env.TEST_ANTHROPIC_KEY }}
-      GOOGLE_CLIENT_ID: ${{ env.TEST_GOOGLE_CLIENT }}
-      FINNHUB_API_KEY: ${{ env.TEST_FINNHUB_KEY }}
-      JOB_SECRET: ${{ env.TEST_JOB_SECRET }}
-      ADMIN_SECRET: ${{ env.TEST_ADMIN_SECRET }}
+      DATABASE_URL: sqlite:///./test.db
+      ANTHROPIC_API_KEY: test-key
+      GOOGLE_CLIENT_ID: test-client-id
+      FINNHUB_API_KEY: test-key
+      JOB_SECRET: test-job-secret
+      ADMIN_SECRET: test-admin-secret
       FRONTEND_URL: http://localhost:3000
       NEXT_PUBLIC_BACKEND_URL: http://localhost:8001
       BACKEND_URL: http://localhost:8001
@@ -375,11 +368,7 @@ jobs:
     name: "fix-gates (self-heal)"
     runs-on: ubuntu-latest
     needs: [pytest, jest]
-    if: |
-      always() &&
-      (needs.pytest.result == 'failure' || needs.jest.result == 'failure') &&
-      github.event_name == 'pull_request' &&
-      !contains(github.triggering_actor, '[bot]')
+    if: "always() && (needs.pytest.result == 'failure' || needs.jest.result == 'failure') && github.event_name == 'pull_request' && !contains(github.actor, '[bot]')"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -443,14 +432,14 @@ jobs:
     name: "qa-agent"
     runs-on: ubuntu-latest
     needs: [pytest, jest]
-    if: github.event_name == 'pull_request' && !contains(github.triggering_actor, '[bot]')
+    if: github.event_name == 'pull_request' && !contains(github.actor, '[bot]')
     env:
-      DATABASE_URL: ${{ env.TEST_DB_URL }}
-      ANTHROPIC_API_KEY: ${{ env.TEST_ANTHROPIC_KEY }}
-      GOOGLE_CLIENT_ID: ${{ env.TEST_GOOGLE_CLIENT }}
-      FINNHUB_API_KEY: ${{ env.TEST_FINNHUB_KEY }}
-      JOB_SECRET: ${{ env.TEST_JOB_SECRET }}
-      ADMIN_SECRET: ${{ env.TEST_ADMIN_SECRET }}
+      DATABASE_URL: sqlite:///./test.db
+      ANTHROPIC_API_KEY: test-key
+      GOOGLE_CLIENT_ID: test-client-id
+      FINNHUB_API_KEY: test-key
+      JOB_SECRET: test-job-secret
+      ADMIN_SECRET: test-admin-secret
       NEXT_PUBLIC_BACKEND_URL: http://localhost:8001
     steps:
       - uses: actions/checkout@v4
@@ -545,11 +534,7 @@ jobs:
     name: "security-fix-agent (self-heal)"
     runs-on: ubuntu-latest
     needs: [bandit, semgrep]
-    if: |
-      always() &&
-      (needs.bandit.result == 'failure' || needs.semgrep.result == 'failure') &&
-      github.event_name == 'pull_request' &&
-      !contains(github.triggering_actor, '[bot]')
+    if: "always() && (needs.bandit.result == 'failure' || needs.semgrep.result == 'failure') && github.event_name == 'pull_request' && !contains(github.actor, '[bot]')"
     steps:
       - uses: actions/checkout@v4
         with:
@@ -740,12 +725,12 @@ jobs:
     needs: check-bugs
     if: needs.check-bugs.outputs.bugs == 'true' && github.event_name == 'pull_request'
     env:
-      DATABASE_URL: ${{ env.TEST_DB_URL }}
-      ANTHROPIC_API_KEY: ${{ env.TEST_ANTHROPIC_KEY }}
-      GOOGLE_CLIENT_ID: ${{ env.TEST_GOOGLE_CLIENT }}
-      FINNHUB_API_KEY: ${{ env.TEST_FINNHUB_KEY }}
-      JOB_SECRET: ${{ env.TEST_JOB_SECRET }}
-      ADMIN_SECRET: ${{ env.TEST_ADMIN_SECRET }}
+      DATABASE_URL: sqlite:///./test.db
+      ANTHROPIC_API_KEY: test-key
+      GOOGLE_CLIENT_ID: test-client-id
+      FINNHUB_API_KEY: test-key
+      JOB_SECRET: test-job-secret
+      ADMIN_SECRET: test-admin-secret
     steps:
       - uses: actions/checkout@v4
         with:
@@ -802,12 +787,12 @@ jobs:
     needs: fix-agent
     if: github.event_name == 'pull_request'
     env:
-      DATABASE_URL: ${{ env.TEST_DB_URL }}
-      ANTHROPIC_API_KEY: ${{ env.TEST_ANTHROPIC_KEY }}
-      GOOGLE_CLIENT_ID: ${{ env.TEST_GOOGLE_CLIENT }}
-      FINNHUB_API_KEY: ${{ env.TEST_FINNHUB_KEY }}
-      JOB_SECRET: ${{ env.TEST_JOB_SECRET }}
-      ADMIN_SECRET: ${{ env.TEST_ADMIN_SECRET }}
+      DATABASE_URL: sqlite:///./test.db
+      ANTHROPIC_API_KEY: test-key
+      GOOGLE_CLIENT_ID: test-client-id
+      FINNHUB_API_KEY: test-key
+      JOB_SECRET: test-job-secret
+      ADMIN_SECRET: test-admin-secret
       NEXT_PUBLIC_BACKEND_URL: http://localhost:8001
     steps:
       - uses: actions/checkout@v4

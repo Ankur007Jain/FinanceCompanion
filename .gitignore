@@ -25,6 +25,8 @@ dist/
 allure-results/
 allure-html/
 reports/
+test-results/
+playwright-report/
 .pytest_cache/
 .coverage
 

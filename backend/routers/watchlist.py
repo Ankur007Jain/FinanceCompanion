@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import requests
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -12,6 +13,8 @@ from schemas import WatchlistAddRequest, WatchlistItemOut
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
+
+_TICKER_RE = re.compile(r'^[A-Z]{1,5}([.\-][A-Z]{1,2})?$')
 
 _LEVERAGED_KEYWORDS = {"2x", "3x", "ultra", "ultrashort", "ultralong", "leveraged", "daily bull", "daily bear", "proshares", "direxion", "microsectors"}
 
@@ -81,6 +84,8 @@ def add_to_watchlist(
 ):
     user = get_current_user(id_token, db)
     ticker = body.ticker.upper().strip()
+    if not _TICKER_RE.match(ticker):
+        raise HTTPException(status_code=400, detail=f"Invalid ticker format: {ticker}")
     existing = db.query(WatchlistItem).filter(
         WatchlistItem.user_email == user.email,
         WatchlistItem.ticker == ticker,
