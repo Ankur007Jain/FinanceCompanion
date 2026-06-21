@@ -8,5 +8,5 @@ module.exports = createJestConfig({
     "default",
     ["jest-junit", { outputDirectory: "reports", outputName: "jest.xml" }],
   ],
-  setupFilesAfterFramework: ["<rootDir>/jest.setup.ts"],
+  setupFilesAfterEnv: ["<rootDir>/jest.setup.ts"],
 });
