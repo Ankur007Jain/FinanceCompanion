@@ -16,7 +16,7 @@ name: Agentic CI Pipeline
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: [main]
 
