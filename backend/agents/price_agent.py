@@ -52,10 +52,14 @@ def _compute_rsi(closes: pd.Series, period: int = 14) -> Optional[float]:
     return round(float(val), 2) if pd.notna(val) else None
 
 
-def _yfinance_fetch(ticker: str) -> dict:
-    t = yf.Ticker(ticker)
-    info = t.info
-    hist = t.history(period="1y")
+def _yfinance_fetch(ticker: str, yf_data=None) -> dict:
+    if yf_data is not None:
+        info = yf_data.info
+        hist = yf_data.history
+    else:
+        t = yf.Ticker(ticker)
+        info = t.info
+        hist = t.history(period="1y")
 
     current = info.get("currentPrice") or info.get("regularMarketPrice", 0.0)
     prev = info.get("previousClose", 0.0)
@@ -113,10 +117,10 @@ def _cross_validate(primary: dict, secondary: Optional[dict]) -> str:
     return ""
 
 
-async def fetch_price_data(ticker: str) -> PriceData:
+async def fetch_price_data(ticker: str, yf_data=None) -> PriceData:
     loop = asyncio.get_event_loop()
     primary, secondary = await asyncio.gather(
-        loop.run_in_executor(None, _yfinance_fetch, ticker),
+        loop.run_in_executor(None, _yfinance_fetch, ticker, yf_data),
         loop.run_in_executor(None, _finnhub_fetch, ticker),
     )
     conflict = _cross_validate(primary, secondary)

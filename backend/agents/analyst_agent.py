@@ -27,9 +27,9 @@ def _finnhub_client() -> Optional[finnhub.Client]:
     return finnhub.Client(api_key=key) if key else None
 
 
-def _yf_analyst(ticker: str) -> dict:
+def _yf_analyst(ticker: str, prefetched=None) -> dict:
     try:
-        info = yf.Ticker(ticker).info
+        info = prefetched.info if prefetched is not None else yf.Ticker(ticker).info
         rec = (info.get("recommendationKey") or "").upper().replace("_", " ")
         label_map = {
             "STRONG BUY": "STRONG BUY", "BUY": "BUY", "HOLD": "HOLD",
@@ -77,28 +77,28 @@ def _fh_analyst(ticker: str) -> Optional[str]:
         return None
 
 
-async def fetch_analyst_data(ticker: str, current_price: float = 0.0) -> AnalystData:
+async def fetch_analyst_data(ticker: str, current_price: float = 0.0, prefetched=None) -> AnalystData:
     loop = asyncio.get_event_loop()
-    yf_data, fh_consensus = await asyncio.gather(
-        loop.run_in_executor(None, _yf_analyst, ticker),
+    yf_result, fh_consensus = await asyncio.gather(
+        loop.run_in_executor(None, _yf_analyst, ticker, prefetched),
         loop.run_in_executor(None, _fh_analyst, ticker),
     )
 
     conflict = ""
-    if fh_consensus and fh_consensus != "N/A" and yf_data["consensus"] != "N/A":
-        if fh_consensus != yf_data["consensus"]:
-            conflict = f"Analyst conflict: yfinance={yf_data['consensus']} vs Finnhub={fh_consensus}."
+    if fh_consensus and fh_consensus != "N/A" and yf_result["consensus"] != "N/A":
+        if fh_consensus != yf_result["consensus"]:
+            conflict = f"Analyst conflict: yfinance={yf_result['consensus']} vs Finnhub={fh_consensus}."
 
     upside = None
-    if current_price and yf_data["target_mean"]:
-        upside = round((yf_data["target_mean"] - current_price) / current_price * 100, 1)
+    if current_price and yf_result["target_mean"]:
+        upside = round((yf_result["target_mean"] - current_price) / current_price * 100, 1)
 
     return AnalystData(
-        consensus=yf_data["consensus"],
-        analyst_count=yf_data["analyst_count"],
-        target_mean=yf_data["target_mean"],
-        target_high=yf_data["target_high"],
-        target_low=yf_data["target_low"],
+        consensus=yf_result["consensus"],
+        analyst_count=yf_result["analyst_count"],
+        target_mean=yf_result["target_mean"],
+        target_high=yf_result["target_high"],
+        target_low=yf_result["target_low"],
         upside_pct=upside,
         conflict_notes=conflict,
     )
