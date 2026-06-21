@@ -1,6 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { signOut } from "next-auth/react";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 
@@ -18,8 +19,24 @@ interface Analysis {
   ma_200: number | null;
   rsi: number | null;
   analyst_consensus: string | null;
+  pe_trailing: number | null;
+  pe_forward: number | null;
+  revenue_growth: number | null;
+  profit_margin: number | null;
+  debt_to_equity: number | null;
+  beta: number | null;
+  short_float_pct: number | null;
+  inst_ownership_pct: number | null;
+  sp500_52w_change: number | null;
+  stock_52w_change: number | null;
+  dividend_yield: number | null;
+  market_cap: number | null;
+  sector: string | null;
+  industry: string | null;
   entry_target: number | null;
   exit_target: number | null;
+  stop_loss: number | null;
+  hold_period: string | null;
   reasoning: string | null;
   news_summary: string | null;
   ripple_analysis: string | null;
@@ -116,16 +133,36 @@ function ExpandedDetail({ a, onChat }: { a: Analysis; onChat: () => void }) {
         <div style={{ fontSize: "0.72rem", color: "var(--t-text-muted)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: "0.6rem" }}>
           Price Targets
         </div>
-        {a.entry_target ? (
-          <div style={{ display: "flex", gap: "1rem" }}>
-            <div>
-              <div style={{ fontSize: "0.7rem", color: "var(--t-text-muted)" }}>Entry</div>
-              <div style={{ fontWeight: 700, color: "#22c55e", fontSize: "1.05rem" }}>${a.entry_target.toFixed(2)}</div>
+        {(a.entry_target || a.exit_target || a.stop_loss || a.hold_period) ? (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+            <div style={{ display: "flex", gap: "1rem", flexWrap: "wrap" }}>
+              {a.entry_target && (
+                <div>
+                  <div style={{ fontSize: "0.7rem", color: "var(--t-text-muted)" }}>Entry</div>
+                  <div style={{ fontWeight: 700, color: "#22c55e", fontSize: "1.05rem" }}>${a.entry_target.toFixed(2)}</div>
+                </div>
+              )}
+              {a.exit_target && (
+                <div>
+                  <div style={{ fontSize: "0.7rem", color: "var(--t-text-muted)" }}>Take Profit</div>
+                  <div style={{ fontWeight: 700, color: "#3b82f6", fontSize: "1.05rem" }}>${a.exit_target.toFixed(2)}</div>
+                </div>
+              )}
+              {a.stop_loss && (
+                <div>
+                  <div style={{ fontSize: "0.7rem", color: "var(--t-text-muted)" }}>Stop Loss</div>
+                  <div style={{ fontWeight: 700, color: "#ef4444", fontSize: "1.05rem" }}>${a.stop_loss.toFixed(2)}</div>
+                </div>
+              )}
             </div>
-            {a.exit_target && (
-              <div>
-                <div style={{ fontSize: "0.7rem", color: "var(--t-text-muted)" }}>Exit</div>
-                <div style={{ fontWeight: 700, color: "#ef4444", fontSize: "1.05rem" }}>${a.exit_target.toFixed(2)}</div>
+            {a.hold_period && (
+              <div style={{
+                display: "inline-flex", alignItems: "center", gap: "0.35rem",
+                padding: "0.25rem 0.6rem", background: "rgba(148,163,184,0.1)",
+                borderRadius: "0.35rem", width: "fit-content",
+              }}>
+                <span style={{ fontSize: "0.72rem", color: "var(--t-text-muted)" }}>Hold:</span>
+                <span style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--t-text)" }}>{a.hold_period}</span>
               </div>
             )}
           </div>
@@ -184,8 +221,91 @@ function ExpandedDetail({ a, onChat }: { a: Analysis; onChat: () => void }) {
           💬 Ask AI about this
         </button>
       </div>
+
+      {/* Fundamentals — full-width row spanning all 3 columns */}
+      {(a.pe_trailing || a.revenue_growth || a.profit_margin || a.beta || a.market_cap || a.sector) && (
+        <div style={{ gridColumn: "1 / -1", borderTop: "1px solid var(--t-border)", paddingTop: "1rem" }}>
+          <div style={{ fontSize: "0.72rem", color: "var(--t-text-muted)", fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: "0.75rem" }}>
+            Fundamentals
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.75rem 1.5rem" }}>
+            {a.pe_trailing != null && (
+              <FundStat label="P/E (TTM)" value={a.pe_trailing.toFixed(1) + "x"} />
+            )}
+            {a.pe_forward != null && (
+              <FundStat label="P/E (Fwd)" value={a.pe_forward.toFixed(1) + "x"} />
+            )}
+            {a.revenue_growth != null && (
+              <FundStat label="Revenue Growth" value={pct(a.revenue_growth)} color={a.revenue_growth >= 0 ? "#22c55e" : "#ef4444"} />
+            )}
+            {a.profit_margin != null && (
+              <FundStat label="Net Margin" value={pct(a.profit_margin)} color={a.profit_margin >= 0 ? "#22c55e" : "#ef4444"} />
+            )}
+            {a.debt_to_equity != null && (
+              <FundStat label="Debt / Equity" value={a.debt_to_equity.toFixed(1)} />
+            )}
+            {a.beta != null && (
+              <FundStat label="Beta" value={a.beta.toFixed(2)} color={a.beta > 1.5 ? "#f59e0b" : undefined} />
+            )}
+            {a.short_float_pct != null && (
+              <FundStat label="Short Interest" value={pct(a.short_float_pct)} color={a.short_float_pct > 0.2 ? "#ef4444" : undefined} />
+            )}
+            {a.inst_ownership_pct != null && (
+              <FundStat label="Inst. Ownership" value={pct(a.inst_ownership_pct)} />
+            )}
+            {(a.stock_52w_change != null || a.sp500_52w_change != null) && (
+              <div>
+                <div style={{ fontSize: "0.65rem", color: "var(--t-text-muted)", marginBottom: "0.2rem" }}>vs S&P 500 (52w)</div>
+                <div style={{ display: "flex", gap: "0.5rem", alignItems: "baseline" }}>
+                  {a.stock_52w_change != null && (
+                    <span style={{ fontWeight: 700, fontSize: "0.88rem", color: a.stock_52w_change >= 0 ? "#22c55e" : "#ef4444" }}>
+                      {pct(a.stock_52w_change)}
+                    </span>
+                  )}
+                  {a.sp500_52w_change != null && (
+                    <span style={{ fontSize: "0.72rem", color: "var(--t-text-muted)" }}>
+                      / {pct(a.sp500_52w_change)} S&P
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            {a.market_cap != null && (
+              <FundStat label="Market Cap" value={fmtCap(a.market_cap)} />
+            )}
+            {a.dividend_yield != null && a.dividend_yield > 0 && (
+              <FundStat label="Dividend Yield" value={pct(a.dividend_yield)} color="#22c55e" />
+            )}
+          </div>
+          {(a.sector || a.industry) && (
+            <div style={{ marginTop: "0.6rem", fontSize: "0.72rem", color: "var(--t-text-muted)" }}>
+              {[a.sector, a.industry].filter(Boolean).join(" · ")}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
+}
+
+function FundStat({ label, value, color }: { label: string; value: string; color?: string }) {
+  return (
+    <div>
+      <div style={{ fontSize: "0.65rem", color: "var(--t-text-muted)", marginBottom: "0.2rem" }}>{label}</div>
+      <div style={{ fontWeight: 700, fontSize: "0.88rem", color: color ?? "var(--t-text)" }}>{value}</div>
+    </div>
+  );
+}
+
+function pct(v: number) {
+  return (v * 100).toFixed(1) + "%";
+}
+
+function fmtCap(v: number) {
+  if (v >= 1e12) return "$" + (v / 1e12).toFixed(1) + "T";
+  if (v >= 1e9)  return "$" + (v / 1e9).toFixed(1) + "B";
+  if (v >= 1e6)  return "$" + (v / 1e6).toFixed(1) + "M";
+  return "$" + v.toLocaleString();
 }
 
 function StockRow({
@@ -324,6 +444,10 @@ export default function DashboardClient({
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [suggestions, setSuggestions] = useState<{ ticker: string; name: string; exchange: string }[]>([]);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { fetchDigest(); }, []);
 
@@ -335,7 +459,7 @@ export default function DashboardClient({
     } finally { setLoading(false); }
   }
 
-  async function handleAdd(e: React.FormEvent) {
+  async function handleAdd(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
     if (!ticker.trim()) return;
     setAdding(true); setError("");
@@ -348,6 +472,28 @@ export default function DashboardClient({
       if (r.ok) { setTicker(""); setCompanyName(""); fetchDigest(); }
       else { const d = await r.json(); setError(d.detail || "Failed to add."); }
     } finally { setAdding(false); }
+  }
+
+  function handleSearchInput(val: string) {
+    setQuery(val);
+    setTicker("");
+    setCompanyName("");
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (val.trim().length < 1) { setSuggestions([]); setShowSuggestions(false); return; }
+    debounceRef.current = setTimeout(async () => {
+      try {
+        const r = await fetch(`${API}/watchlist/search?q=${encodeURIComponent(val)}&id_token=${encodeURIComponent(idToken)}`);
+        if (r.ok) { setSuggestions(await r.json()); setShowSuggestions(true); }
+      } catch { /* ignore */ }
+    }, 300);
+  }
+
+  function handleSelect(s: { ticker: string; name: string }) {
+    setTicker(s.ticker);
+    setCompanyName(s.name);
+    setQuery(`${s.ticker} — ${s.name}`);
+    setSuggestions([]);
+    setShowSuggestions(false);
   }
 
   async function handleChat(t: string) {
@@ -379,6 +525,12 @@ export default function DashboardClient({
             💬 Chat
           </button>
           <span style={{ color: "var(--t-text-muted)", fontSize: "0.82rem" }}>{userName}</span>
+          <button onClick={() => signOut({ callbackUrl: "/signin" })} style={{
+            padding: "0.35rem 0.8rem", background: "transparent", color: "var(--t-text-muted)",
+            border: "1px solid var(--t-border)", borderRadius: "0.4rem", cursor: "pointer", fontSize: "0.82rem",
+          }}>
+            Sign out
+          </button>
         </div>
       </nav>
 
@@ -450,29 +602,52 @@ export default function DashboardClient({
           border: "1px solid var(--t-border)", borderRadius: "0.75rem",
           alignItems: "center", flexWrap: "wrap",
         }}>
-          <input
-            value={ticker}
-            onChange={e => setTicker(e.target.value.toUpperCase())}
-            placeholder="Ticker (e.g. NVDA)"
-            style={{
-              width: 130, padding: "0.5rem 0.75rem", background: "var(--t-bg)",
-              border: "1px solid var(--t-border)", borderRadius: "0.4rem",
-              color: "var(--t-text)", fontSize: "0.88rem",
-            }}
-          />
-          <input
-            value={companyName}
-            onChange={e => setCompanyName(e.target.value)}
-            placeholder="Company name (optional)"
-            style={{
-              flex: "1 1 180px", padding: "0.5rem 0.75rem", background: "var(--t-bg)",
-              border: "1px solid var(--t-border)", borderRadius: "0.4rem",
-              color: "var(--t-text)", fontSize: "0.88rem",
-            }}
-          />
-          <button type="submit" disabled={adding} style={{
+          <div style={{ position: "relative", flex: "1 1 260px" }}>
+            <input
+              value={query}
+              onChange={e => handleSearchInput(e.target.value)}
+              onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+              onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+              placeholder="Search ticker or company name…"
+              autoComplete="off"
+              style={{
+                width: "100%", padding: "0.5rem 0.75rem", background: "var(--t-bg)",
+                border: "1px solid var(--t-border)", borderRadius: "0.4rem",
+                color: "var(--t-text)", fontSize: "0.88rem", boxSizing: "border-box",
+              }}
+            />
+            {showSuggestions && suggestions.length > 0 && (
+              <div style={{
+                position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50,
+                background: "var(--t-surface)", border: "1px solid var(--t-border)",
+                borderRadius: "0.5rem", overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
+              }}>
+                {suggestions.map(s => (
+                  <div
+                    key={s.ticker}
+                    onMouseDown={() => handleSelect(s)}
+                    style={{
+                      padding: "0.6rem 0.85rem", cursor: "pointer", display: "flex",
+                      justifyContent: "space-between", alignItems: "center", gap: "0.5rem",
+                      borderBottom: "1px solid var(--t-border)",
+                    }}
+                    onMouseOver={e => (e.currentTarget.style.background = "var(--t-bg)")}
+                    onMouseOut={e => (e.currentTarget.style.background = "transparent")}
+                  >
+                    <div>
+                      <span style={{ fontWeight: 700, fontSize: "0.88rem", color: "var(--t-text)" }}>{s.ticker}</span>
+                      <span style={{ marginLeft: "0.5rem", fontSize: "0.82rem", color: "var(--t-text-muted)" }}>{s.name}</span>
+                    </div>
+                    <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)", flexShrink: 0 }}>{s.exchange}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+          <button type="submit" disabled={adding || !ticker} style={{
             padding: "0.5rem 1.1rem", background: "var(--t-primary)", color: "#fff",
-            border: "none", borderRadius: "0.4rem", cursor: "pointer", fontWeight: 600, fontSize: "0.88rem",
+            border: "none", borderRadius: "0.4rem", cursor: ticker ? "pointer" : "not-allowed",
+            fontWeight: 600, fontSize: "0.88rem", opacity: ticker ? 1 : 0.5,
           }}>
             {adding ? "Adding…" : "+ Add"}
           </button>

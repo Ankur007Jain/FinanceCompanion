@@ -1,4 +1,5 @@
 import os
+from datetime import date
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -46,9 +47,30 @@ def ingest_analysis(body: IngestAnalysisRequest, x_job_secret: str = "", db: Ses
         "ma_200": body.ma200,
         "rsi": body.rsi,
         "analyst_consensus": body.analyst_consensus,
+        "pe_trailing": body.pe_trailing,
+        "pe_forward": body.pe_forward,
+        "revenue_growth": body.revenue_growth,
+        "earnings_growth": body.earnings_growth,
+        "profit_margin": body.profit_margin,
+        "debt_to_equity": body.debt_to_equity,
+        "free_cashflow": body.free_cashflow,
+        "return_on_equity": body.return_on_equity,
+        "beta": body.beta,
+        "short_float_pct": body.short_float_pct,
+        "short_ratio": body.short_ratio,
+        "inst_ownership_pct": body.inst_ownership_pct,
+        "insider_ownership_pct": body.insider_ownership_pct,
+        "sp500_52w_change": body.sp500_52w_change,
+        "stock_52w_change": body.stock_52w_change,
+        "dividend_yield": body.dividend_yield,
+        "market_cap": body.market_cap,
+        "sector": body.sector,
+        "industry": body.industry,
         "verdict": body.verdict,
         "entry_target": body.entry_target,
         "exit_target": body.exit_target,
+        "stop_loss": body.stop_loss,
+        "hold_period": body.hold_period,
         "reasoning": body.reasoning,
         "news_summary": body.news_summary,
         "ripple_analysis": body.ripple_analysis,
@@ -82,6 +104,16 @@ def list_all_tickers(x_admin_secret: str = "", db: Session = Depends(get_db)):
     from models import WatchlistItem
     tickers = db.query(WatchlistItem.ticker).distinct().all()
     return {"tickers": [t[0] for t in tickers]}
+
+
+@router.get("/admin/analyzed-today")
+def analyzed_today(x_admin_secret: str = "", db: Session = Depends(get_db)):
+    """Returns tickers already analyzed today — agent skips these to avoid redundant fetches."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    today = date.today()
+    rows = db.query(StockAnalysis.ticker).filter(StockAnalysis.analysis_date == today).all()
+    return {"date": str(today), "analyzed": [r[0] for r in rows]}
 
 
 @router.get("/health")

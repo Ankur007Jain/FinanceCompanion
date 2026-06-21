@@ -21,10 +21,16 @@ def _finnhub_client() -> Optional[finnhub.Client]:
 def _yf_news(ticker: str, yf_data=None) -> list[str]:
     try:
         items = (yf_data.news if yf_data is not None else yf.Ticker(ticker).news) or []
-        return [
-            f"{n.get('title', '')} — {n.get('publisher', '')} ({n.get('providerPublishTime', '')})"
-            for n in items[:8]
-        ]
+        lines = []
+        for n in items[:8]:
+            title = n.get("title", "")
+            publisher = n.get("publisher", "")
+            url = n.get("link") or n.get("url") or ""
+            if url:
+                lines.append(f"{title} [{publisher}] — {url}")
+            else:
+                lines.append(f"{title} [{publisher}]")
+        return lines
     except Exception:
         return []
 
@@ -38,7 +44,16 @@ def _finnhub_news(ticker: str) -> list[str]:
         today = date.today().isoformat()
         week_ago = (date.today() - timedelta(days=7)).isoformat()
         items = client.company_news(ticker, _from=week_ago, to=today) or []
-        return [f"{n.get('headline', '')} — {n.get('source', '')}" for n in items[:8]]
+        lines = []
+        for n in items[:8]:
+            headline = n.get("headline", "")
+            source = n.get("source", "")
+            url = n.get("url") or ""
+            if url:
+                lines.append(f"{headline} [{source}] — {url}")
+            else:
+                lines.append(f"{headline} [{source}]")
+        return lines
     except Exception:
         return []
 
@@ -72,9 +87,11 @@ async def fetch_news(ticker: str, company_name: str = "", yf_data=None) -> str:
     name = company_name or ticker
     prompt = (
         f"You are analyzing recent news for {name} ({ticker}).\n\n"
-        f"Raw headlines:\n{raw}\n\n"
-        "Summarize in 3-4 sentences: what happened, overall sentiment (positive/negative/neutral), "
-        "and any specific catalysts that could move the stock. Be factual, no fluff."
+        f"Raw headlines (with source URLs where available):\n{raw}\n\n"
+        "Write a 3-4 sentence summary for a busy professional who is not a finance expert. "
+        "Plain English only — no jargon. "
+        "For the single most important story, name the source and include its URL in parentheses at the end of that sentence. "
+        "Cover: what actually happened, whether it's good or bad for the stock, and any upcoming event to watch."
     )
     resp = await client.messages.create(
         model=_HAIKU, max_tokens=300,

@@ -14,16 +14,25 @@ from agents.analyst_agent import AnalystData
 
 _SONNET = "claude-sonnet-4-6"
 
-_SYSTEM = """You are FinanceCompanion's chief advisor — a confident, data-driven analyst
-who gives working professionals clear, actionable stock guidance.
+_SYSTEM = """You are FinanceCompanion's advisor. You talk to busy working professionals — not finance experts.
+Your job is to give them one clear, honest recommendation they can act on.
 
-Rules:
-- Issue exactly one verdict: BUY, HOLD, SELL, or WATCH
-- Always include a specific entry target price and exit target price
-- Cite the single most important reason for your verdict
-- If signals contradict each other (e.g., technical BUY but analyst SELL), address the conflict directly
-- Leveraged ETFs: apply stricter rules — max hold 1-3 days, never recommend holding through earnings
-- Never hedge with "it depends" — commit to a position with clear reasoning
+Language rules (strictly enforced):
+- Write like you're texting a smart friend, not writing a research report
+- No jargon. Replace finance terms with plain words:
+    "RSI overbought" → "the stock has run up fast and may be due for a pullback"
+    "trading below 200-day MA" → "the stock is below where it averaged over the past year — a weak sign"
+    "multiple compression" → "investors are paying less per dollar of earnings than before"
+    "headwinds" → "challenges" or just name the specific problem
+    "catalyst" → "reason to move" or "trigger"
+    "consolidating" → "trading sideways"
+    "bullish/bearish" → "likely to go up / likely to go down"
+- When citing a news event, name the source and include the URL if one was provided.
+  Example: "Netflix beat subscriber estimates by 10% this quarter (per Reuters: https://...)"
+- When citing a price level or ratio, include the actual number.
+  Example: "analysts on average expect it to reach $320 — about 12% above today's price"
+- Leveraged ETFs: apply stricter rules — max hold 1-3 days, never hold through earnings
+- Never hedge with "it depends" — commit to a position
 - Output must be valid JSON matching the schema exactly
 """
 
@@ -31,6 +40,8 @@ _SCHEMA = """{
   "verdict": "BUY|HOLD|SELL|WATCH",
   "entry_target": <float or null>,
   "exit_target": <float or null>,
+  "stop_loss": <float or null>,
+  "hold_period": "<e.g. '3-5 days', '2-4 weeks', '1-3 months', or null if WATCH/SELL>",
   "reasoning": "<2-3 sentences, specific and confident>",
   "conflict_flags": "<any contradictions between signals, or empty string>",
   "is_important_day": <true|false>,
@@ -43,6 +54,8 @@ class VerdictResult:
     verdict: str
     entry_target: Optional[float]
     exit_target: Optional[float]
+    stop_loss: Optional[float]
+    hold_period: Optional[str]
     reasoning: str
     conflict_flags: str
     is_important_day: bool = False
@@ -64,6 +77,7 @@ async def generate_verdict(
     if not api_key:
         return VerdictResult(
             verdict="WATCH", entry_target=None, exit_target=None,
+            stop_loss=None, hold_period=None,
             reasoning="ANTHROPIC_API_KEY not set — cannot generate verdict.",
             conflict_flags="",
         )
@@ -84,6 +98,25 @@ async def generate_verdict(
         f"  • {e['date']} — {e['description']}" for e in events
     ) or "  • None upcoming"
 
+    def _pct(v):
+        return f"{v*100:.1f}%" if v is not None else "N/A"
+
+    def _fmt(v, prefix="", suffix="", decimals=2):
+        return f"{prefix}{v:.{decimals}f}{suffix}" if v is not None else "N/A"
+
+    fundamentals_block = f"""
+=== FUNDAMENTALS ===
+Valuation:       P/E trailing={_fmt(analyst.pe_trailing, decimals=1)}x  |  P/E forward={_fmt(analyst.pe_forward, decimals=1)}x
+Growth:          Revenue={_pct(analyst.revenue_growth)} YoY  |  Earnings={_pct(analyst.earnings_growth)} YoY
+Profitability:   Net margin={_pct(analyst.profit_margin)}  |  ROE={_pct(analyst.return_on_equity)}
+Health:          Debt/Equity={_fmt(analyst.debt_to_equity, decimals=1)}  |  Free cashflow=${analyst.free_cashflow/1e9:.2f}B" if analyst.free_cashflow else "  Free cashflow=N/A"
+Market:          Beta={_fmt(analyst.beta, decimals=2)}  |  Market cap={f"${analyst.market_cap/1e9:.1f}B" if analyst.market_cap else "N/A"}
+Relative Perf:   Stock 52w={_pct(analyst.stock_52w_change)}  |  S&P 500 52w={_pct(analyst.sp500_52w_change)}
+Short Interest:  {_pct(analyst.short_float_pct)} of float  |  Days to cover={_fmt(analyst.short_ratio, decimals=1)}
+Ownership:       Institutions={_pct(analyst.inst_ownership_pct)}  |  Insiders={_pct(analyst.insider_ownership_pct)}
+Dividend:        Yield={_pct(analyst.dividend_yield)}
+Sector:          {analyst.sector or "N/A"} / {analyst.industry or "N/A"}"""
+
     prompt = f"""
 Ticker: {ticker} {"[LEVERAGED ETF — apply strict hold rules]" if is_leveraged else ""}
 
@@ -95,6 +128,7 @@ Volume:          {price.volume:,} vs {price.avg_volume:,} avg
 50-Day MA:       ${price.ma_50:.2f}
 200-Day MA:      ${price.ma_200:.2f}
 RSI:             {price.rsi if price.rsi else 'N/A'}
+{fundamentals_block}
 
 === ANALYST CONSENSUS ===
 Consensus:       {analyst.consensus} ({analyst.analyst_count} analysts)
@@ -146,6 +180,8 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
             verdict=data.get("verdict", "WATCH"),
             entry_target=data.get("entry_target"),
             exit_target=data.get("exit_target"),
+            stop_loss=data.get("stop_loss"),
+            hold_period=data.get("hold_period"),
             reasoning=data.get("reasoning", ""),
             conflict_flags=data.get("conflict_flags", ""),
             is_important_day=bool(data.get("is_important_day", False)),
@@ -156,6 +192,8 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
             verdict="WATCH",
             entry_target=None,
             exit_target=None,
+            stop_loss=None,
+            hold_period=None,
             reasoning=raw[:500],
             conflict_flags="JSON parse error — raw reasoning stored.",
         )

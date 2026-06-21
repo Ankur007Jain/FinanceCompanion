@@ -42,6 +42,52 @@ def _migrate_db():
                 conn.execute(text("ALTER TABLE conversations ADD COLUMN updated_at DATETIME"))
             conn.commit()
 
+        if "stock_analyses" in tables:
+            cols = {c["name"] for c in inspector.get_columns("stock_analyses")}
+            new_cols = {
+                "pe_trailing":           "FLOAT",
+                "pe_forward":            "FLOAT",
+                "revenue_growth":        "FLOAT",
+                "earnings_growth":       "FLOAT",
+                "profit_margin":         "FLOAT",
+                "debt_to_equity":        "FLOAT",
+                "free_cashflow":         "FLOAT",
+                "return_on_equity":      "FLOAT",
+                "beta":                  "FLOAT",
+                "short_float_pct":       "FLOAT",
+                "short_ratio":           "FLOAT",
+                "inst_ownership_pct":    "FLOAT",
+                "insider_ownership_pct": "FLOAT",
+                "sp500_52w_change":      "FLOAT",
+                "stock_52w_change":      "FLOAT",
+                "dividend_yield":        "FLOAT",
+                "market_cap":            "FLOAT",
+                "sector":                "VARCHAR",
+                "industry":              "VARCHAR",
+                "fundamentals_json":     "TEXT",
+                "stop_loss":             "FLOAT",
+                "hold_period":           "VARCHAR",
+            }
+            for col, typ in new_cols.items():
+                if col not in cols:
+                    conn.execute(text(f"ALTER TABLE stock_analyses ADD COLUMN {col} {typ}"))
+            conn.commit()
+
+        if "market_data_cache" not in tables:
+            conn.execute(text("""
+                CREATE TABLE market_data_cache (
+                    ticker VARCHAR NOT NULL,
+                    cache_date DATE NOT NULL,
+                    info_json TEXT,
+                    history_json TEXT,
+                    news_json TEXT,
+                    calendar_json TEXT,
+                    created_at DATETIME,
+                    PRIMARY KEY (ticker, cache_date)
+                )
+            """))
+            conn.commit()
+
         is_pg = str(engine.url).startswith("postgresql")
         insert_ignore = (
             "INSERT INTO app_config (key, value) VALUES (:k, :v) ON CONFLICT (key) DO NOTHING"

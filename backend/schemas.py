@@ -55,9 +55,30 @@ class StockAnalysisOut(BaseModel):
     analyst_consensus: Optional[str]
     analyst_count: Optional[int]
     target_price_mean: Optional[float]
+    pe_trailing: Optional[float]
+    pe_forward: Optional[float]
+    revenue_growth: Optional[float]
+    earnings_growth: Optional[float]
+    profit_margin: Optional[float]
+    debt_to_equity: Optional[float]
+    free_cashflow: Optional[float]
+    return_on_equity: Optional[float]
+    beta: Optional[float]
+    short_float_pct: Optional[float]
+    short_ratio: Optional[float]
+    inst_ownership_pct: Optional[float]
+    insider_ownership_pct: Optional[float]
+    sp500_52w_change: Optional[float]
+    stock_52w_change: Optional[float]
+    dividend_yield: Optional[float]
+    market_cap: Optional[float]
+    sector: Optional[str]
+    industry: Optional[str]
     verdict: Optional[str]
     entry_target: Optional[float]
     exit_target: Optional[float]
+    stop_loss: Optional[float]
+    hold_period: Optional[str]
     reasoning: Optional[str]
     news_summary: Optional[str]
     events_json: Optional[str]
@@ -151,9 +172,30 @@ class IngestAnalysisRequest(BaseModel):
     rsi: Optional[float] = None
     analyst_consensus: Optional[str] = None
     analyst_upside_pct: Optional[float] = None
+    pe_trailing: Optional[float] = None
+    pe_forward: Optional[float] = None
+    revenue_growth: Optional[float] = None
+    earnings_growth: Optional[float] = None
+    profit_margin: Optional[float] = None
+    debt_to_equity: Optional[float] = None
+    free_cashflow: Optional[float] = None
+    return_on_equity: Optional[float] = None
+    beta: Optional[float] = None
+    short_float_pct: Optional[float] = None
+    short_ratio: Optional[float] = None
+    inst_ownership_pct: Optional[float] = None
+    insider_ownership_pct: Optional[float] = None
+    sp500_52w_change: Optional[float] = None
+    stock_52w_change: Optional[float] = None
+    dividend_yield: Optional[float] = None
+    market_cap: Optional[float] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
     verdict: str
     entry_target: Optional[float] = None
     exit_target: Optional[float] = None
+    stop_loss: Optional[float] = None
+    hold_period: Optional[str] = None
     reasoning: Optional[str] = None
     news_summary: Optional[str] = None
     ripple_analysis: Optional[str] = None
