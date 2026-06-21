@@ -8,6 +8,17 @@ from schemas import WatchlistAddRequest, WatchlistItemOut
 
 router = APIRouter(prefix="/watchlist", tags=["watchlist"])
 
+_LEVERAGED_KEYWORDS = {"2x", "3x", "ultra", "ultrashort", "ultralong", "leveraged", "daily bull", "daily bear", "proshares", "direxion", "microsectors"}
+
+def _detect_leveraged(ticker: str) -> bool:
+    try:
+        import yfinance as yf
+        info = yf.Ticker(ticker).info
+        name = (info.get("longName") or info.get("shortName") or "").lower()
+        return any(kw in name for kw in _LEVERAGED_KEYWORDS)
+    except Exception:
+        return False
+
 
 @router.get("", response_model=list[WatchlistItemOut])
 def list_watchlist(id_token: str, db: Session = Depends(get_db)):
@@ -26,12 +37,13 @@ def add_to_watchlist(id_token: str, body: WatchlistAddRequest, db: Session = Dep
     ).first()
     if existing:
         raise HTTPException(status_code=409, detail=f"{ticker} already in watchlist.")
+    is_leveraged = _detect_leveraged(ticker)
     item = WatchlistItem(
         user_email=user.email,
         ticker=ticker,
         company_name=body.company_name,
         sector=body.sector,
-        is_leveraged=body.is_leveraged,
+        is_leveraged=is_leveraged,
     )
     db.add(item)
     db.commit()

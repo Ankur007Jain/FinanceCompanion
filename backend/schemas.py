@@ -62,6 +62,8 @@ class StockAnalysisOut(BaseModel):
     news_summary: Optional[str]
     events_json: Optional[str]
     ripple_analysis: Optional[str]
+    is_important_day: Optional[bool]
+    importance_reason: Optional[str]
     created_at: datetime
 
     class Config:
