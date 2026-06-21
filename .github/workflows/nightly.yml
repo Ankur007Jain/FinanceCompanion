@@ -27,6 +27,7 @@ jobs:
       - name: Run nightly analysis agent
         uses: anthropics/claude-code-action@beta
         with:
+          mode: agent
           direct_prompt: |
             You are FinanceCompanion's nightly stock analysis agent. Today is $(date +%Y-%m-%d).
 
