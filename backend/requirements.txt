@@ -12,8 +12,8 @@ pytest-asyncio==0.24.0
 allure-pytest==2.13.5
 pip-audit==2.7.3
 yfinance==0.2.51
-pandas==2.2.3
-pandas-ta==0.3.14b0
+pandas>=2.2.3
+pandas-ta==0.4.71b0
 finnhub-python==2.4.20
 duckduckgo-search==6.3.5
-numpy==1.26.4
+numpy>=1.26.4
