@@ -71,6 +71,21 @@ def get_messages(conversation_id: str, id_token: str, db: Session = Depends(get_
     )
 
 
+@router.get("/by-ticker/{ticker}", response_model=list[ConversationOut])
+def get_conversations_by_ticker(ticker: str, id_token: str, db: Session = Depends(get_db)):
+    user = get_current_user(id_token, db)
+    return (
+        db.query(Conversation)
+        .filter(
+            Conversation.user_email == user.email,
+            Conversation.ticker == ticker.upper(),
+        )
+        .order_by(Conversation.updated_at.desc())
+        .limit(20)
+        .all()
+    )
+
+
 @router.delete("/{conversation_id}")
 def delete_conversation(conversation_id: str, id_token: str, db: Session = Depends(get_db)):
     user = get_current_user(id_token, db)
