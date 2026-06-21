@@ -400,6 +400,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             You are a senior Software Engineer. CI gate tests are failing on this PR. Fix the source code so all tests pass.
 
@@ -461,6 +462,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             You are a senior Automation Test Engineer reviewing a PR for FinanceCompanion.
 
@@ -561,6 +563,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             You are a security engineer. Fix the real vulnerabilities found by Bandit and Semgrep.
 
@@ -754,6 +757,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             You are a senior Software Engineer. Fix every bug in reports/qa-report.md.
 
@@ -813,6 +817,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             Verify that fixes resolved all bugs from reports/qa-report.md.
 
@@ -852,6 +857,7 @@ jobs:
         uses: anthropics/claude-code-action@beta
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          mode: agent
           direct_prompt: |
             You are a Technical Writer. Update docs to reflect this PR's changes.
 
