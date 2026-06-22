@@ -335,8 +335,8 @@ function StockDetailView({ item, onBack, onChat }: { item: DigestItem; onBack: (
 
 function MyStocksView({
   digest, loading, onOpen, onRemove,
-  query, onQueryChange, suggestions, showSuggestions, onBlurSuggestions,
-  onSelectSuggestion, onAddSubmit, adding, addError,
+  query, onQueryChange, suggestions, showSuggestions, onBlurSuggestions, onFocusSuggestions,
+  onSelectSuggestion, onAddSubmit, adding, addError, canAdd,
 }: {
   digest: DigestItem[];
   loading: boolean;
@@ -347,10 +347,12 @@ function MyStocksView({
   suggestions: { ticker: string; name: string; exchange: string }[];
   showSuggestions: boolean;
   onBlurSuggestions: () => void;
+  onFocusSuggestions: () => void;
   onSelectSuggestion: (s: { ticker: string; name: string }) => void;
   onAddSubmit: (e: React.SyntheticEvent<HTMLFormElement>) => void;
   adding: boolean;
   addError: string;
+  canAdd: boolean;
 }) {
   const buys  = digest.filter(d => d.analysis?.verdict === "BUY").length;
   const sells = digest.filter(d => d.analysis?.verdict === "SELL").length;
@@ -377,21 +379,37 @@ function MyStocksView({
         </div>
       ) : (
         <div style={{ background: SURF, border: `1px solid ${BRD}`, borderRadius: 11, overflow: "hidden" }}>
-          <div style={{ display: "grid", gridTemplateColumns: "1.4fr .9fr .8fr 1.3fr .7fr .8fr 40px", gap: 12, padding: "12px 20px", font: "600 10px/1 'IBM Plex Mono',monospace", letterSpacing: ".1em", color: INK3, background: "#F6F4EE", borderBottom: `1px solid ${BRD}` }}>
-            <span>STOCK</span><span style={{ textAlign: "right" }}>PRICE</span><span style={{ textAlign: "right" }}>DAY</span><span>AI VERDICT</span><span style={{ textAlign: "center" }}>CONV.</span><span style={{ textAlign: "center" }}>RISK</span><span />
+          <div style={{ display: "grid", gridTemplateColumns: "1.5fr .65fr 1fr 1.5fr .55fr 1fr .9fr 40px", gap: 12, padding: "11px 20px", font: "600 10px/1 'IBM Plex Mono',monospace", letterSpacing: ".1em", color: INK3, background: "#F6F4EE", borderBottom: `1px solid ${BRD}` }}>
+            <span>STOCK</span>
+            <span>VERDICT</span>
+            <span style={{ textAlign: "right" }}>PRICE</span>
+            <span>52-WEEK RANGE</span>
+            <span style={{ textAlign: "center" }}>RSI</span>
+            <span>TREND</span>
+            <span>SIGNAL</span>
+            <span />
           </div>
           {digest.map((item, i) => {
             const a = item.analysis;
             const risk = riskOf(item);
             const conv = convictionOf(a?.verdict ?? null);
             const dayUp = (a?.day_change_pct ?? 0) >= 0;
+            const rsi = a?.rsi ?? null;
+            const rsiColor = rsi == null ? INK3 : rsi >= 70 ? DN : rsi <= 30 ? UP : INK;
+            const aboveMA50 = a?.ma_50 != null && a?.current_price != null && a.current_price > a.ma_50;
+            const hasTrend = a?.ma_50 != null && a?.current_price != null;
+            const rangePct = a?.range_position_pct;
+            const verdictColor = a?.verdict === "BUY" ? UP : a?.verdict === "SELL" ? DN : a?.verdict === "HOLD" ? AUTO : WARN;
+            const verdictBg   = a?.verdict === "BUY" ? "#EAF1EC" : a?.verdict === "SELL" ? "#F4E7E4" : a?.verdict === "HOLD" ? "#E8EEF2" : "#F4EEE2";
+            const verdictBd   = a?.verdict === "BUY" ? "#D6E2D7" : a?.verdict === "SELL" ? "#E6D2CC" : a?.verdict === "HOLD" ? "#CDD8E0" : "#E6DBC4";
             return (
               <div key={item.ticker}
-                style={{ display: "grid", gridTemplateColumns: "1.4fr .9fr .8fr 1.3fr .7fr .8fr 40px", gap: 12, padding: "15px 20px", borderTop: i === 0 ? "none" : "1px solid #EDEAE1", alignItems: "center", cursor: "pointer" }}
+                style={{ display: "grid", gridTemplateColumns: "1.5fr .65fr 1fr 1.5fr .55fr 1fr .9fr 40px", gap: 12, padding: "14px 20px", borderTop: i === 0 ? "none" : "1px solid #EDEAE1", alignItems: "center", cursor: "pointer" }}
                 onClick={() => onOpen(item.ticker)}
                 onMouseOver={e => (e.currentTarget.style.background = "#FCFCFA")}
                 onMouseOut={e  => (e.currentTarget.style.background = "transparent")}
               >
+                {/* Stock */}
                 <div>
                   <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
                     <span style={{ font: "600 13.5px/1 'IBM Plex Mono',monospace" }}>{item.ticker}</span>
@@ -400,11 +418,60 @@ function MyStocksView({
                   </div>
                   <div style={{ fontSize: 11, color: INK3, marginTop: 3 }}>{item.company_name ?? "—"}</div>
                 </div>
-                <span style={{ textAlign: "right", font: "500 13px 'IBM Plex Mono',monospace" }}>{fmtPrice(a?.current_price ?? null)}</span>
-                <span style={{ textAlign: "right", font: "500 13px 'IBM Plex Mono',monospace", color: dayUp ? UP : DN }}>{fmtPct(a?.day_change_pct ?? null)}</span>
-                <span style={{ fontSize: 13, color: "#3A3833" }}>{verdictLine(a?.verdict ?? null)}</span>
-                <span style={{ textAlign: "center", font: "600 13px 'IBM Plex Mono',monospace", color: conv >= 78 ? UP : conv >= 70 ? INK : WARN }}>{conv}</span>
-                <span style={{ display: "flex", justifyContent: "center" }}><span style={riskChip(risk)}>{risk}</span></span>
+
+                {/* Verdict badge */}
+                <span style={{ display: "inline-block", fontFamily: "'IBM Plex Mono',monospace", fontSize: 9.5, fontWeight: 700, letterSpacing: ".08em", color: verdictColor, background: verdictBg, border: `1px solid ${verdictBd}`, borderRadius: 20, padding: "4px 8px", whiteSpace: "nowrap" }}>
+                  {a?.verdict ?? "—"}
+                </span>
+
+                {/* Price + day% */}
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ font: "500 13px/1 'IBM Plex Mono',monospace" }}>{fmtPrice(a?.current_price ?? null)}</div>
+                  <div style={{ font: "500 11px/1 'IBM Plex Mono',monospace", color: dayUp ? UP : DN, marginTop: 4 }}>{fmtPct(a?.day_change_pct ?? null)}</div>
+                </div>
+
+                {/* 52-Week Range */}
+                <div>
+                  {a?.week_52_low != null && a?.week_52_high != null ? (
+                    <>
+                      <div style={{ display: "flex", justifyContent: "space-between", font: "400 10px/1 'IBM Plex Mono',monospace", color: INK3, marginBottom: 5 }}>
+                        <span>{fmtPrice(a.week_52_low)}</span>
+                        <span>{fmtPrice(a.week_52_high)}</span>
+                      </div>
+                      <div style={{ height: 4, background: "#EDEAE1", borderRadius: 4, position: "relative" }}>
+                        <div style={{ position: "absolute", top: -2, left: `${Math.max(0, Math.min(100, rangePct ?? 50))}%`, transform: "translateX(-50%)", width: 8, height: 8, borderRadius: "50%", background: AUTO, border: `1.5px solid ${SURF}` }} />
+                      </div>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 11, color: INK3 }}>—</span>
+                  )}
+                </div>
+
+                {/* RSI */}
+                <div style={{ textAlign: "center" }}>
+                  <div style={{ font: "600 13px/1 'IBM Plex Mono',monospace", color: rsiColor }}>{rsi != null ? rsi.toFixed(0) : "—"}</div>
+                  {rsi != null && <div style={{ fontSize: 9, color: rsiColor, marginTop: 3 }}>{rsi >= 70 ? "OB" : rsi <= 30 ? "OS" : ""}</div>}
+                </div>
+
+                {/* Trend */}
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  {hasTrend ? (
+                    <>
+                      <span style={{ fontSize: 12, color: aboveMA50 ? UP : DN }}>{aboveMA50 ? "↑" : "↓"}</span>
+                      <span style={{ fontSize: 11, color: aboveMA50 ? UP : DN, fontFamily: "'IBM Plex Mono',monospace" }}>{aboveMA50 ? "Above" : "Below"} MA50</span>
+                    </>
+                  ) : (
+                    <span style={{ fontSize: 11, color: INK3 }}>—</span>
+                  )}
+                </div>
+
+                {/* Signal = conviction + risk */}
+                <div style={{ display: "flex", flexDirection: "column", gap: 5, alignItems: "flex-start" }}>
+                  <span style={{ font: "600 12px/1 'IBM Plex Mono',monospace", color: conv >= 78 ? UP : conv >= 70 ? INK : WARN }}>{conv}/100</span>
+                  <span style={riskChip(risk)}>{risk}</span>
+                </div>
+
+                {/* Remove */}
                 <button
                   onClick={e => { e.stopPropagation(); onRemove(item.ticker); }}
                   title="Remove from watchlist"
@@ -425,7 +492,7 @@ function MyStocksView({
             value={query}
             onChange={e => onQueryChange(e.target.value)}
             onBlur={() => setTimeout(onBlurSuggestions, 150)}
-            onFocus={() => suggestions.length > 0 && true}
+            onFocus={onFocusSuggestions}
             placeholder="Search ticker or company name…"
             autoComplete="off"
             style={{ width: "100%", padding: "8px 12px", background: BG, border: `1px solid ${BRD}`, borderRadius: 7, color: INK, fontSize: 14, fontFamily: "'IBM Plex Sans',sans-serif", boxSizing: "border-box" }}
@@ -448,7 +515,7 @@ function MyStocksView({
             </div>
           )}
         </div>
-        <button type="submit" disabled={adding} style={{ padding: "8px 18px", background: AUTO, color: SURF, border: "none", borderRadius: 7, cursor: "pointer", fontWeight: 600, fontSize: 13, fontFamily: "'IBM Plex Sans',sans-serif", opacity: adding ? 0.6 : 1 }}>
+        <button type="submit" disabled={adding || !canAdd} style={{ padding: "8px 18px", background: AUTO, color: SURF, border: "none", borderRadius: 7, cursor: canAdd && !adding ? "pointer" : "not-allowed", fontWeight: 600, fontSize: 13, fontFamily: "'IBM Plex Sans',sans-serif", opacity: canAdd && !adding ? 1 : 0.45 }}>
           {adding ? "Adding…" : "+ Add to watchlist"}
         </button>
         {addError && <span style={{ color: DN, fontSize: 12, width: "100%" }}>{addError}</span>}
@@ -962,17 +1029,21 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
 
   async function handleAddSubmit(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!ticker.trim()) return;
+    // Accept suggestion-selected ticker OR raw typed text (first word, uppercased)
+    const effectiveTicker = ticker.trim() || query.trim().split(/[\s—\-–]/)[0].trim().toUpperCase();
+    if (!effectiveTicker) return;
     setAdding(true); setAddError("");
     try {
       const r = await fetch(`${API}/watchlist?id_token=${encodeURIComponent(idToken)}`, {
         method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker: ticker.trim().toUpperCase(), company_name: companyName || null }),
+        body: JSON.stringify({ ticker: effectiveTicker, company_name: companyName || null }),
       });
       if (r.ok) { setTicker(""); setCompanyName(""); setQuery(""); fetchAll(); }
       else { const d = await r.json(); setAddError(d.detail || "Failed to add."); }
     } finally { setAdding(false); }
   }
+
+  const canAdd = !!(ticker.trim() || query.trim());
 
   const activeTabView: View = view === "detail" ? prevView : view;
 
@@ -1001,8 +1072,9 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
             query={query} onQueryChange={handleSearchInput}
             suggestions={suggestions} showSuggestions={showSuggestions}
             onBlurSuggestions={() => setShowSuggestions(false)}
+            onFocusSuggestions={() => { if (suggestions.length > 0) setShowSuggestions(true); }}
             onSelectSuggestion={handleSelectSuggestion}
-            onAddSubmit={handleAddSubmit} adding={adding} addError={addError}
+            onAddSubmit={handleAddSubmit} adding={adding} addError={addError} canAdd={canAdd}
           />
         )}
         {view === "discover" && (
