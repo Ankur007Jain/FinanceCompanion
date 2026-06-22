@@ -11,33 +11,37 @@ from sqlalchemy.orm import Session
 from models import StockAnalysis, StockMemory, SimulationPortfolio, WatchlistItem
 
 _STATIC_SYSTEM = """You are FinanceCompanion — a confident, data-driven financial advisor for busy working professionals.
+Behind the scenes you think like an institutional investment committee; out loud you talk like a brilliant friend.
 
-Your personality:
-- You are like a brilliant friend who happens to be a finance expert
-- You give direct, specific advice with exact numbers — never vague
-- You never say "it depends" without immediately committing to a position
-- You ground every recommendation in the analysis data you already have
-- When you don't know something, you say so and offer to search for it
-- You understand leveraged ETFs require different rules (short hold, no earnings overnight)
+How you think (internally, never narrated):
+- Separate FACTS (the data you were given) from ASSUMPTIONS (your inference). Never present an assumption as a fact.
+- Before committing, weigh the strongest BULL case against the strongest BEAR case, then take a side.
+- State a confidence level when it matters (high / medium / low) and what would change your mind.
+- Hunt for asymmetric setups — where the upside clearly outweighs the downside — and say so plainly.
+- Never invent a number. If you don't have the data, say so and offer to search the web.
 
-Your capabilities:
-- You have access to tonight's full analysis for all tracked stocks
-- You remember historical context from stock memory
-- You can search the web for current information when needed (use the web_search tool)
-- When you search, synthesize the result with the existing analysis — don't just repeat it
+How you speak:
+- Like texting a smart friend — direct, specific, no jargon, no research-report tone.
+- Lead with the verdict or the direct answer, then the why.
+- Always back a claim with the actual number (price, %, date) from the analysis.
+- Give both sides when it's a real call: "The bull case is X; the bear case is Y; I lean ___ because ___."
+- Never hedge with "it depends" without immediately committing.
+- Leveraged ETFs get stricter rules — short hold, never through earnings.
 
-Format:
-- Lead with the verdict or direct answer
-- Use specific numbers (prices, percentages, dates)
-- Keep responses concise — the user is busy
-- Never add unnecessary caveats or disclaimers
+Your data:
+- You have tonight's full analysis for the user's tracked stocks, plus historical stock memory.
+- When a ticker is in focus, you also have its deep analysis and recent day-by-day history — use it; don't re-derive.
+- You can search the web (web_search tool) for anything newer than the analysis. Synthesize results with what you already have — don't just repeat them.
+- Keep it concise. The user is busy.
 """
 
 
 def _format_analysis(a: StockAnalysis) -> str:
     direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
+    conv = f"  Conviction:   {a.conviction_score}/100  ({a.risk_level or 'N/A'} risk, {a.confidence or 'N/A'} confidence)\n" if a.conviction_score is not None else ""
     return (
         f"  Verdict:      {a.verdict}  (entry ${a.entry_target or 'N/A'}, exit ${a.exit_target or 'N/A'})\n"
+        f"{conv}"
         f"  Price:        ${a.current_price:.2f}  {direction}{abs(a.day_change_pct or 0):.1f}%\n"
         f"  52-Wk Range:  ${a.week_52_low:.2f} – ${a.week_52_high:.2f}  ({a.range_position_pct:.0f}% position)\n"
         f"  MA50/MA200:   ${a.ma_50:.2f} / ${a.ma_200:.2f}\n"
@@ -45,6 +49,56 @@ def _format_analysis(a: StockAnalysis) -> str:
         f"  Analysts:     {a.analyst_consensus} ({a.analyst_count})  target ${a.target_price_mean or 'N/A'}\n"
         f"  Reasoning:    {a.reasoning or ''}\n"
     )
+
+
+def _pct(v):
+    return f"{v*100:.1f}%" if v is not None else "N/A"
+
+
+def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnalysis]) -> str:
+    """Full institutional dossier for the ticker currently in focus."""
+    direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
+    lines = [
+        f"=== {a.ticker} — FULL ANALYSIS (as of {a.analysis_date.isoformat()}) ===",
+        f"Verdict:        {a.verdict}",
+    ]
+    if a.conviction_score is not None:
+        lines.append(f"Conviction:     {a.conviction_score}/100  |  Risk: {a.risk_level or 'N/A'}  |  Confidence: {a.confidence or 'N/A'}")
+    lines += [
+        f"Targets:        entry ${a.entry_target or 'N/A'}  exit ${a.exit_target or 'N/A'}  stop ${a.stop_loss or 'N/A'}  hold {a.hold_period or 'N/A'}",
+        f"Price:          ${a.current_price:.2f}  {direction}{abs(a.day_change_pct or 0):.1f}%   52wk ${a.week_52_low:.2f}–${a.week_52_high:.2f} ({a.range_position_pct:.0f}% of range)",
+        f"Technicals:     MA50 ${a.ma_50:.2f}  MA200 ${a.ma_200:.2f}  RSI {a.rsi or 'N/A'}",
+        f"Valuation:      P/E {a.pe_trailing or 'N/A'} (fwd {a.pe_forward or 'N/A'})  |  analyst {a.analyst_consensus} target ${a.target_price_mean or 'N/A'}",
+        f"Fundamentals:   rev growth {_pct(a.revenue_growth)}  net margin {_pct(a.profit_margin)}  ROE {_pct(a.return_on_equity)}  D/E {a.debt_to_equity or 'N/A'}",
+    ]
+    if a.bull_case:
+        lines.append(f"Bull case:      {a.bull_case}")
+    if a.bear_case:
+        lines.append(f"Bear case:      {a.bear_case}")
+    if a.thesis_invalidation:
+        lines.append(f"Flips if:       {a.thesis_invalidation}")
+    if a.reasoning:
+        lines.append(f"Reasoning:      {a.reasoning}")
+    if a.news_summary:
+        lines.append(f"News:           {a.news_summary}")
+    if a.ripple_analysis:
+        lines.append(f"Ripple effects: {a.ripple_analysis}")
+    if a.events_json:
+        try:
+            events = json.loads(a.events_json)
+            upcoming = [f"{e['date']} {e['description']}" for e in events[:3]]
+            if upcoming:
+                lines.append(f"Events ahead:   {' | '.join(upcoming)}")
+        except Exception:
+            pass
+    if memory:
+        lines.append(f"Memory:         {memory[:500]}")
+    if history:
+        lines.append("Recent history (newest first):")
+        for h in history:
+            flag = " ⭐" if h.is_important_day else ""
+            lines.append(f"  {h.analysis_date.isoformat()}:{flag} {h.verdict} ${h.current_price:.2f}" + (f"  [{h.importance_reason}]" if h.importance_reason else ""))
+    return "\n".join(lines)
 
 
 def build_system_prompt(
@@ -71,6 +125,33 @@ def build_system_prompt(
     ).all()
 
     lines = [f"Today: {today.isoformat()}\n"]
+
+    # Deep dossier for the ticker in focus (most prominent context)
+    if conversation_ticker:
+        focus = conversation_ticker.upper()
+        focus_analysis = (
+            db.query(StockAnalysis)
+            .filter(StockAnalysis.ticker == focus)
+            .order_by(StockAnalysis.analysis_date.desc())
+            .first()
+        )
+        if focus_analysis:
+            history = (
+                db.query(StockAnalysis)
+                .filter(
+                    StockAnalysis.ticker == focus,
+                    StockAnalysis.id != focus_analysis.id,
+                )
+                .order_by(StockAnalysis.analysis_date.desc())
+                .limit(5)
+                .all()
+            )
+            focus_mem = memory_map.get(focus) or ""
+            if not focus_mem:
+                m = db.query(StockMemory).filter(StockMemory.ticker == focus).first()
+                focus_mem = m.memory_narrative if m else ""
+            lines.append(_format_analysis_deep(focus_analysis, focus_mem, history))
+            lines.append("")
 
     if analyses:
         lines.append("=== TONIGHT'S ANALYSIS ===")

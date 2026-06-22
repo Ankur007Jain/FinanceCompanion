@@ -28,6 +28,15 @@ def setup_db():
         os.remove("test.db")
 
 
+@pytest.fixture
+def db_session():
+    db = TestSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
 @pytest.fixture(scope="session")
 def client():
     def override_get_db():

@@ -67,6 +67,12 @@ def _migrate_db():
                 "fundamentals_json":     "TEXT",
                 "stop_loss":             "FLOAT",
                 "hold_period":           "VARCHAR",
+                "conviction_score":      "INTEGER",
+                "risk_level":            "VARCHAR",
+                "confidence":            "VARCHAR",
+                "bull_case":             "TEXT",
+                "bear_case":             "TEXT",
+                "thesis_invalidation":   "TEXT",
             }
             for col, typ in new_cols.items():
                 if col not in cols:

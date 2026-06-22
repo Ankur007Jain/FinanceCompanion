@@ -80,6 +80,12 @@ class StockAnalysisOut(BaseModel):
     stop_loss: Optional[float]
     hold_period: Optional[str]
     reasoning: Optional[str]
+    conviction_score: Optional[int]
+    risk_level: Optional[str]
+    confidence: Optional[str]
+    bull_case: Optional[str]
+    bear_case: Optional[str]
+    thesis_invalidation: Optional[str]
     news_summary: Optional[str]
     events_json: Optional[str]
     ripple_analysis: Optional[str]
@@ -197,6 +203,12 @@ class IngestAnalysisRequest(BaseModel):
     stop_loss: Optional[float] = None
     hold_period: Optional[str] = None
     reasoning: Optional[str] = None
+    conviction_score: Optional[int] = None
+    risk_level: Optional[str] = None
+    confidence: Optional[str] = None
+    bull_case: Optional[str] = None
+    bear_case: Optional[str] = None
+    thesis_invalidation: Optional[str] = None
     news_summary: Optional[str] = None
     ripple_analysis: Optional[str] = None
     is_important_day: bool = False

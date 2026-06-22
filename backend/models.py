@@ -104,6 +104,12 @@ class StockAnalysis(Base):
     stop_loss = Column(Float)
     hold_period = Column(String)  # e.g. "3-5 days", "2-4 weeks", "1-3 months"
     reasoning = Column(Text)
+    conviction_score = Column(Integer)   # 0-100, strength of the setup
+    risk_level = Column(String)          # LOW / MED / HIGH
+    confidence = Column(String)          # High / Medium / Low
+    bull_case = Column(Text)
+    bear_case = Column(Text)
+    thesis_invalidation = Column(Text)   # the single event that flips the verdict
 
     # Agent outputs
     news_summary = Column(Text)
