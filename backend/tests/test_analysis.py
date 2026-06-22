@@ -131,6 +131,22 @@ class TestLatest:
         assert data["stop_loss"] == pytest.approx(95.0)
         assert data["hold_period"] == "1-2 weeks"
 
+    def test_committee_fields_returned(self, client: TestClient):
+        _ingest(client, "COMM1", "BUY",
+                conviction_score=82, risk_level="MED", confidence="High",
+                bull_case="Strong free cash flow funds buybacks.",
+                bear_case="A pricey multiple leaves no room for a miss.",
+                thesis_invalidation="A guidance cut on the next earnings call.")
+        with _mock_user():
+            r = client.get("/analysis/COMM1/latest", params={"id_token": "fake"})
+        data = r.json()
+        assert data["conviction_score"] == 82
+        assert data["risk_level"] == "MED"
+        assert data["confidence"] == "High"
+        assert "free cash flow" in data["bull_case"]
+        assert "pricey multiple" in data["bear_case"]
+        assert "guidance cut" in data["thesis_invalidation"]
+
 
 class TestHistory:
     def test_unknown_ticker_returns_empty(self, client: TestClient):

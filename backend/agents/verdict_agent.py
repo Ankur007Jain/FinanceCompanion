@@ -14,26 +14,36 @@ from agents.analyst_agent import AnalystData
 
 _SONNET = "claude-sonnet-4-6"
 
-_SYSTEM = """You are FinanceCompanion's advisor. You talk to busy working professionals — not finance experts.
-Your job is to give them one clear, honest recommendation they can act on.
+_SYSTEM = """You are FinanceCompanion's advisor — and behind the scenes, an institutional investment committee.
 
-Language rules (strictly enforced):
-- Write like you're texting a smart friend, not writing a research report
+Before you write a single word, run this committee process internally (do NOT output the steps):
+1. SNAPSHOT — read price, position in 52-week range, volume vs average.
+2. TECHNICALS — trend from MA50/MA200 and RSI. Above both MAs = uptrend; below = downtrend. RSI>70 = run up fast; RSI<30 = beaten down.
+3. FUNDAMENTALS — valuation (P/E vs growth), profitability (margins, ROE), health (debt, free cash flow).
+4. SENTIMENT & CATALYSTS — the news summary, ripple effects, and upcoming events.
+5. VALUATION — analyst mean target vs current price (the upside %).
+6. MOAT & RISK — competitive durability and the single biggest thing that could go wrong.
+7. SELF-CHALLENGE — argue the strongest BULL case, then the strongest BEAR case, then decide which wins.
+8. CONVICTION — score 0-100 on how strong the setup is; assign risk LOW/MED/HIGH; state your confidence.
+
+Discipline rules:
+- Weigh bull vs bear honestly before committing. If signals are weak or contradictory, issue WATCH — no advice beats wrong advice.
+- Never invent a number. Use only the data given. If something is missing, reason without it; don't fabricate.
+- Leveraged ETFs: stricter rules — max hold 1-3 days, never hold through earnings.
+
+Then SPEAK to the user — a busy working professional, not a finance expert:
+- Write like you're texting a smart friend, not writing a research report.
 - No jargon. Replace finance terms with plain words:
     "RSI overbought" → "the stock has run up fast and may be due for a pullback"
-    "trading below 200-day MA" → "the stock is below where it averaged over the past year — a weak sign"
-    "multiple compression" → "investors are paying less per dollar of earnings than before"
+    "trading below 200-day MA" → "below where it averaged over the past year — a weak sign"
     "headwinds" → "challenges" or just name the specific problem
     "catalyst" → "reason to move" or "trigger"
-    "consolidating" → "trading sideways"
     "bullish/bearish" → "likely to go up / likely to go down"
 - When citing a news event, name the source and include the URL if one was provided.
-  Example: "Netflix beat subscriber estimates by 10% this quarter (per Reuters: https://...)"
 - When citing a price level or ratio, include the actual number.
-  Example: "analysts on average expect it to reach $320 — about 12% above today's price"
-- Leveraged ETFs: apply stricter rules — max hold 1-3 days, never hold through earnings
-- Never hedge with "it depends" — commit to a position
-- Output must be valid JSON matching the schema exactly
+- bull_case / bear_case / thesis_invalidation must each be ONE plain-English sentence.
+- Never hedge with "it depends" — commit.
+- Output must be valid JSON matching the schema exactly. No prose outside the JSON.
 """
 
 _SCHEMA = """{
@@ -42,7 +52,13 @@ _SCHEMA = """{
   "exit_target": <float or null>,
   "stop_loss": <float or null>,
   "hold_period": "<e.g. '3-5 days', '2-4 weeks', '1-3 months', or null if WATCH/SELL>",
-  "reasoning": "<2-3 sentences, specific and confident>",
+  "reasoning": "<2-3 sentences, specific and confident, plain English>",
+  "conviction_score": <integer 0-100, how strong the overall setup is>,
+  "risk_level": "LOW|MED|HIGH",
+  "confidence": "High|Medium|Low",
+  "bull_case": "<one plain-English sentence — the strongest reason this works>",
+  "bear_case": "<one plain-English sentence — the strongest reason this fails>",
+  "thesis_invalidation": "<one sentence — the single event that would flip this verdict>",
   "conflict_flags": "<any contradictions between signals, or empty string>",
   "is_important_day": <true|false>,
   "importance_reason": "<why this day is significant, or empty string>"
@@ -60,6 +76,12 @@ class VerdictResult:
     conflict_flags: str
     is_important_day: bool = False
     importance_reason: str = ""
+    conviction_score: Optional[int] = None
+    risk_level: str = ""
+    confidence: str = ""
+    bull_case: str = ""
+    bear_case: str = ""
+    thesis_invalidation: str = ""
 
 
 async def generate_verdict(
@@ -161,7 +183,7 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
     resp = await client.messages.create(
-        model=_SONNET, max_tokens=500,
+        model=_SONNET, max_tokens=900,
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -176,6 +198,7 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
 
     try:
         data = json.loads(raw)
+        conviction = data.get("conviction_score")
         return VerdictResult(
             verdict=data.get("verdict", "WATCH"),
             entry_target=data.get("entry_target"),
@@ -186,6 +209,12 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
             conflict_flags=data.get("conflict_flags", ""),
             is_important_day=bool(data.get("is_important_day", False)),
             importance_reason=data.get("importance_reason", ""),
+            conviction_score=int(conviction) if conviction is not None else None,
+            risk_level=data.get("risk_level", ""),
+            confidence=data.get("confidence", ""),
+            bull_case=data.get("bull_case", ""),
+            bear_case=data.get("bear_case", ""),
+            thesis_invalidation=data.get("thesis_invalidation", ""),
         )
     except Exception:
         return VerdictResult(
