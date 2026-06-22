@@ -1,4 +1,5 @@
-"""Tests for POST /watchlist ticker validation."""
+"""Tests for POST /watchlist ticker validation and DELETE /watchlist/{ticker}."""
+import uuid
 from unittest.mock import patch
 
 import pytest
@@ -52,3 +53,55 @@ def test_duplicate_ticker_returns_409(client):
         _add(client, "NVDA")
         r = _add(client, "NVDA")
     assert r.status_code == 409
+
+
+def _email():
+    return f"del-{uuid.uuid4().hex[:8]}@example.com"
+
+
+def _add_as(client, email, ticker):
+    with _mock_user(email), patch("routers.watchlist._detect_leveraged", return_value=False):
+        return client.post("/watchlist", params={"id_token": "tok"},
+                           json={"ticker": ticker, "company_name": "Co", "sector": "Tech"})
+
+
+def _delete(client, email, ticker):
+    with _mock_user(email):
+        return client.delete(f"/watchlist/{ticker}", params={"id_token": "tok"})
+
+
+def test_delete_removes_ticker(client):
+    e = _email()
+    _add_as(client, e, "DELX")
+    r = _delete(client, e, "DELX")
+    assert r.status_code == 200
+    assert r.json()["deleted"] == "DELX"
+
+
+def test_delete_not_in_watchlist_returns_404(client):
+    e = _email()
+    r = _delete(client, e, "ZZZZ")
+    assert r.status_code == 404
+
+
+def test_delete_is_user_scoped(client):
+    e1, e2 = _email(), _email()
+    _add_as(client, e1, "DSCOP")
+    r = _delete(client, e2, "DSCOP")
+    assert r.status_code == 404
+
+
+def test_delete_ticker_case_insensitive(client):
+    e = _email()
+    _add_as(client, e, "DLCI")
+    r = _delete(client, e, "dlci")
+    assert r.status_code == 200
+    assert r.json()["deleted"] == "DLCI"
+
+
+def test_delete_allows_readd(client):
+    e = _email()
+    _add_as(client, e, "RADD")
+    _delete(client, e, "RADD")
+    r = _add_as(client, e, "RADD")
+    assert r.status_code == 200
