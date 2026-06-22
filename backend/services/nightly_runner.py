@@ -159,10 +159,7 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
     db.refresh(analysis)
     logger.info(f"[{ticker}] Analysis saved. Verdict: {verdict.verdict}")
 
-    # Update stock memory (fire-and-forget — never blocks)
-    asyncio.create_task(
-        maybe_update_stock_memory(ticker, verdict.verdict, verdict.reasoning, news, json.dumps(events), db)
-    )
+    await maybe_update_stock_memory(ticker, verdict.verdict, verdict.reasoning, news, json.dumps(events), db)
 
 
 async def run_nightly_analysis(db: Session, tickers: list[str] | None = None) -> dict:
