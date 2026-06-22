@@ -509,7 +509,9 @@ jobs:
                   py_pass = int(suite.get("tests", 0)) - int(suite.get("failures", 0)) - int(suite.get("errors", 0))
                   py_fail = int(suite.get("failures", 0)) + int(suite.get("errors", 0))
                   for tc in suite.findall("testcase"):
-                      fail = tc.find("failure") or tc.find("error")
+                      fail = tc.find("failure")
+                      if fail is None:
+                          fail = tc.find("error")
                       if fail is not None:
                           msg = (fail.get("message") or "")[:120]
                           failures.append((tc.get("classname", "") + "::" + tc.get("name", ""), msg))
