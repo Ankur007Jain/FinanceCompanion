@@ -456,66 +456,99 @@ jobs:
           node-version: "22"
           cache: npm
       - run: npm ci
-      - run: rm -f reports/qa-report.md && mkdir -p reports
-      - name: Run QA agent
+      - run: mkdir -p reports
+      - name: Write new tests (Claude agent)
         uses: anthropics/claude-code-action@beta
+        continue-on-error: true
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           mode: agent
           direct_prompt: |
             You are a senior Automation Test Engineer reviewing a PR for FinanceCompanion.
-
             Base branch: ${{ env.BASE_REF }}
 
             Step 1: Run `git diff ${{ env.BASE_REF }}..HEAD --stat` and `git log ${{ env.BASE_REF }}..HEAD --oneline`.
             Read every changed source file.
 
-            Step 2: For every new or changed FastAPI endpoint or Python function, write a pytest test in backend/tests/.
-            For every new or changed TypeScript helper, write a jest test in __tests__/.
+            Step 2: For every new or changed FastAPI endpoint or Python function that lacks a test,
+            write a pytest test in backend/tests/. For every new or changed TypeScript helper,
+            write a jest test in __tests__/.
             Test conventions:
             - Backend: use conftest.py fixtures; mock auth via patch("routers.auth.id_token.verify_oauth2_token", return_value={"email":"test@example.com","name":"Test"})
-            - Frontend: pure logic tests only, no React renderer; helpers like pct(), fmtCap() can be copied inline
+            - Frontend: pure logic tests only — no React renderer; helpers like pct(), fmtCap() can be copied inline
             - Never call real external APIs (yfinance, Finnhub, Anthropic) — mock them
 
-            Step 3: Run full suites and capture failures:
-            `cd backend && ANTHROPIC_API_KEY=test-key pytest tests/ -v --tb=short 2>&1 | tail -60`
-            `npx jest --ci --no-coverage 2>&1 | tail -30`
-
-            Step 4: Write reports/qa-report.md:
+            Step 3: If you wrote any new test files, commit them:
             ```
-            ## QA Report — ${{ env.BASE_REF }}..HEAD — {timestamp}
-            ### Summary
-            {X} passing, {Y} failing, {Z} bugs found
-            ### Bugs Found
-            | # | Test | Error | Suspected source |
-            |---|------|-------|-----------------|
-            ### New Tests Written
-            | File | Tests added |
-            |------|-------------|
+            git add backend/tests/ __tests__/
+            git commit -m "ci: add tests for ${{ env.BASE_REF }}..HEAD changes"
             ```
-            No bugs = empty table rows. Never omit the table headers.
-
-            Step 5:
-            ```
-            git add backend/tests/ __tests__/ reports/qa-report.md
-            git commit -m "ci: qa-report for ${{ env.BASE_REF }}..HEAD"
-            ```
-      - name: Ensure qa-report exists
-        if: always()
+      - name: Run test suites
         run: |
-          if [ ! -f reports/qa-report.md ]; then
-            cat > reports/qa-report.md <<'REPORT'
-          ## QA Report — agent did not produce output
-          ### Summary
-          0 passing, 0 failing, 0 bugs found
-          ### Bugs Found
-          | # | Test | Error | Suspected source |
-          |---|------|-------|-----------------|
-          ### New Tests Written
-          | File | Tests added |
-          |------|-------------|
-          REPORT
-          fi
+          cd backend
+          ANTHROPIC_API_KEY=test-key pytest tests/ -v --tb=short \
+            --junitxml=../reports/pytest-qa.xml 2>&1 | tee ../reports/pytest-qa.txt || true
+          cd ..
+          npx jest --ci --no-coverage 2>&1 | tee reports/jest-qa.txt || true
+      - name: Generate QA report
+        run: |
+          python3 - <<'PYEOF'
+          import xml.etree.ElementTree as ET
+          from pathlib import Path
+          from datetime import datetime, timezone
+
+          # Parse pytest XML
+          py_pass = py_fail = 0
+          failures = []
+          pytest_xml = Path("reports/pytest-qa.xml")
+          if pytest_xml.exists():
+              tree = ET.parse(pytest_xml)
+              root = tree.getroot()
+              suite = root if root.tag == "testsuite" else root.find("testsuite")
+              if suite is not None:
+                  py_pass = int(suite.get("tests", 0)) - int(suite.get("failures", 0)) - int(suite.get("errors", 0))
+                  py_fail = int(suite.get("failures", 0)) + int(suite.get("errors", 0))
+                  for tc in suite.findall("testcase"):
+                      fail = tc.find("failure") or tc.find("error")
+                      if fail is not None:
+                          msg = (fail.get("message") or "")[:120]
+                          failures.append((tc.get("classname", "") + "::" + tc.get("name", ""), msg))
+
+          # Parse jest output for summary line
+          jest_pass = jest_fail = 0
+          jest_txt = Path("reports/jest-qa.txt")
+          if jest_txt.exists():
+              for line in jest_txt.read_text().splitlines():
+                  if "Tests:" in line:
+                      for part in line.split(","):
+                          part = part.strip()
+                          if "passed" in part:
+                              jest_pass = int(part.split()[0])
+                          elif "failed" in part:
+                              jest_fail = int(part.split()[0])
+
+          total_pass = py_pass + jest_pass
+          total_fail = py_fail + jest_fail
+          ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+          lines = [
+              f"## QA Report — ${{ env.BASE_REF }}..HEAD — {ts}",
+              "### Summary",
+              f"{total_pass} passing, {total_fail} failing, {len(failures)} bugs found",
+              "### Bugs Found",
+              "| # | Test | Error | Suspected source |",
+              "|---|------|-------|-----------------|",
+          ]
+          for i, (name, msg) in enumerate(failures, 1):
+              lines.append(f"| {i} | `{name}` | {msg} | see test output |")
+          lines += [
+              "### New Tests Written",
+              "| File | Tests added |",
+              "|------|-------------|",
+          ]
+          Path("reports/qa-report.md").write_text("\n".join(lines) + "\n")
+          print("QA report written.")
+          PYEOF
       - uses: actions/upload-artifact@v4
         if: always()
         with:
