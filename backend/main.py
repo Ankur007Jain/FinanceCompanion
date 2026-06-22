@@ -70,9 +70,8 @@ def _migrate_db():
             }
             for col, typ in new_cols.items():
                 if col not in cols:
-                    # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
-                    # col and typ are from a hardcoded dict above — not user input. DDL cannot use bind params.
-                    conn.execute(text(f"ALTER TABLE stock_analyses ADD COLUMN {col} {typ}"))
+                    # col/typ come from a hardcoded dict — not user input; DDL cannot use bind params
+                    conn.execute(text(f"ALTER TABLE stock_analyses ADD COLUMN {col} {typ}"))  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
             conn.commit()
 
         if "market_data_cache" not in tables:
