@@ -43,18 +43,18 @@ class TestDigest:
     def test_ticker_with_no_analysis_shows_pending(self, client: TestClient):
         with _mock_user("pending@example.com"):
             client.post("/watchlist", params={"id_token": "fake"},
-                        json={"ticker": "PENDING1", "is_leveraged": False})
+                        json={"ticker": "PEND", "is_leveraged": False})
             r = client.get("/analysis/digest", params={"id_token": "fake"})
         items = r.json()
         assert len(items) == 1
-        assert items[0]["ticker"] == "PENDING1"
+        assert items[0]["ticker"] == "PEND"
         assert items[0]["analysis"] is None
 
     def test_digest_shows_todays_analysis(self, client: TestClient):
-        _ingest(client, "DIGTST", "BUY")
+        _ingest(client, "DGTS", "BUY")
         with _mock_user("digest2@example.com"):
             client.post("/watchlist", params={"id_token": "fake"},
-                        json={"ticker": "DIGTST", "is_leveraged": False})
+                        json={"ticker": "DGTS", "is_leveraged": False})
             r = client.get("/analysis/digest", params={"id_token": "fake"})
         items = r.json()
         assert len(items) == 1
@@ -63,19 +63,19 @@ class TestDigest:
 
     def test_digest_does_not_show_yesterdays_analysis(self, client: TestClient):
         yesterday = str(date.today() - timedelta(days=1))
-        _ingest(client, "YEST1", "SELL", analysis_date=yesterday)
+        _ingest(client, "YEST", "SELL", analysis_date=yesterday)
         with _mock_user("yest@example.com"):
             client.post("/watchlist", params={"id_token": "fake"},
-                        json={"ticker": "YEST1", "is_leveraged": False})
+                        json={"ticker": "YEST", "is_leveraged": False})
             r = client.get("/analysis/digest", params={"id_token": "fake"})
         items = r.json()
         assert items[0]["analysis"] is None
 
     def test_digest_is_user_scoped(self, client: TestClient):
-        _ingest(client, "SCOPE1", "HOLD")
+        _ingest(client, "SCOP", "HOLD")
         with _mock_user("userA@example.com"):
             client.post("/watchlist", params={"id_token": "fake"},
-                        json={"ticker": "SCOPE1", "is_leveraged": False})
+                        json={"ticker": "SCOP", "is_leveraged": False})
             rA = client.get("/analysis/digest", params={"id_token": "fake"})
 
         with _mock_user("userB@example.com"):
@@ -171,9 +171,9 @@ class TestAdminTickers:
         for email in ("adminA@example.com", "adminB@example.com"):
             with _mock_user(email):
                 client.post("/watchlist", params={"id_token": "fake"},
-                            json={"ticker": "SHARED1", "is_leveraged": False})
+                            json={"ticker": "SHRD", "is_leveraged": False})
 
         r = client.get("/jobs/admin/tickers", params={"x_admin_secret": "test-admin-secret"})
         assert r.status_code == 200
         tickers = r.json()["tickers"]
-        assert tickers.count("SHARED1") == 1
+        assert tickers.count("SHRD") == 1

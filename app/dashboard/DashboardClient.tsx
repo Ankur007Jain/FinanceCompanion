@@ -309,12 +309,13 @@ function fmtCap(v: number) {
 }
 
 function StockRow({
-  item, expanded, onToggle, onChat,
+  item, expanded, onToggle, onChat, onRemove,
 }: {
   item: DigestItem;
   expanded: boolean;
   onToggle: () => void;
   onChat: (ticker: string) => void;
+  onRemove: (ticker: string) => void;
 }) {
   const a = item.analysis;
   const vm = a?.verdict ? VERDICT_META[a.verdict] ?? VERDICT_META.WATCH : null;
@@ -412,16 +413,31 @@ function StockRow({
           {!a && <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)" }}>No analysis yet</span>}
         </div>
 
-        {a ? (
-          <div style={{
-            color: "var(--t-text-muted)", fontSize: "0.8rem",
-            transition: "transform 0.2s",
-            transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>
-            ▼
-          </div>
-        ) : <div />}
+        <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", justifyContent: "flex-end" }}>
+          {a && (
+            <div style={{
+              color: "var(--t-text-muted)", fontSize: "0.8rem",
+              transition: "transform 0.2s",
+              transform: expanded ? "rotate(180deg)" : "rotate(0deg)",
+            }}>
+              ▼
+            </div>
+          )}
+          <button
+            onClick={e => { e.stopPropagation(); onRemove(item.ticker); }}
+            title="Remove from watchlist"
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              color: "var(--t-text-muted)", fontSize: "0.82rem",
+              padding: "0.2rem 0.3rem", borderRadius: "0.3rem",
+              lineHeight: 1, opacity: 0.5,
+            }}
+            onMouseOver={e => { e.currentTarget.style.color = "#ef4444"; e.currentTarget.style.opacity = "1"; }}
+            onMouseOut={e => { e.currentTarget.style.color = "var(--t-text-muted)"; e.currentTarget.style.opacity = "0.5"; }}
+          >
+            ✕
+          </button>
+        </div>
       </div>
 
       {expanded && a && (
@@ -478,6 +494,7 @@ export default function DashboardClient({
     setQuery(val);
     setTicker("");
     setCompanyName("");
+    setError("");
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (val.trim().length < 1) { setSuggestions([]); setShowSuggestions(false); return; }
     debounceRef.current = setTimeout(async () => {
@@ -494,6 +511,15 @@ export default function DashboardClient({
     setQuery(`${s.ticker} — ${s.name}`);
     setSuggestions([]);
     setShowSuggestions(false);
+  }
+
+  async function handleRemove(t: string) {
+    try {
+      const r = await fetch(`${API}/watchlist/${encodeURIComponent(t)}?id_token=${encodeURIComponent(idToken)}`, {
+        method: "DELETE",
+      });
+      if (r.ok) fetchDigest();
+    } catch { /* ignore */ }
   }
 
   async function handleChat(t: string) {
@@ -591,6 +617,7 @@ export default function DashboardClient({
                 expanded={expanded === item.ticker}
                 onToggle={() => setExpanded(expanded === item.ticker ? null : item.ticker)}
                 onChat={handleChat}
+                onRemove={handleRemove}
               />
             ))
           )}

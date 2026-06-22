@@ -42,6 +42,31 @@ def get_latest(ticker: str, id_token: str, db: Session = Depends(get_db)):
     return analysis
 
 
+@router.get("/important", response_model=list[StockAnalysisOut])
+def get_important(id_token: str, days: int = 30, db: Session = Depends(get_db)):
+    """Important-day analyses across the user's watchlist (verdict reversals, earnings, catalysts)."""
+    user = get_current_user(id_token, db)
+    tickers = [
+        row.ticker
+        for row in db.query(WatchlistItem).filter(WatchlistItem.user_email == user.email).all()
+    ]
+    if not tickers:
+        return []
+    from datetime import timedelta
+    cutoff = date.today() - timedelta(days=days)
+    return (
+        db.query(StockAnalysis)
+        .filter(
+            StockAnalysis.ticker.in_(tickers),
+            StockAnalysis.is_important_day == True,  # noqa: E712
+            StockAnalysis.analysis_date >= cutoff,
+        )
+        .order_by(StockAnalysis.analysis_date.desc())
+        .limit(50)
+        .all()
+    )
+
+
 @router.get("/{ticker}/history", response_model=list[StockAnalysisOut])
 def get_history(ticker: str, id_token: str, days: int = 30, db: Session = Depends(get_db)):
     get_current_user(id_token, db)
