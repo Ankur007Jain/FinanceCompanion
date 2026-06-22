@@ -515,17 +515,16 @@ jobs:
                           failures.append((tc.get("classname", "") + "::" + tc.get("name", ""), msg))
 
           # Parse jest output for summary line
+          import re
           jest_pass = jest_fail = 0
           jest_txt = Path("reports/jest-qa.txt")
           if jest_txt.exists():
               for line in jest_txt.read_text().splitlines():
                   if "Tests:" in line:
-                      for part in line.split(","):
-                          part = part.strip()
-                          if "passed" in part:
-                              jest_pass = int(part.split()[0])
-                          elif "failed" in part:
-                              jest_fail = int(part.split()[0])
+                      m = re.search(r'(\d+)\s+passed', line)
+                      if m: jest_pass = int(m.group(1))
+                      m = re.search(r'(\d+)\s+failed', line)
+                      if m: jest_fail = int(m.group(1))
 
           total_pass = py_pass + jest_pass
           total_fail = py_fail + jest_fail
