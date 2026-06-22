@@ -500,13 +500,28 @@ jobs:
             git add backend/tests/ __tests__/ reports/qa-report.md
             git commit -m "ci: qa-report for ${{ env.BASE_REF }}..HEAD"
             ```
+      - name: Ensure qa-report exists
+        if: always()
+        run: |
+          if [ ! -f reports/qa-report.md ]; then
+            cat > reports/qa-report.md <<'REPORT'
+          ## QA Report — agent did not produce output
+          ### Summary
+          0 passing, 0 failing, 0 bugs found
+          ### Bugs Found
+          | # | Test | Error | Suspected source |
+          |---|------|-------|-----------------|
+          ### New Tests Written
+          | File | Tests added |
+          |------|-------------|
+          REPORT
+          fi
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: qa-report
           path: reports/qa-report.md
           retention-days: 5
-          if-no-files-found: ignore
 
   # ── Security gate ───────────────────────────────────────────────────────────
   security-gate:
