@@ -26,7 +26,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   callbacks: {
     async jwt({ token, account, user }) {
       // First login via Google — store all tokens
-      if (account) {
+      if (account?.provider === "google") {
         return {
           ...token,
           idToken: account.id_token,
@@ -37,7 +37,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       }
 
       // First login via test credentials — fabricate a test idToken
-      if (user?.email && !(token as any).idToken) {
+      if (account?.provider === "test-credentials" && user?.email) {
         return {
           ...token,
           idToken: `test-token-${user.email}`,

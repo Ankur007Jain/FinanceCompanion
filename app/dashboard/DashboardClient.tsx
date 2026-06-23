@@ -830,7 +830,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
 
       {/* ── Header ── */}
       <header style={{ position: "sticky", top: 0, zIndex: 40, background: "#FBFAF7", borderBottom: "1px solid #E0DDD3" }}>
-        <div style={{ maxWidth: 1180, margin: "0 auto", height: 60, display: "flex", alignItems: "center", gap: 26, padding: "0 32px" }}>
+        <div style={{ maxWidth: 1180, margin: "0 auto", height: 60, display: "flex", alignItems: "center", gap: isMobile ? 12 : 26, padding: isMobile ? "0 16px" : "0 32px" }}>
 
           {/* Logo */}
           <div onClick={() => setActiveTab("Dashboard")} style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", flexShrink: 0 }}>
@@ -838,38 +838,45 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
             <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.01em", color: "#20211C", fontFamily: SANS }}>Stock Copilot</span>
           </div>
 
-          {/* Nav tabs */}
-          <nav style={{ display: "flex", gap: 2, height: "100%" }}>
-            {TABS.map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)} style={{
-                fontSize: 14, fontFamily: SANS,
-                color: activeTab === tab ? "#20211C" : "#6A685F",
-                fontWeight: activeTab === tab ? 600 : 500,
-                padding: "0 14px", height: 60, border: "none",
-                borderBottom: activeTab === tab ? "2px solid #3A5A6E" : "2px solid transparent",
-                background: "none", cursor: "pointer", transition: "color 0.15s",
-                whiteSpace: "nowrap",
-              }}>
-                {tab}
-              </button>
-            ))}
-          </nav>
+          {/* Nav tabs — hidden on mobile */}
+          {!isMobile && (
+            <nav style={{ display: "flex", gap: 2, height: "100%" }}>
+              {TABS.map(tab => (
+                <button key={tab} onClick={() => setActiveTab(tab)} style={{
+                  fontSize: 14, fontFamily: SANS,
+                  color: activeTab === tab ? "#20211C" : "#6A685F",
+                  fontWeight: activeTab === tab ? 600 : 500,
+                  padding: "0 14px", height: 60, border: "none",
+                  borderBottom: activeTab === tab ? "2px solid #3A5A6E" : "2px solid transparent",
+                  background: "none", cursor: "pointer", transition: "color 0.15s",
+                  whiteSpace: "nowrap",
+                }}>
+                  {tab}
+                </button>
+              ))}
+            </nav>
+          )}
 
           {/* Right side */}
           <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
-            <button onClick={() => router.push("/chat")} style={{
-              fontSize: 13, fontFamily: SANS, color: "#6A685F",
-              background: "none", border: "1px solid #E4E1D8",
-              borderRadius: 7, padding: "6px 13px", cursor: "pointer",
-            }}>
-              Chat →
-            </button>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15 }}>
-              <span style={{ fontSize: 9, letterSpacing: "0.12em", color: "#9C998E", fontFamily: MONO, fontWeight: 500 }}>VIRTUAL BALANCE</span>
-              <span style={{ fontSize: 14, fontFamily: MONO, fontWeight: 500, color: "#20211C", marginTop: 3 }}>$20,000</span>
-            </div>
+            {!isMobile && (
+              <button onClick={() => router.push("/chat")} style={{
+                fontSize: 13, fontFamily: SANS, color: "#6A685F",
+                background: "none", border: "1px solid #E4E1D8",
+                borderRadius: 7, padding: "6px 13px", cursor: "pointer",
+              }}>
+                Chat →
+              </button>
+            )}
+            {!isMobile && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15 }}>
+                <span style={{ fontSize: 9, letterSpacing: "0.12em", color: "#9C998E", fontFamily: MONO, fontWeight: 500 }}>VIRTUAL BALANCE</span>
+                <span style={{ fontSize: 14, fontFamily: MONO, fontWeight: 500, color: "#20211C", marginTop: 3 }}>$20,000</span>
+              </div>
+            )}
             <div ref={profileMenuRef} style={{ position: "relative" }}>
               <div
+                data-testid="user-avatar-btn"
                 onClick={() => setShowProfileMenu(v => !v)}
                 style={{
                   width: 32, height: 32, borderRadius: "50%",
@@ -1037,7 +1044,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
 
                     {/* Scenarios */}
                     {sa.scenario_bull_prob != null && (
-                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+                      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
                         {([
                           { label: "Bull", pct: sa.scenario_bull_pct, prob: sa.scenario_bull_prob, color: "#3F6B4F", bg: "#EAF1EC", bd: "#C8DDD0" },
                           { label: "Base", pct: sa.scenario_base_pct, prob: sa.scenario_base_prob, color: "#3A5A6E", bg: "#E8EFF4", bd: "#C8D8E4" },
