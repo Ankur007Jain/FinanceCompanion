@@ -233,13 +233,16 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
     resp = await client.messages.create(
-        model=_SONNET, max_tokens=1400,
+        model=_SONNET, max_tokens=2200,
         system=_SYSTEM,
-        messages=[{"role": "user", "content": prompt}],
+        messages=[
+            {"role": "user", "content": prompt},
+            {"role": "assistant", "content": "{"},   # prefill forces JSON output
+        ],
     )
-    raw = resp.content[0].text.strip()
+    raw = ("{" + resp.content[0].text).strip()
 
-    # Strip markdown code fences if present
+    # Strip markdown code fences if present (shouldn't happen with prefill but be safe)
     if raw.startswith("```"):
         raw = raw.split("```")[1]
         if raw.startswith("json"):
