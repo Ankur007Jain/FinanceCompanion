@@ -140,7 +140,7 @@ function MaBadge({ price, ma50, ma200 }: { price: number; ma50: number | null; m
   );
 }
 
-function ExpandedDetail({ a, onChat }: { a: Analysis; onChat: () => void }) {
+function ExpandedDetail({ a, onChat, isMobile }: { a: Analysis; onChat: () => void; isMobile: boolean }) {
   let events: Array<{ date: string; description: string }> = [];
   try { if (a.events_json) events = JSON.parse(a.events_json).slice(0, 3); } catch {}
 
@@ -220,7 +220,7 @@ function ExpandedDetail({ a, onChat }: { a: Analysis; onChat: () => void }) {
       {hasScenarios && (
         <div style={{ padding: "14px 20px", borderBottom: "1px solid #EDEAE1" }}>
           <div style={{ ...secLabel, marginBottom: "0.75rem" }}>90-Day Scenarios</div>
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" }}>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: "0.75rem" }}>
             {([
               { key: "bull", label: "Bull", pct: a.scenario_bull_pct, prob: a.scenario_bull_prob, text: a.scenario_bull, color: "#3F6B4F", bg: "#EAF1EC", bd: "#C8DDD0" },
               { key: "base", label: "Base", pct: a.scenario_base_pct, prob: a.scenario_base_prob, text: a.scenario_base, color: "#3A5A6E", bg: "#E8EFF4", bd: "#C8D8E4" },
@@ -241,12 +241,12 @@ function ExpandedDetail({ a, onChat }: { a: Analysis; onChat: () => void }) {
         </div>
       )}
 
-      {/* ── Main 3-col grid ── */}
-      <div style={{ padding: "1.25rem 1.5rem", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1.5rem" }}>
+      {/* ── Main content — 3-col on desktop, stacked on mobile ── */}
+      <div style={{ padding: "1.25rem 1.5rem", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? "1.25rem" : "1.5rem" }}>
 
         {/* Conviction + bull/bear */}
         {(a.conviction_score != null || a.bull_case || a.bear_case) && (
-          <div style={{ gridColumn: "1 / -1", display: "flex", gap: "1.5rem", alignItems: "flex-start", flexWrap: "wrap" }}>
+          <div style={{ gridColumn: isMobile ? "1" : "1 / -1", display: "flex", gap: "1.5rem", alignItems: "flex-start", flexWrap: "wrap" }}>
             {a.conviction_score != null && (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90 }}>
                 <span style={{ fontSize: "1.6rem", fontWeight: 600, fontFamily: MONO, color: a.conviction_score >= 70 ? "#3F6B4F" : a.conviction_score >= 50 ? "#97703C" : "#A8554A" }}>
@@ -339,7 +339,7 @@ function ExpandedDetail({ a, onChat }: { a: Analysis; onChat: () => void }) {
 
         {/* Fundamentals */}
         {(a.pe_trailing || a.revenue_growth || a.profit_margin || a.beta || a.market_cap || a.sector) && (
-          <div style={{ gridColumn: "1 / -1", borderTop: "1px solid #E4E1D8", paddingTop: "1rem" }}>
+          <div style={{ gridColumn: isMobile ? "1" : "1 / -1", borderTop: isMobile ? "none" : "1px solid #E4E1D8", paddingTop: isMobile ? 0 : "1rem" }}>
             <div style={secLabel}>Fundamentals</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.75rem 1.5rem" }}>
               {a.pe_trailing     != null && <FundStat label="P/E (TTM)"       value={a.pe_trailing.toFixed(1) + "x"} />}
@@ -610,7 +610,7 @@ function StockRow({
         </div>
       )}
 
-      {expanded && a && <ExpandedDetail a={a} onChat={() => onChat(item.ticker)} />}
+      {expanded && a && <ExpandedDetail a={a} onChat={() => onChat(item.ticker)} isMobile={isMobile} />}
     </div>
   );
 }
