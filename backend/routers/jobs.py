@@ -108,6 +108,10 @@ def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTas
         "dont_panic_note": body.dont_panic_note,
         "signal_convergence_score": body.signal_convergence_score,
         "convergence_details": body.convergence_details,
+        "verdict_a": body.verdict_a,
+        "verdict_b": body.verdict_b,
+        "verdict_agreement": body.verdict_agreement,
+        "split_reason": body.split_reason,
     }
 
     # Synthesize events_json from earnings_date when the agent sends it but not events_json

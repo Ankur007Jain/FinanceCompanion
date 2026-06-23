@@ -280,3 +280,95 @@ class TestNightlyPipeline:
         payload2 = {**payload, "verdict": "HOLD", "conviction_score": 55}
         r2 = client.post("/jobs/ingest-analysis", params={"x_job_secret": JOB_SECRET}, json=payload2)
         assert r2.json()["status"] == "updated"
+
+
+class TestDualAgentFields:
+    """Phase 1 — verify verdict_a, verdict_b, verdict_agreement, split_reason
+    are accepted by ingest and returned through the analysis API."""
+
+    def test_agreement_fields_saved_when_both_agree(self, client: TestClient, db_session):
+        payload = {
+            **_ANALYSIS_NVDA,
+            "ticker": "AGRE",
+            "verdict": "BUY",
+            "verdict_a": "BUY",
+            "verdict_b": "BUY",
+            "verdict_agreement": True,
+            "split_reason": None,
+        }
+        r = client.post("/jobs/ingest-analysis", params={"x_job_secret": JOB_SECRET}, json=payload)
+        assert r.status_code == 200
+
+        from models import StockAnalysis
+        row = db_session.query(StockAnalysis).filter(StockAnalysis.ticker == "AGRE").first()
+        assert row.verdict_a == "BUY"
+        assert row.verdict_b == "BUY"
+        assert row.verdict_agreement is True
+        assert row.split_reason is None
+
+    def test_split_fields_saved_when_models_disagree(self, client: TestClient, db_session):
+        payload = {
+            **_ANALYSIS_NVDA,
+            "ticker": "SPLT2",
+            "verdict": "WATCH",
+            "verdict_a": "BUY",
+            "verdict_b": "HOLD",
+            "verdict_agreement": False,
+            "split_reason": "Claude sees momentum; Gemini flags valuation risk",
+        }
+        r = client.post("/jobs/ingest-analysis", params={"x_job_secret": JOB_SECRET}, json=payload)
+        assert r.status_code == 200
+
+        from models import StockAnalysis
+        row = db_session.query(StockAnalysis).filter(StockAnalysis.ticker == "SPLT2").first()
+        assert row.verdict_a == "BUY"
+        assert row.verdict_b == "HOLD"
+        assert row.verdict_agreement is False
+        assert "Gemini" in row.split_reason
+
+    def test_dual_fields_optional_backward_compatible(self, client: TestClient, db_session):
+        """Existing agents that don't send dual fields still work — fields are nullable."""
+        payload = {**_ANALYSIS_NVDA, "ticker": "NODAG"}
+        r = client.post("/jobs/ingest-analysis", params={"x_job_secret": JOB_SECRET}, json=payload)
+        assert r.status_code == 200
+
+        from models import StockAnalysis
+        row = db_session.query(StockAnalysis).filter(StockAnalysis.ticker == "NODAG").first()
+        assert row.verdict_a is None
+        assert row.verdict_b is None
+        assert row.verdict_agreement is None
+
+    def test_upsert_preserves_dual_fields(self, client: TestClient, db_session):
+        """When an analysis is re-ingested, dual-agent fields are updated correctly."""
+        base = {**_ANALYSIS_NVDA, "ticker": "UPDT", "verdict_a": "BUY", "verdict_b": "BUY", "verdict_agreement": True}
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": JOB_SECRET}, json=base)
+
+        updated = {**base, "verdict_a": "HOLD", "verdict_b": "SELL", "verdict_agreement": False,
+                   "split_reason": "Models diverged after news update"}
+        r = client.post("/jobs/ingest-analysis", params={"x_job_secret": JOB_SECRET}, json=updated)
+        assert r.json()["status"] == "updated"
+
+        from models import StockAnalysis
+        row = db_session.query(StockAnalysis).filter(StockAnalysis.ticker == "UPDT").first()
+        assert row.verdict_a == "HOLD"
+        assert row.verdict_b == "SELL"
+        assert row.verdict_agreement is False
+
+    def test_sell_verdict_with_both_agents_agreeing(self, client: TestClient, db_session):
+        """SELL verdict from both agents — high confidence bearish signal."""
+        payload = {
+            **_ANALYSIS_NVDA,
+            "ticker": "SELL2",
+            "verdict": "SELL",
+            "verdict_a": "SELL",
+            "verdict_b": "SELL",
+            "verdict_agreement": True,
+            "split_reason": None,
+        }
+        r = client.post("/jobs/ingest-analysis", params={"x_job_secret": JOB_SECRET}, json=payload)
+        assert r.status_code == 200
+
+        from models import StockAnalysis
+        row = db_session.query(StockAnalysis).filter(StockAnalysis.ticker == "SELL2").first()
+        assert row.verdict == "SELL"
+        assert row.verdict_agreement is True

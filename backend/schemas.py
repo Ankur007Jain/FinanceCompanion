@@ -111,6 +111,10 @@ class StockAnalysisOut(BaseModel):
     dont_panic_note: Optional[str]
     signal_convergence_score: Optional[int]
     convergence_details: Optional[str]
+    verdict_a: Optional[str] = None
+    verdict_b: Optional[str] = None
+    verdict_agreement: Optional[bool] = None
+    split_reason: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -272,3 +276,7 @@ class IngestAnalysisRequest(BaseModel):
     signal_convergence_score: Optional[int] = None
     convergence_details: Optional[str] = None
     earnings_date: Optional[str] = None
+    verdict_a: Optional[str] = None
+    verdict_b: Optional[str] = None
+    verdict_agreement: Optional[bool] = None
+    split_reason: Optional[str] = None
