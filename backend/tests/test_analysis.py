@@ -61,7 +61,7 @@ class TestDigest:
         assert items[0]["analysis"] is not None
         assert items[0]["analysis"]["verdict"] == "BUY"
 
-    def test_digest_does_not_show_yesterdays_analysis(self, client: TestClient):
+    def test_digest_shows_yesterdays_analysis_as_fallback(self, client: TestClient):
         yesterday = str(date.today() - timedelta(days=1))
         _ingest(client, "YEST", "SELL", analysis_date=yesterday)
         with _mock_user("yest@example.com"):
@@ -69,7 +69,9 @@ class TestDigest:
                         json={"ticker": "YEST", "is_leveraged": False})
             r = client.get("/analysis/digest", params={"id_token": "fake"})
         items = r.json()
-        assert items[0]["analysis"] is None
+        # Digest now falls back to most recent within 7 days — yesterday's analysis must show
+        assert items[0]["analysis"] is not None
+        assert items[0]["analysis"]["verdict"] == "SELL"
 
     def test_digest_is_user_scoped(self, client: TestClient):
         _ingest(client, "SCOP", "HOLD")

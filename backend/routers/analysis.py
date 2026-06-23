@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -12,16 +12,21 @@ router = APIRouter(prefix="/analysis", tags=["analysis"])
 
 @router.get("/digest", response_model=list[DigestItem])
 def get_digest(id_token: str, db: Session = Depends(get_db)):
-    """Today's digest for all stocks in the user's watchlist."""
+    """Digest for all stocks in the user's watchlist — most recent analysis within 7 days."""
     user = get_current_user(id_token, db)
     watchlist = db.query(WatchlistItem).filter(WatchlistItem.user_email == user.email).all()
-    today = date.today()
+    cutoff = date.today() - timedelta(days=7)
     result = []
     for item in watchlist:
-        analysis = db.query(StockAnalysis).filter(
-            StockAnalysis.ticker == item.ticker,
-            StockAnalysis.analysis_date == today,
-        ).first()
+        analysis = (
+            db.query(StockAnalysis)
+            .filter(
+                StockAnalysis.ticker == item.ticker,
+                StockAnalysis.analysis_date >= cutoff,
+            )
+            .order_by(StockAnalysis.analysis_date.desc())
+            .first()
+        )
         result.append(DigestItem(
             ticker=item.ticker,
             company_name=item.company_name,
