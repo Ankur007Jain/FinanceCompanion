@@ -238,6 +238,8 @@ jobs:
             hold_and_forget_rating, position_size_pct, all scenario_* fields, dont_panic_note,
             signal_convergence_score, convergence_details.
 
+            Also include earnings_date (the raw string from yfinance, e.g. "2026-07-15") if available, else omit it.
+
             ## Step 5 — Print summary
 
             ```
