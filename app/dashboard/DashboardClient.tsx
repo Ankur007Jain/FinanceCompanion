@@ -534,9 +534,22 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [portfolioSize, setPortfolioSize] = useState<number | null>(null);
   const [showPortfolioPrompt, setShowPortfolioPrompt] = useState(false);
   const [portfolioInput, setPortfolioInput] = useState("");
+  const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const profileMenuRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => { fetchDigest(); fetchUser(); }, []);
+
+  useEffect(() => {
+    if (!showProfileMenu) return;
+    function handleClick(e: MouseEvent) {
+      if (profileMenuRef.current && !profileMenuRef.current.contains(e.target as Node)) {
+        setShowProfileMenu(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [showProfileMenu]);
 
   async function fetchDigest() {
     setLoading(true);
@@ -674,18 +687,45 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               <span style={{ fontSize: 9, letterSpacing: "0.12em", color: "#9C998E", fontFamily: MONO, fontWeight: 500 }}>VIRTUAL BALANCE</span>
               <span style={{ fontSize: 14, fontFamily: MONO, fontWeight: 500, color: "#20211C", marginTop: 3 }}>$20,000</span>
             </div>
-            <div
-              title="Click to sign out"
-              onClick={() => signOut({ callbackUrl: "/signin" })}
-              style={{
-                width: 32, height: 32, borderRadius: "50%",
-                background: "#ECEAE3", border: "1px solid #E0DDD3",
-                display: "flex", alignItems: "center", justifyContent: "center",
-                fontSize: 12, fontWeight: 600, color: "#6A685F",
-                cursor: "pointer", userSelect: "none", fontFamily: SANS,
-              }}
-            >
-              {initials}
+            <div ref={profileMenuRef} style={{ position: "relative" }}>
+              <div
+                onClick={() => setShowProfileMenu(v => !v)}
+                style={{
+                  width: 32, height: 32, borderRadius: "50%",
+                  background: showProfileMenu ? "#D8D5CC" : "#ECEAE3",
+                  border: "1px solid #E0DDD3",
+                  display: "flex", alignItems: "center", justifyContent: "center",
+                  fontSize: 12, fontWeight: 600, color: "#6A685F",
+                  cursor: "pointer", userSelect: "none", fontFamily: SANS,
+                  transition: "background 0.15s",
+                }}
+              >
+                {initials}
+              </div>
+              {showProfileMenu && (
+                <div style={{
+                  position: "absolute", top: "calc(100% + 8px)", right: 0,
+                  minWidth: 180, background: "#FBFAF7",
+                  border: "1px solid #E4E1D8", borderRadius: 10,
+                  boxShadow: "0 8px 24px rgba(32,33,28,0.12)",
+                  zIndex: 100, overflow: "hidden",
+                }}>
+                  <div style={{ padding: "12px 16px 10px", borderBottom: "1px solid #EDEAE1" }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: "#20211C", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{userName}</div>
+                  </div>
+                  <button
+                    onClick={() => signOut({ callbackUrl: "/signin" })}
+                    style={{
+                      width: "100%", textAlign: "left", padding: "11px 16px",
+                      background: "none", border: "none", cursor: "pointer",
+                      fontSize: 13, color: "#A8554A", fontFamily: SANS,
+                      display: "flex", alignItems: "center", gap: 8,
+                    }}
+                  >
+                    Sign out
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </div>
