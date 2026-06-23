@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from database import get_db
 from models import StockAnalysis, WatchlistItem
 from routers.auth import get_current_user
-from schemas import DigestItem, StockAnalysisOut
+from schemas import DigestItem, StockAnalysisOut, ImportantFlag, ReportDayOut
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -27,6 +27,56 @@ def get_digest(id_token: str, db: Session = Depends(get_db)):
             company_name=item.company_name,
             is_leveraged=item.is_leveraged or False,
             analysis=StockAnalysisOut.model_validate(analysis) if analysis else None,
+        ))
+    return result
+
+
+@router.get("/reports", response_model=list[ReportDayOut])
+def get_reports(id_token: str, limit: int = 7, db: Session = Depends(get_db)):
+    """Last N nightly report summaries for the user's watchlist, newest first."""
+    user = get_current_user(id_token, db)
+    watchlist_tickers = [
+        row.ticker
+        for row in db.query(WatchlistItem).filter(WatchlistItem.user_email == user.email).all()
+    ]
+    if not watchlist_tickers:
+        return []
+
+    dates = (
+        db.query(StockAnalysis.analysis_date)
+        .filter(StockAnalysis.ticker.in_(watchlist_tickers))
+        .distinct()
+        .order_by(StockAnalysis.analysis_date.desc())
+        .limit(limit)
+        .all()
+    )
+
+    result = []
+    for (report_date,) in dates:
+        analyses = (
+            db.query(StockAnalysis)
+            .filter(
+                StockAnalysis.ticker.in_(watchlist_tickers),
+                StockAnalysis.analysis_date == report_date,
+            )
+            .all()
+        )
+        by_verdict: dict[str, list[str]] = {}
+        important_flags: list[ImportantFlag] = []
+        for a in analyses:
+            by_verdict.setdefault(a.verdict, []).append(a.ticker)
+            if a.is_important_day:
+                important_flags.append(ImportantFlag(
+                    ticker=a.ticker,
+                    verdict=a.verdict,
+                    importance_reason=a.importance_reason,
+                ))
+        result.append(ReportDayOut(
+            report_date=str(report_date),
+            analyzed_count=len(analyses),
+            total_watchlist=len(watchlist_tickers),
+            by_verdict=by_verdict,
+            important_flags=important_flags,
         ))
     return result
 
