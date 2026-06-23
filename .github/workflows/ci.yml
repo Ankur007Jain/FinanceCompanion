@@ -309,6 +309,9 @@ jobs:
       AUTH_GOOGLE_ID: test
       AUTH_GOOGLE_SECRET: test
       E2E_BASE_URL: http://localhost:3000
+      TEST_MODE: "true"
+      AUTH_TEST_MODE: "true"
+      TEST_USER_EMAIL: test@financecompanion.dev
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
