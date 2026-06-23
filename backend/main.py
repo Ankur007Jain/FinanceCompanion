@@ -73,6 +73,19 @@ def _migrate_db():
                 "bull_case":             "TEXT",
                 "bear_case":             "TEXT",
                 "thesis_invalidation":   "TEXT",
+                "entry_quality":         "VARCHAR",
+                "hold_and_forget_rating":"VARCHAR",
+                "position_size_pct":     "VARCHAR",
+                "scenario_bull":         "TEXT",
+                "scenario_base":         "TEXT",
+                "scenario_bear":         "TEXT",
+                "scenario_bull_pct":     "FLOAT",
+                "scenario_base_pct":     "FLOAT",
+                "scenario_bear_pct":     "FLOAT",
+                "scenario_bull_prob":    "INTEGER",
+                "scenario_base_prob":    "INTEGER",
+                "scenario_bear_prob":    "INTEGER",
+                "dont_panic_note":       "TEXT",
             }
             for col, typ in new_cols.items():
                 if col not in cols:

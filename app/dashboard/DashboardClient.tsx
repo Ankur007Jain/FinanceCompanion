@@ -53,6 +53,19 @@ interface Analysis {
   is_important_day: boolean;
   importance_reason: string | null;
   events_json: string | null;
+  entry_quality: string | null;
+  hold_and_forget_rating: string | null;
+  position_size_pct: string | null;
+  scenario_bull: string | null;
+  scenario_base: string | null;
+  scenario_bear: string | null;
+  scenario_bull_pct: number | null;
+  scenario_base_pct: number | null;
+  scenario_bear_pct: number | null;
+  scenario_bull_prob: number | null;
+  scenario_base_prob: number | null;
+  scenario_bear_prob: number | null;
+  dont_panic_note: string | null;
 }
 
 interface DigestItem {
@@ -135,170 +148,226 @@ function ExpandedDetail({ a, onChat }: { a: Analysis; onChat: () => void }) {
     marginBottom: "0.5rem", fontFamily: MONO,
   };
 
+  const signals = [
+    { label: "Price & RSI",     ok: a.rsi != null || a.current_price != null },
+    { label: "Analyst Ratings", ok: a.analyst_consensus != null },
+    { label: "News Sentiment",  ok: a.news_summary != null },
+    { label: "Events Calendar", ok: events.length > 0 },
+    { label: "Ripple Effects",  ok: a.ripple_analysis != null },
+    { label: "Cross-Validated", ok: a.analyst_consensus != null && a.current_price != null },
+  ];
+
+  const EQ_META: Record<string, { label: string; color: string; bg: string; bd: string }> = {
+    GREAT: { label: "Great Entry",       color: "#3F6B4F", bg: "#EAF1EC", bd: "#C8DDD0" },
+    FAIR:  { label: "Fair Entry",        color: "#97703C", bg: "#F4EEE2", bd: "#E6DBC4" },
+    WAIT:  { label: "Wait for Pullback", color: "#A8554A", bg: "#F4E7E4", bd: "#E6D2CC" },
+  };
+  const HF_META: Record<string, { label: string; color: string; bg: string; bd: string }> = {
+    HOLD_AND_FORGET: { label: "Hold & Forget ✓", color: "#3F6B4F", bg: "#EAF1EC", bd: "#C8DDD0" },
+    CHECK_MONTHLY:   { label: "Check Monthly",   color: "#97703C", bg: "#F4EEE2", bd: "#E6DBC4" },
+    WATCH_CLOSELY:   { label: "Watch Closely",   color: "#A8554A", bg: "#F4E7E4", bd: "#E6D2CC" },
+  };
+
+  const eqMeta  = a.entry_quality         ? EQ_META[a.entry_quality]                : null;
+  const hfMeta  = a.hold_and_forget_rating ? HF_META[a.hold_and_forget_rating]       : null;
+  const hasScenarios = a.scenario_bull_prob != null && a.scenario_base_prob != null && a.scenario_bear_prob != null;
+
   return (
-    <div style={{
-      borderTop: "1px solid #E4E1D8",
-      padding: "1.25rem 1.5rem",
-      display: "grid",
-      gridTemplateColumns: "1fr 1fr 1fr",
-      gap: "1.5rem",
-      background: "#F6F4EE",
-    }}>
-      {/* Committee view — conviction, risk, bull/bear */}
-      {(a.conviction_score != null || a.bull_case || a.bear_case) && (
-        <div style={{ gridColumn: "1 / -1", display: "flex", gap: "1.5rem", alignItems: "flex-start", flexWrap: "wrap" }}>
-          {a.conviction_score != null && (
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90 }}>
-              <span style={{ fontSize: "1.6rem", fontWeight: 600, fontFamily: MONO, color: a.conviction_score >= 70 ? "#3F6B4F" : a.conviction_score >= 50 ? "#97703C" : "#A8554A" }}>
-                {a.conviction_score}<span style={{ fontSize: "0.8rem", color: "#9C998E" }}>/100</span>
-              </span>
-              <span style={{ ...secLabel, marginBottom: 0 }}>Conviction</span>
-              <div style={{ display: "flex", gap: 6 }}>
-                {a.risk_level && <span style={{ fontSize: "0.62rem", fontFamily: MONO, fontWeight: 600, padding: "2px 7px", borderRadius: 20, color: a.risk_level === "LOW" ? "#3F6B4F" : a.risk_level === "MED" ? "#97703C" : "#A8554A", background: a.risk_level === "LOW" ? "#EAF1EC" : a.risk_level === "MED" ? "#F4EEE2" : "#F4E7E4", border: `1px solid ${a.risk_level === "LOW" ? "#D6E2D7" : a.risk_level === "MED" ? "#E6DBC4" : "#E6D2CC"}` }}>{a.risk_level} RISK</span>}
-                {a.confidence && <span style={{ fontSize: "0.62rem", fontFamily: MONO, color: "#9C998E" }}>{a.confidence} conf.</span>}
-              </div>
-            </div>
+    <div style={{ borderTop: "1px solid #E4E1D8", background: "#F6F4EE", borderRadius: "0 0 11px 11px" }}>
+
+      {/* ── Signal checklist strip ── */}
+      <div style={{ padding: "10px 20px", borderBottom: "1px solid #EDEAE1", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px 8px" }}>
+        <span style={{ fontSize: "0.65rem", color: "#9C998E", fontFamily: MONO, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginRight: 4, flexShrink: 0 }}>Analyzed</span>
+        {signals.map(s => (
+          <span key={s.label} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.7rem", fontFamily: MONO, padding: "2px 9px", borderRadius: 20, color: s.ok ? "#3F6B4F" : "#B0ADA6", background: s.ok ? "#EAF1EC" : "#EDEAE1", border: `1px solid ${s.ok ? "#C8DDD0" : "#E4E1D8"}` }}>
+            <span style={{ fontSize: "0.65rem" }}>{s.ok ? "✓" : "—"}</span>{s.label}
+          </span>
+        ))}
+      </div>
+
+      {/* ── Trust badges: Entry Quality · Hold & Forget · Position Size ── */}
+      {(eqMeta || hfMeta || a.position_size_pct) && (
+        <div style={{ padding: "12px 20px", borderBottom: "1px solid #EDEAE1", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px 12px" }}>
+          {eqMeta && (
+            <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: eqMeta.color, background: eqMeta.bg, border: `1px solid ${eqMeta.bd}` }}>
+              Entry: {eqMeta.label}
+            </span>
           )}
-          <div style={{ flex: 1, minWidth: 240, display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-            {a.bull_case && (
-              <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "#3A3833", lineHeight: 1.5 }}>
-                <span style={{ color: "#3F6B4F", fontWeight: 700, flexShrink: 0 }}>Bull</span><span>{a.bull_case}</span>
-              </div>
-            )}
-            {a.bear_case && (
-              <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "#3A3833", lineHeight: 1.5 }}>
-                <span style={{ color: "#A8554A", fontWeight: 700, flexShrink: 0 }}>Bear</span><span>{a.bear_case}</span>
-              </div>
-            )}
-            {a.thesis_invalidation && (
-              <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.78rem", color: "#6A685F", lineHeight: 1.5 }}>
-                <span style={{ color: "#9C998E", fontWeight: 600, flexShrink: 0, fontFamily: MONO, fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", paddingTop: 2 }}>Flips if</span><span>{a.thesis_invalidation}</span>
-              </div>
-            )}
-          </div>
+          {hfMeta && (
+            <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: hfMeta.color, background: hfMeta.bg, border: `1px solid ${hfMeta.bd}` }}>
+              {hfMeta.label}
+            </span>
+          )}
+          {a.position_size_pct && (
+            <span style={{ fontSize: "0.72rem", fontFamily: MONO, padding: "4px 12px", borderRadius: 20, color: "#3A5A6E", background: "#E8EFF4", border: "1px solid #C8D8E4" }}>
+              Suggested: <strong>{a.position_size_pct}</strong> of portfolio
+            </span>
+          )}
         </div>
       )}
 
-      <div>
-        <div style={secLabel}>Price Targets</div>
-        {(a.entry_target || a.exit_target || a.stop_loss || a.hold_period) ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-            <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap" }}>
-              {a.entry_target && (
-                <div>
-                  <div style={{ fontSize: "0.68rem", color: "#9C998E" }}>Entry</div>
-                  <div style={{ fontWeight: 600, color: "#3F6B4F", fontSize: "1rem", fontFamily: MONO }}>${a.entry_target.toFixed(2)}</div>
+      {/* ── Don't Panic note ── */}
+      {a.dont_panic_note && (
+        <div style={{ margin: "0 20px 0", padding: "12px 16px", background: "#FDF6EC", border: "1px solid #E6DBC4", borderRadius: 8, marginTop: 14, marginBottom: 4 }}>
+          <div style={{ fontSize: "0.68rem", color: "#97703C", fontFamily: MONO, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 5 }}>Price Alert</div>
+          <div style={{ fontSize: "0.8rem", lineHeight: 1.6, color: "#5A4420" }}>{a.dont_panic_note}</div>
+        </div>
+      )}
+
+      {/* ── 90-Day Scenarios ── */}
+      {hasScenarios && (
+        <div style={{ padding: "14px 20px", borderBottom: "1px solid #EDEAE1" }}>
+          <div style={{ ...secLabel, marginBottom: "0.75rem" }}>90-Day Scenarios</div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "0.75rem" }}>
+            {([
+              { key: "bull", label: "Bull", pct: a.scenario_bull_pct, prob: a.scenario_bull_prob, text: a.scenario_bull, color: "#3F6B4F", bg: "#EAF1EC", bd: "#C8DDD0" },
+              { key: "base", label: "Base", pct: a.scenario_base_pct, prob: a.scenario_base_prob, text: a.scenario_base, color: "#3A5A6E", bg: "#E8EFF4", bd: "#C8D8E4" },
+              { key: "bear", label: "Bear", pct: a.scenario_bear_pct, prob: a.scenario_bear_prob, text: a.scenario_bear, color: "#A8554A", bg: "#F4E7E4", bd: "#E6D2CC" },
+            ] as const).map(s => (
+              <div key={s.key} style={{ background: s.bg, border: `1px solid ${s.bd}`, borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+                  <span style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, color: s.color, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</span>
+                  <span style={{ fontSize: "0.68rem", fontFamily: MONO, color: "#9C998E" }}>{s.prob}%</span>
                 </div>
-              )}
-              {a.exit_target && (
-                <div>
-                  <div style={{ fontSize: "0.68rem", color: "#9C998E" }}>Take Profit</div>
-                  <div style={{ fontWeight: 600, color: "#3A5A6E", fontSize: "1rem", fontFamily: MONO }}>${a.exit_target.toFixed(2)}</div>
+                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontFamily: MONO, color: s.color, marginBottom: 5 }}>
+                  {s.pct != null ? (s.pct >= 0 ? "+" : "") + s.pct.toFixed(1) + "%" : "—"}
                 </div>
-              )}
-              {a.stop_loss && (
-                <div>
-                  <div style={{ fontSize: "0.68rem", color: "#9C998E" }}>Stop Loss</div>
-                  <div style={{ fontWeight: 600, color: "#A8554A", fontSize: "1rem", fontFamily: MONO }}>${a.stop_loss.toFixed(2)}</div>
-                </div>
-              )}
-            </div>
-            {a.hold_period && (
-              <div style={{
-                display: "inline-flex", alignItems: "center", gap: "0.4rem",
-                padding: "0.25rem 0.65rem", background: "#ECEAE3",
-                border: "1px solid #E4E1D8", borderRadius: 6, width: "fit-content",
-              }}>
-                <span style={{ fontSize: "0.68rem", color: "#9C998E", fontFamily: MONO }}>Hold:</span>
-                <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "#20211C" }}>{a.hold_period}</span>
-              </div>
-            )}
-          </div>
-        ) : (
-          <div style={{ fontSize: "0.82rem", color: "#9C998E" }}>No price targets set</div>
-        )}
-        {events.length > 0 && (
-          <div style={{ marginTop: "1rem" }}>
-            <div style={{ ...secLabel, marginTop: "0.5rem" }}>Upcoming Events</div>
-            {events.map((e, i) => (
-              <div key={i} style={{ fontSize: "0.78rem", color: "#97703C", marginBottom: "0.25rem", display: "flex", gap: "0.4rem" }}>
-                <span>⚡</span><span>{e.date} — {e.description}</span>
+                {s.text && <div style={{ fontSize: "0.72rem", lineHeight: 1.5, color: "#3A3833" }}>{s.text}</div>}
               </div>
             ))}
           </div>
-        )}
-      </div>
-
-      <div>
-        <div style={secLabel}>AI Reasoning</div>
-        <div style={{ fontSize: "0.8rem", lineHeight: 1.65, color: "#3A3833" }}>
-          {a.reasoning ?? "—"}
         </div>
-      </div>
+      )}
 
-      <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-        {a.news_summary && (
-          <div>
-            <div style={secLabel}>News</div>
-            <div style={{ fontSize: "0.78rem", lineHeight: 1.6, color: "#3A3833" }}>{a.news_summary}</div>
-          </div>
-        )}
-        {a.ripple_analysis && (
-          <div>
-            <div style={secLabel}>Ripple Effects</div>
-            <div style={{ fontSize: "0.78rem", lineHeight: 1.6, color: "#3A3833" }}>{a.ripple_analysis}</div>
-          </div>
-        )}
-        <button
-          onClick={onChat}
-          style={{
-            marginTop: "auto", padding: "0.5rem 1rem", background: "#3A5A6E",
-            color: "#FBFAF7", border: "none", borderRadius: 7,
-            cursor: "pointer", fontWeight: 600, fontSize: "0.82rem",
-            alignSelf: "flex-start", fontFamily: SANS,
-          }}
-        >
-          Ask AI about this →
-        </button>
-      </div>
+      {/* ── Main 3-col grid ── */}
+      <div style={{ padding: "1.25rem 1.5rem", display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: "1.5rem" }}>
 
-      {(a.pe_trailing || a.revenue_growth || a.profit_margin || a.beta || a.market_cap || a.sector) && (
-        <div style={{ gridColumn: "1 / -1", borderTop: "1px solid #E4E1D8", paddingTop: "1rem" }}>
-          <div style={secLabel}>Fundamentals</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.75rem 1.5rem" }}>
-            {a.pe_trailing != null && <FundStat label="P/E (TTM)" value={a.pe_trailing.toFixed(1) + "x"} />}
-            {a.pe_forward  != null && <FundStat label="P/E (Fwd)" value={a.pe_forward.toFixed(1) + "x"} />}
-            {a.revenue_growth != null && <FundStat label="Revenue Growth" value={pct(a.revenue_growth)} color={a.revenue_growth >= 0 ? "#3F6B4F" : "#A8554A"} />}
-            {a.profit_margin  != null && <FundStat label="Net Margin" value={pct(a.profit_margin)} color={a.profit_margin >= 0 ? "#3F6B4F" : "#A8554A"} />}
-            {a.debt_to_equity != null && <FundStat label="Debt / Equity" value={a.debt_to_equity.toFixed(1)} />}
-            {a.beta != null && <FundStat label="Beta" value={a.beta.toFixed(2)} color={a.beta > 1.5 ? "#97703C" : undefined} />}
-            {a.short_float_pct   != null && <FundStat label="Short Interest" value={pct(a.short_float_pct)} color={a.short_float_pct > 0.2 ? "#A8554A" : undefined} />}
-            {a.inst_ownership_pct != null && <FundStat label="Inst. Ownership" value={pct(a.inst_ownership_pct)} />}
-            {(a.stock_52w_change != null || a.sp500_52w_change != null) && (
-              <div>
-                <div style={{ fontSize: "0.65rem", color: "#9C998E", marginBottom: "0.2rem" }}>vs S&P 500 (52w)</div>
-                <div style={{ display: "flex", gap: "0.5rem", alignItems: "baseline" }}>
-                  {a.stock_52w_change != null && (
-                    <span style={{ fontWeight: 600, fontSize: "0.88rem", color: a.stock_52w_change >= 0 ? "#3F6B4F" : "#A8554A", fontFamily: MONO }}>
-                      {pct(a.stock_52w_change)}
-                    </span>
-                  )}
-                  {a.sp500_52w_change != null && (
-                    <span style={{ fontSize: "0.72rem", color: "#9C998E" }}>/ {pct(a.sp500_52w_change)} S&P</span>
-                  )}
+        {/* Conviction + bull/bear */}
+        {(a.conviction_score != null || a.bull_case || a.bear_case) && (
+          <div style={{ gridColumn: "1 / -1", display: "flex", gap: "1.5rem", alignItems: "flex-start", flexWrap: "wrap" }}>
+            {a.conviction_score != null && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90 }}>
+                <span style={{ fontSize: "1.6rem", fontWeight: 600, fontFamily: MONO, color: a.conviction_score >= 70 ? "#3F6B4F" : a.conviction_score >= 50 ? "#97703C" : "#A8554A" }}>
+                  {a.conviction_score}<span style={{ fontSize: "0.8rem", color: "#9C998E" }}>/100</span>
+                </span>
+                <span style={{ ...secLabel, marginBottom: 0 }}>Conviction</span>
+                <div style={{ display: "flex", gap: 6 }}>
+                  {a.risk_level && <span style={{ fontSize: "0.62rem", fontFamily: MONO, fontWeight: 600, padding: "2px 7px", borderRadius: 20, color: a.risk_level === "LOW" ? "#3F6B4F" : a.risk_level === "MED" ? "#97703C" : "#A8554A", background: a.risk_level === "LOW" ? "#EAF1EC" : a.risk_level === "MED" ? "#F4EEE2" : "#F4E7E4", border: `1px solid ${a.risk_level === "LOW" ? "#D6E2D7" : a.risk_level === "MED" ? "#E6DBC4" : "#E6D2CC"}` }}>{a.risk_level} RISK</span>}
+                  {a.confidence && <span style={{ fontSize: "0.62rem", fontFamily: MONO, color: "#9C998E" }}>{a.confidence} conf.</span>}
                 </div>
               </div>
             )}
-            {a.market_cap != null && <FundStat label="Market Cap" value={fmtCap(a.market_cap)} />}
-            {a.dividend_yield != null && a.dividend_yield > 0 && <FundStat label="Dividend Yield" value={pct(a.dividend_yield)} color="#3F6B4F" />}
+            <div style={{ flex: 1, minWidth: 240, display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+              {a.bull_case && (
+                <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "#3A3833", lineHeight: 1.5 }}>
+                  <span style={{ color: "#3F6B4F", fontWeight: 700, flexShrink: 0 }}>Bull</span><span>{a.bull_case}</span>
+                </div>
+              )}
+              {a.bear_case && (
+                <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "#3A3833", lineHeight: 1.5 }}>
+                  <span style={{ color: "#A8554A", fontWeight: 700, flexShrink: 0 }}>Bear</span><span>{a.bear_case}</span>
+                </div>
+              )}
+              {a.thesis_invalidation && (
+                <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.78rem", color: "#6A685F", lineHeight: 1.5 }}>
+                  <span style={{ color: "#9C998E", fontWeight: 600, flexShrink: 0, fontFamily: MONO, fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", paddingTop: 2 }}>Flips if</span>
+                  <span>{a.thesis_invalidation}</span>
+                </div>
+              )}
+            </div>
           </div>
-          {(a.sector || a.industry) && (
-            <div style={{ marginTop: "0.6rem", fontSize: "0.72rem", color: "#9C998E" }}>
-              {[a.sector, a.industry].filter(Boolean).join(" · ")}
+        )}
+
+        {/* Price Targets + Events */}
+        <div>
+          <div style={secLabel}>Price Targets</div>
+          {(a.entry_target || a.exit_target || a.stop_loss || a.hold_period) ? (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+              <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap" }}>
+                {a.entry_target && <div><div style={{ fontSize: "0.68rem", color: "#9C998E" }}>Entry</div><div style={{ fontWeight: 600, color: "#3F6B4F", fontSize: "1rem", fontFamily: MONO }}>${a.entry_target.toFixed(2)}</div></div>}
+                {a.exit_target  && <div><div style={{ fontSize: "0.68rem", color: "#9C998E" }}>Take Profit</div><div style={{ fontWeight: 600, color: "#3A5A6E", fontSize: "1rem", fontFamily: MONO }}>${a.exit_target.toFixed(2)}</div></div>}
+                {a.stop_loss    && <div><div style={{ fontSize: "0.68rem", color: "#9C998E" }}>Stop Loss</div><div style={{ fontWeight: 600, color: "#A8554A", fontSize: "1rem", fontFamily: MONO }}>${a.stop_loss.toFixed(2)}</div></div>}
+              </div>
+              {a.hold_period && (
+                <div style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.25rem 0.65rem", background: "#ECEAE3", border: "1px solid #E4E1D8", borderRadius: 6, width: "fit-content" }}>
+                  <span style={{ fontSize: "0.68rem", color: "#9C998E", fontFamily: MONO }}>Hold:</span>
+                  <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "#20211C" }}>{a.hold_period}</span>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ fontSize: "0.82rem", color: "#9C998E" }}>No price targets set</div>
+          )}
+          {events.length > 0 && (
+            <div style={{ marginTop: "1rem" }}>
+              <div style={{ ...secLabel, marginTop: "0.5rem" }}>Upcoming Events</div>
+              {events.map((e, i) => (
+                <div key={i} style={{ fontSize: "0.78rem", color: "#97703C", marginBottom: "0.25rem", display: "flex", gap: "0.4rem" }}>
+                  <span>⚡</span><span>{e.date} — {e.description}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
-      )}
+
+        {/* AI Reasoning */}
+        <div>
+          <div style={secLabel}>AI Reasoning</div>
+          <div style={{ fontSize: "0.8rem", lineHeight: 1.65, color: "#3A3833" }}>{a.reasoning ?? "—"}</div>
+        </div>
+
+        {/* News + Ripple + Chat */}
+        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
+          {a.news_summary && (
+            <div>
+              <div style={secLabel}>News</div>
+              <div style={{ fontSize: "0.78rem", lineHeight: 1.6, color: "#3A3833" }}>{a.news_summary}</div>
+            </div>
+          )}
+          {a.ripple_analysis && (
+            <div>
+              <div style={secLabel}>Ripple Effects</div>
+              <div style={{ fontSize: "0.78rem", lineHeight: 1.6, color: "#3A3833" }}>{a.ripple_analysis}</div>
+            </div>
+          )}
+          <button onClick={onChat} style={{ marginTop: "auto", padding: "0.5rem 1rem", background: "#3A5A6E", color: "#FBFAF7", border: "none", borderRadius: 7, cursor: "pointer", fontWeight: 600, fontSize: "0.82rem", alignSelf: "flex-start", fontFamily: SANS }}>
+            Ask AI about this →
+          </button>
+        </div>
+
+        {/* Fundamentals */}
+        {(a.pe_trailing || a.revenue_growth || a.profit_margin || a.beta || a.market_cap || a.sector) && (
+          <div style={{ gridColumn: "1 / -1", borderTop: "1px solid #E4E1D8", paddingTop: "1rem" }}>
+            <div style={secLabel}>Fundamentals</div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.75rem 1.5rem" }}>
+              {a.pe_trailing     != null && <FundStat label="P/E (TTM)"       value={a.pe_trailing.toFixed(1) + "x"} />}
+              {a.pe_forward      != null && <FundStat label="P/E (Fwd)"       value={a.pe_forward.toFixed(1) + "x"} />}
+              {a.revenue_growth  != null && <FundStat label="Revenue Growth"  value={pct(a.revenue_growth)}  color={a.revenue_growth  >= 0 ? "#3F6B4F" : "#A8554A"} />}
+              {a.profit_margin   != null && <FundStat label="Net Margin"      value={pct(a.profit_margin)}   color={a.profit_margin   >= 0 ? "#3F6B4F" : "#A8554A"} />}
+              {a.debt_to_equity  != null && <FundStat label="Debt / Equity"   value={a.debt_to_equity.toFixed(1)} />}
+              {a.beta            != null && <FundStat label="Beta"            value={a.beta.toFixed(2)}       color={a.beta > 1.5 ? "#97703C" : undefined} />}
+              {a.short_float_pct   != null && <FundStat label="Short Interest"  value={pct(a.short_float_pct)} color={a.short_float_pct > 0.2 ? "#A8554A" : undefined} />}
+              {a.inst_ownership_pct != null && <FundStat label="Inst. Ownership" value={pct(a.inst_ownership_pct)} />}
+              {(a.stock_52w_change != null || a.sp500_52w_change != null) && (
+                <div>
+                  <div style={{ fontSize: "0.65rem", color: "#9C998E", marginBottom: "0.2rem" }}>vs S&P 500 (52w)</div>
+                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "baseline" }}>
+                    {a.stock_52w_change != null && <span style={{ fontWeight: 600, fontSize: "0.88rem", color: a.stock_52w_change >= 0 ? "#3F6B4F" : "#A8554A", fontFamily: MONO }}>{pct(a.stock_52w_change)}</span>}
+                    {a.sp500_52w_change != null && <span style={{ fontSize: "0.72rem", color: "#9C998E" }}>/ {pct(a.sp500_52w_change)} S&P</span>}
+                  </div>
+                </div>
+              )}
+              {a.market_cap     != null && <FundStat label="Market Cap"    value={fmtCap(a.market_cap)} />}
+              {a.dividend_yield != null && a.dividend_yield > 0 && <FundStat label="Dividend Yield" value={pct(a.dividend_yield)} color="#3F6B4F" />}
+            </div>
+            {(a.sector || a.industry) && (
+              <div style={{ marginTop: "0.6rem", fontSize: "0.72rem", color: "#9C998E" }}>
+                {[a.sector, a.industry].filter(Boolean).join(" · ")}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

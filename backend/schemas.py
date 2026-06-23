@@ -91,6 +91,19 @@ class StockAnalysisOut(BaseModel):
     ripple_analysis: Optional[str]
     is_important_day: Optional[bool]
     importance_reason: Optional[str]
+    entry_quality: Optional[str]
+    hold_and_forget_rating: Optional[str]
+    position_size_pct: Optional[str]
+    scenario_bull: Optional[str]
+    scenario_base: Optional[str]
+    scenario_bear: Optional[str]
+    scenario_bull_pct: Optional[float]
+    scenario_base_pct: Optional[float]
+    scenario_bear_pct: Optional[float]
+    scenario_bull_prob: Optional[int]
+    scenario_base_prob: Optional[int]
+    scenario_bear_prob: Optional[int]
+    dont_panic_note: Optional[str]
     created_at: datetime
 
     class Config:

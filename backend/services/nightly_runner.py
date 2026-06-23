@@ -91,9 +91,13 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
             }
             for r in recent
         ]
+        # Find most recent BUY price to power the don't-panic check
+        last_buy = next((r for r in recent if r.verdict == "BUY" and r.current_price), None)
+        last_buy_price = last_buy.current_price if last_buy else None
         verdict = await generate_verdict(
             ticker, price, news, events, analyst, ripple, stock_mem, is_leveraged,
             recent_analyses=recent_analyses,
+            last_buy_price=last_buy_price,
         )
     except Exception as e:
         logger.error(f"[{ticker}] Verdict agent failed: {e}")
@@ -159,6 +163,19 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         data_conflicts="; ".join(filter(None, [price.conflict_notes, analyst.conflict_notes, verdict.conflict_flags])),
         is_important_day=verdict.is_important_day,
         importance_reason=verdict.importance_reason,
+        entry_quality=verdict.entry_quality,
+        hold_and_forget_rating=verdict.hold_and_forget_rating,
+        position_size_pct=verdict.position_size_pct,
+        scenario_bull=verdict.scenario_bull,
+        scenario_base=verdict.scenario_base,
+        scenario_bear=verdict.scenario_bear,
+        scenario_bull_pct=verdict.scenario_bull_pct,
+        scenario_base_pct=verdict.scenario_base_pct,
+        scenario_bear_pct=verdict.scenario_bear_pct,
+        scenario_bull_prob=verdict.scenario_bull_prob,
+        scenario_base_prob=verdict.scenario_base_prob,
+        scenario_bear_prob=verdict.scenario_bear_prob,
+        dont_panic_note=verdict.dont_panic_note,
     )
     db.add(analysis)
     db.commit()

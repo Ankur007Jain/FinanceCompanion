@@ -123,6 +123,21 @@ class StockAnalysis(Base):
     is_important_day = Column(Boolean, default=False)
     importance_reason = Column(Text)  # why this day is flagged as significant
 
+    # Trust layer — busy professional signals
+    entry_quality = Column(String)       # GREAT | FAIR | WAIT
+    hold_and_forget_rating = Column(String)  # HOLD_AND_FORGET | CHECK_MONTHLY | WATCH_CLOSELY
+    position_size_pct = Column(String)   # e.g. "5–8%"
+    scenario_bull = Column(Text)
+    scenario_base = Column(Text)
+    scenario_bear = Column(Text)
+    scenario_bull_pct = Column(Float)    # expected % return
+    scenario_base_pct = Column(Float)
+    scenario_bear_pct = Column(Float)
+    scenario_bull_prob = Column(Integer) # probability 0-100 (three sum to 100)
+    scenario_base_prob = Column(Integer)
+    scenario_bear_prob = Column(Integer)
+    dont_panic_note = Column(Text)       # populated when price dropped >15% since last BUY
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
