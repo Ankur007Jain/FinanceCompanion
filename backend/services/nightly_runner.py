@@ -7,7 +7,7 @@ Analysis is global per ticker — not per user.
 import asyncio
 import json
 import logging
-from datetime import date
+from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
@@ -22,6 +22,37 @@ from models import StockAnalysis, WatchlistItem
 from services.stock_memory import get_stock_memory, maybe_update_stock_memory
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_signal_convergence(price, analyst, events: list[dict]) -> tuple[int, dict]:
+    """Deterministically scores 7 independent low-hanging-fruit signals."""
+    today = date.today()
+
+    days_to_earnings = 999
+    for e in events:
+        desc = e.get("description", "").lower()
+        if any(k in desc for k in ("earning", "eps", "quarterly result", "q1", "q2", "q3", "q4")):
+            try:
+                event_date = date.fromisoformat(str(e["date"]))
+                days = (event_date - today).days
+                if 0 < days < days_to_earnings:
+                    days_to_earnings = days
+            except (ValueError, KeyError):
+                pass
+
+    signals = {
+        "oversold_rsi":         price.rsi is not None and price.rsi < 42,
+        "near_52w_low":         price.range_position_pct is not None and price.range_position_pct < 35,
+        "analyst_upside_15pct": analyst.upside_pct is not None and analyst.upside_pct > 15,
+        "no_binary_risk":       days_to_earnings > 21,
+        "positive_fcf":         analyst.free_cashflow is not None and analyst.free_cashflow > 0,
+        "institutional_backing":analyst.inst_ownership_pct is not None and analyst.inst_ownership_pct > 0.40,
+        "price_stabilizing":    (
+            price.current_price is not None and price.ma_200 is not None
+            and price.current_price > price.ma_200 * 0.90
+        ),
+    }
+    return sum(signals.values()), signals
 
 
 async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, company_name: str, db: Session) -> None:
@@ -91,9 +122,20 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
             }
             for r in recent
         ]
+        # Find most recent BUY price to power the don't-panic check
+        last_buy = next((r for r in recent if r.verdict == "BUY" and r.current_price), None)
+        last_buy_price = last_buy.current_price if last_buy else None
+
+        # Deterministic convergence score — computed before calling Claude
+        conv_score, conv_details = _compute_signal_convergence(price, analyst, events)
+        logger.info(f"[{ticker}] Signal convergence: {conv_score}/7 {conv_details}")
+
         verdict = await generate_verdict(
             ticker, price, news, events, analyst, ripple, stock_mem, is_leveraged,
             recent_analyses=recent_analyses,
+            last_buy_price=last_buy_price,
+            signal_convergence_score=conv_score,
+            convergence_details=conv_details,
         )
     except Exception as e:
         logger.error(f"[{ticker}] Verdict agent failed: {e}")
@@ -159,6 +201,21 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         data_conflicts="; ".join(filter(None, [price.conflict_notes, analyst.conflict_notes, verdict.conflict_flags])),
         is_important_day=verdict.is_important_day,
         importance_reason=verdict.importance_reason,
+        entry_quality=verdict.entry_quality,
+        hold_and_forget_rating=verdict.hold_and_forget_rating,
+        position_size_pct=verdict.position_size_pct,
+        scenario_bull=verdict.scenario_bull,
+        scenario_base=verdict.scenario_base,
+        scenario_bear=verdict.scenario_bear,
+        scenario_bull_pct=verdict.scenario_bull_pct,
+        scenario_base_pct=verdict.scenario_base_pct,
+        scenario_bear_pct=verdict.scenario_bear_pct,
+        scenario_bull_prob=verdict.scenario_bull_prob,
+        scenario_base_prob=verdict.scenario_base_prob,
+        scenario_bear_prob=verdict.scenario_bear_prob,
+        dont_panic_note=verdict.dont_panic_note,
+        signal_convergence_score=conv_score,
+        convergence_details=json.dumps(conv_details),
     )
     db.add(analysis)
     db.commit()

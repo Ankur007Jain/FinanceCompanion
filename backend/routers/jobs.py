@@ -82,6 +82,21 @@ def ingest_analysis(body: IngestAnalysisRequest, x_job_secret: str = "", db: Ses
         "ripple_analysis": body.ripple_analysis,
         "is_important_day": body.is_important_day,
         "importance_reason": body.importance_reason,
+        "entry_quality": body.entry_quality,
+        "hold_and_forget_rating": body.hold_and_forget_rating,
+        "position_size_pct": body.position_size_pct,
+        "scenario_bull": body.scenario_bull,
+        "scenario_base": body.scenario_base,
+        "scenario_bear": body.scenario_bear,
+        "scenario_bull_pct": body.scenario_bull_pct,
+        "scenario_base_pct": body.scenario_base_pct,
+        "scenario_bear_pct": body.scenario_bear_pct,
+        "scenario_bull_prob": body.scenario_bull_prob,
+        "scenario_base_prob": body.scenario_base_prob,
+        "scenario_bear_prob": body.scenario_bear_prob,
+        "dont_panic_note": body.dont_panic_note,
+        "signal_convergence_score": body.signal_convergence_score,
+        "convergence_details": body.convergence_details,
     }
 
     existing = db.query(StockAnalysis).filter(
@@ -96,7 +111,7 @@ def ingest_analysis(body: IngestAnalysisRequest, x_job_secret: str = "", db: Ses
         db.commit()
         return {"status": "updated", "ticker": body.ticker}
 
-    analysis = StockAnalysis(**{k: v for k, v in mapped.items() if v is not None})
+    analysis = StockAnalysis(**{k: v for k, v in mapped.items() if v is not None or k in ("signal_convergence_score",)})
     db.add(analysis)
     db.commit()
     return {"status": "created", "ticker": body.ticker}

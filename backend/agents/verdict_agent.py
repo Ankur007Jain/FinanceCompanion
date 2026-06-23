@@ -25,6 +25,11 @@ Before you write a single word, run this committee process internally (do NOT ou
 6. MOAT & RISK — competitive durability and the single biggest thing that could go wrong.
 7. SELF-CHALLENGE — argue the strongest BULL case, then the strongest BEAR case, then decide which wins.
 8. CONVICTION — score 0-100 on how strong the setup is; assign risk LOW/MED/HIGH; state your confidence.
+9. BUSY PROFESSIONAL SIGNALS — answer four questions a non-expert would actually ask:
+   - entry_quality: Is now a good time to enter? GREAT = oversold/near support, excellent risk-reward. FAIR = reasonable but not ideal. WAIT = extended/overbought, better to wait for a pullback.
+   - hold_and_forget_rating: Can they buy and ignore for 90 days? HOLD_AND_FORGET = low volatility, no near-term binary events, strong fundamentals. CHECK_MONTHLY = moderate risk, worth a monthly glance. WATCH_CLOSELY = earnings within 30 days, high beta, leveraged, or thesis at risk.
+   - position_size_pct: What fraction of their portfolio? Scale with conviction and inverse of risk. E.g. HIGH conviction + LOW risk = "7-10%". LOW conviction + HIGH risk = "2-3%".
+   - scenarios: Give three honest probability-weighted outcomes over 90 days. Bull + Base + Bear probabilities must sum to 100. Be realistic — base case is the most likely, not the best case.
 
 Discipline rules:
 - Weigh bull vs bear honestly before committing. If signals are weak or contradictory, issue WATCH — no advice beats wrong advice.
@@ -61,7 +66,25 @@ _SCHEMA = """{
   "thesis_invalidation": "<one sentence — the single event that would flip this verdict>",
   "conflict_flags": "<any contradictions between signals, or empty string>",
   "is_important_day": <true|false>,
-  "importance_reason": "<why this day is significant, or empty string>"
+  "importance_reason": "<why this day is significant, or empty string>",
+
+  "entry_quality": "GREAT|FAIR|WAIT",
+  "hold_and_forget_rating": "HOLD_AND_FORGET|CHECK_MONTHLY|WATCH_CLOSELY",
+  "position_size_pct": "<e.g. '5-8%' — suggested portfolio allocation at this risk level>",
+
+  "scenario_bull": "<one sentence — what happens in the bull case>",
+  "scenario_bull_pct": <float — expected % return in bull case, e.g. 22.5>,
+  "scenario_bull_prob": <integer 0-100 — probability of bull case>,
+
+  "scenario_base": "<one sentence — what happens in the base case>",
+  "scenario_base_pct": <float — expected % return in base case>,
+  "scenario_base_prob": <integer 0-100 — probability of base case>,
+
+  "scenario_bear": "<one sentence — what happens in the bear case>",
+  "scenario_bear_pct": <float — expected % return in bear case, negative number>,
+  "scenario_bear_prob": <integer 0-100 — probability of bear case>,
+
+  "dont_panic_note": "<if price dropped >15% since last BUY, address it directly and plainly: what changed, what didn't, whether to hold or exit. Otherwise empty string.>"
 }"""
 
 
@@ -82,6 +105,20 @@ class VerdictResult:
     bull_case: str = ""
     bear_case: str = ""
     thesis_invalidation: str = ""
+    # Trust layer
+    entry_quality: str = ""
+    hold_and_forget_rating: str = ""
+    position_size_pct: str = ""
+    scenario_bull: str = ""
+    scenario_base: str = ""
+    scenario_bear: str = ""
+    scenario_bull_pct: Optional[float] = None
+    scenario_base_pct: Optional[float] = None
+    scenario_bear_pct: Optional[float] = None
+    scenario_bull_prob: Optional[int] = None
+    scenario_base_prob: Optional[int] = None
+    scenario_bear_prob: Optional[int] = None
+    dont_panic_note: str = ""
 
 
 async def generate_verdict(
@@ -94,6 +131,9 @@ async def generate_verdict(
     stock_memory: str,
     is_leveraged: bool = False,
     recent_analyses: list[dict] | None = None,
+    last_buy_price: Optional[float] = None,
+    signal_convergence_score: int = 0,
+    convergence_details: dict | None = None,
 ) -> VerdictResult:
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -174,6 +214,16 @@ Upside to Mean:  {analyst.upside_pct:.1f}% vs current
 
 {f"=== DATA CONFLICTS ===" + chr(10) + price.conflict_notes if price.conflict_notes else ""}
 
+=== SIGNAL CONVERGENCE (pre-computed, deterministic) ===
+Score: {signal_convergence_score}/7 independent signals confirmed
+{chr(10).join(f"  {'✓' if v else '✗'} {k.replace('_', ' ').title()}" for k, v in (convergence_details or {}).items())}
+
+CONVICTION FLOOR RULE: If score < 5, verdict MUST be WATCH. Do not issue BUY on weak setups.
+{"⚠ Score is " + str(signal_convergence_score) + "/7 — you MUST issue WATCH, not BUY." if signal_convergence_score < 5 else "✓ Score clears the threshold — BUY is eligible if analysis supports it."}
+
+{f"""=== DON'T PANIC CHECK ===
+Last BUY was issued at ${last_buy_price:.2f}. Current price is ${price.current_price:.2f} — a drop of {abs((price.current_price - last_buy_price) / last_buy_price * 100):.1f}%. Address this directly in dont_panic_note: what changed, what didn't, and whether the user should hold, add, or exit.""" if last_buy_price and price.current_price < last_buy_price * 0.85 else ""}
+
 Based on all the above, issue a verdict. Flag is_important_day=true if today involves a verdict
 reversal from prior history, major catalyst, earnings within 5 days, or index event.
 If signals are weak or contradictory and you are not confident, issue WATCH — it is better
@@ -183,7 +233,7 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
     resp = await client.messages.create(
-        model=_SONNET, max_tokens=900,
+        model=_SONNET, max_tokens=1400,
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -199,6 +249,8 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
     try:
         data = json.loads(raw)
         conviction = data.get("conviction_score")
+        def _f(k): return float(data[k]) if data.get(k) is not None else None
+        def _i(k): return int(data[k]) if data.get(k) is not None else None
         return VerdictResult(
             verdict=data.get("verdict", "WATCH"),
             entry_target=data.get("entry_target"),
@@ -215,6 +267,19 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
             bull_case=data.get("bull_case", ""),
             bear_case=data.get("bear_case", ""),
             thesis_invalidation=data.get("thesis_invalidation", ""),
+            entry_quality=data.get("entry_quality", ""),
+            hold_and_forget_rating=data.get("hold_and_forget_rating", ""),
+            position_size_pct=data.get("position_size_pct", ""),
+            scenario_bull=data.get("scenario_bull", ""),
+            scenario_base=data.get("scenario_base", ""),
+            scenario_bear=data.get("scenario_bear", ""),
+            scenario_bull_pct=_f("scenario_bull_pct"),
+            scenario_base_pct=_f("scenario_base_pct"),
+            scenario_bear_pct=_f("scenario_bear_pct"),
+            scenario_bull_prob=_i("scenario_bull_prob"),
+            scenario_base_prob=_i("scenario_base_prob"),
+            scenario_bear_prob=_i("scenario_bear_prob"),
+            dont_panic_note=data.get("dont_panic_note", ""),
         )
     except Exception:
         return VerdictResult(
