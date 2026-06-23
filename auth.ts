@@ -3,7 +3,7 @@ import Google from "next-auth/providers/google";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [Google({
-    authorization: { params: { access_type: "offline", prompt: "consent" } },
+    authorization: { params: { access_type: "offline" } },
   })],
   session: { maxAge: 60 * 60 * 24 * 30 },  // 30 days for the session cookie
   callbacks: {
