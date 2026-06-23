@@ -402,15 +402,38 @@ function analysisAge(dateStr: string): string {
   return "1w+ ago";
 }
 
+function VerdictBadge({ vm }: { vm: { color: string; bg: string; bd: string; label: string } }) {
+  return (
+    <div style={{
+      display: "inline-flex", alignItems: "center", justifyContent: "center",
+      padding: "0.3rem 0.7rem", background: vm.bg, color: vm.color,
+      border: `1px solid ${vm.bd}`, borderRadius: 20,
+      fontWeight: 700, fontSize: "0.75rem", letterSpacing: "0.06em",
+      fontFamily: MONO, whiteSpace: "nowrap",
+    }}>
+      {vm.label}
+    </div>
+  );
+}
+
 function StockRow({
-  item, expanded, onToggle, onChat, onRemove,
+  item, expanded, onToggle, onChat, onRemove, isMobile,
 }: {
-  item: DigestItem; expanded: boolean;
+  item: DigestItem; expanded: boolean; isMobile: boolean;
   onToggle: () => void; onChat: (ticker: string) => void; onRemove: (ticker: string) => void;
 }) {
   const a = item.analysis;
   const vm = a?.verdict ? VERDICT_META[a.verdict] ?? VERDICT_META.WATCH : null;
   const chgColor = (a?.day_change_pct ?? 0) >= 0 ? "#3F6B4F" : "#A8554A";
+  const age = a?.analysis_date ? analysisAge(a.analysis_date) : "";
+
+  const upcomingEvent = (() => {
+    try {
+      if (!a?.events_json) return null;
+      const evts = JSON.parse(a.events_json);
+      return evts?.length ? evts[0].date : null;
+    } catch { return null; }
+  })();
 
   return (
     <div style={{
@@ -418,114 +441,174 @@ function StockRow({
       border: expanded ? "1px solid #3A5A6E" : "1px solid #E4E1D8",
       borderRadius: 11, overflow: "hidden", transition: "border-color 0.15s",
     }}>
-      <div
-        onClick={a ? onToggle : undefined}
-        style={{
-          display: "grid",
-          gridTemplateColumns: "200px 100px 120px 180px 70px 100px 1fr 48px",
-          alignItems: "center", padding: "0.9rem 1.25rem",
-          cursor: a ? "pointer" : "default", gap: "1rem",
-        }}
-      >
-        {/* Stock */}
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            <span style={{ fontWeight: 600, fontSize: "0.95rem", fontFamily: MONO, color: "#20211C" }}>{item.ticker}</span>
-            {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.75rem" }}>⭐</span>}
-            {item.is_leveraged && (
-              <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "#EAF0F3", color: "#3A5A6E", border: "1px solid #D7E1E8", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>
-            )}
-          </div>
-          {item.company_name && (
-            <div style={{ fontSize: "0.72rem", color: "#9C998E", marginTop: "0.15rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-              {item.company_name}
-            </div>
-          )}
-          {a?.analysis_date && analysisAge(a.analysis_date) && (
-            <div style={{ marginTop: "0.2rem" }}>
-              <span style={{ fontSize: "0.62rem", padding: "0.1rem 0.4rem", background: "#EDE9DF", color: "#9C998E", borderRadius: 4, fontFamily: MONO }}>
-                {analysisAge(a.analysis_date)}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Verdict */}
-        {vm ? (
-          <div style={{
-            display: "inline-flex", alignItems: "center", justifyContent: "center",
-            padding: "0.3rem 0.7rem", background: vm.bg, color: vm.color,
-            border: `1px solid ${vm.bd}`, borderRadius: 20,
-            fontWeight: 700, fontSize: "0.75rem", letterSpacing: "0.06em",
-            fontFamily: MONO, width: "fit-content",
-          }}>
-            {vm.label}
-          </div>
-        ) : (
-          <span style={{ fontSize: "0.78rem", color: "#9C998E" }}>Pending</span>
-        )}
-
-        {/* Price */}
-        <div>
-          {a?.current_price != null ? (
-            <>
-              <div style={{ fontWeight: 600, fontSize: "0.95rem", fontFamily: MONO, color: "#20211C" }}>${a.current_price.toFixed(2)}</div>
-              {a.day_change_pct != null && (
-                <div style={{ fontSize: "0.72rem", color: chgColor, fontWeight: 600, fontFamily: MONO }}>
-                  {a.day_change_pct >= 0 ? "▲" : "▼"} {Math.abs(a.day_change_pct).toFixed(2)}%
+      {isMobile ? (
+        /* ── Mobile card layout ── */
+        <div onClick={a ? onToggle : undefined} style={{ padding: "0.9rem 1rem", cursor: a ? "pointer" : "default" }}>
+          {/* Row 1: Ticker + Verdict + Remove */}
+          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "0.5rem" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700, fontSize: "1rem", fontFamily: MONO, color: "#20211C" }}>{item.ticker}</span>
+                {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.78rem" }}>⭐</span>}
+                {item.is_leveraged && (
+                  <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "#EAF0F3", color: "#3A5A6E", border: "1px solid #D7E1E8", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>
+                )}
+                {age && (
+                  <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "#EDE9DF", color: "#9C998E", borderRadius: 4, fontFamily: MONO }}>{age}</span>
+                )}
+              </div>
+              {item.company_name && (
+                <div style={{ fontSize: "0.72rem", color: "#9C998E", marginTop: "0.15rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {item.company_name}
                 </div>
               )}
-            </>
-          ) : <span style={{ color: "#9C998E", fontSize: "0.82rem" }}>—</span>}
-        </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
+              {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.78rem", color: "#9C998E" }}>Pending</span>}
+              <button
+                onClick={e => { e.stopPropagation(); onRemove(item.ticker); }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: "#CBCAC2", fontSize: "0.82rem", padding: "0.2rem 0.3rem", lineHeight: 1 }}
+              >✕</button>
+            </div>
+          </div>
 
-        {/* 52-Week Range */}
-        {a?.week_52_low != null && a?.week_52_high != null && a?.range_position_pct != null
-          ? <RangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />
-          : <span style={{ color: "#9C998E", fontSize: "0.78rem" }}>—</span>}
-
-        {/* RSI */}
-        {a?.rsi != null
-          ? <RsiPill rsi={a.rsi} />
-          : <span style={{ color: "#9C998E", fontSize: "0.78rem" }}>—</span>}
-
-        {/* Trend */}
-        {a?.current_price != null
-          ? <MaBadge price={a.current_price} ma50={a.ma_50} ma200={a.ma_200} />
-          : <span style={{ color: "#9C998E", fontSize: "0.78rem" }}>—</span>}
-
-        {/* Signal */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-          {a?.analyst_consensus && (
-            <span style={{ fontSize: "0.7rem", color: "#9C998E" }}>
-              Analysts: <span style={{ color: "#20211C", fontWeight: 600 }}>{a.analyst_consensus}</span>
-            </span>
-          )}
-          {(() => {
-            try {
-              if (!a?.events_json) return null;
-              const evts = JSON.parse(a.events_json);
-              if (!evts?.length) return null;
-              return <span style={{ fontSize: "0.7rem", color: "#97703C" }}>⚡ {evts[0].date}</span>;
-            } catch { return null; }
-          })()}
-          {!a && <span style={{ fontSize: "0.75rem", color: "#9C998E" }}>No analysis yet</span>}
-        </div>
-
-        {/* Expand + Remove */}
-        <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", justifyContent: "flex-end" }}>
+          {/* Row 2: Price + change | RSI + Trend */}
           {a && (
-            <span style={{ color: "#9C998E", fontSize: "0.72rem", transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block" }}>▼</span>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.6rem", gap: "0.5rem" }}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: "0.5rem" }}>
+                {a.current_price != null && (
+                  <>
+                    <span style={{ fontWeight: 700, fontSize: "1.05rem", fontFamily: MONO, color: "#20211C" }}>${a.current_price.toFixed(2)}</span>
+                    {a.day_change_pct != null && (
+                      <span style={{ fontSize: "0.78rem", color: chgColor, fontWeight: 600, fontFamily: MONO }}>
+                        {a.day_change_pct >= 0 ? "▲" : "▼"}{Math.abs(a.day_change_pct).toFixed(2)}%
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                {a.rsi != null && <RsiPill rsi={a.rsi} />}
+                {a.current_price != null && <MaBadge price={a.current_price} ma50={a.ma_50} ma200={a.ma_200} />}
+              </div>
+            </div>
           )}
-          <button
-            onClick={e => { e.stopPropagation(); onRemove(item.ticker); }}
-            title="Remove from watchlist"
-            style={{ background: "none", border: "none", cursor: "pointer", color: "#9C998E", fontSize: "0.82rem", padding: "0.2rem 0.3rem", borderRadius: 4, lineHeight: 1, opacity: 0.5 }}
-            onMouseOver={e => { e.currentTarget.style.color = "#A8554A"; e.currentTarget.style.opacity = "1"; }}
-            onMouseOut={e => { e.currentTarget.style.color = "#9C998E"; e.currentTarget.style.opacity = "0.5"; }}
-          >✕</button>
+
+          {/* Row 3: 52-week range + analyst + event */}
+          {a && (
+            <div style={{ marginTop: "0.55rem", display: "flex", flexDirection: "column", gap: "0.35rem" }}>
+              {a.week_52_low != null && a.week_52_high != null && a.range_position_pct != null && (
+                <RangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />
+              )}
+              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
+                {a.analyst_consensus && (
+                  <span style={{ fontSize: "0.7rem", color: "#9C998E" }}>
+                    Analysts: <span style={{ color: "#20211C", fontWeight: 600 }}>{a.analyst_consensus}</span>
+                  </span>
+                )}
+                {upcomingEvent && (
+                  <span style={{ fontSize: "0.7rem", color: "#97703C" }}>⚡ {upcomingEvent}</span>
+                )}
+              </div>
+            </div>
+          )}
+
+          {!a && <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "#9C998E" }}>No analysis yet</div>}
+
+          {a && (
+            <div style={{ marginTop: "0.5rem", textAlign: "right" }}>
+              <span style={{ color: "#9C998E", fontSize: "0.68rem", transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block" }}>▼</span>
+            </div>
+          )}
         </div>
-      </div>
+      ) : (
+        /* ── Desktop grid layout ── */
+        <div
+          onClick={a ? onToggle : undefined}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "200px 100px 120px 180px 70px 100px 1fr 48px",
+            alignItems: "center", padding: "0.9rem 1.25rem",
+            cursor: a ? "pointer" : "default", gap: "1rem",
+          }}
+        >
+          {/* Stock */}
+          <div>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <span style={{ fontWeight: 600, fontSize: "0.95rem", fontFamily: MONO, color: "#20211C" }}>{item.ticker}</span>
+              {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.75rem" }}>⭐</span>}
+              {item.is_leveraged && (
+                <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "#EAF0F3", color: "#3A5A6E", border: "1px solid #D7E1E8", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>
+              )}
+            </div>
+            {item.company_name && (
+              <div style={{ fontSize: "0.72rem", color: "#9C998E", marginTop: "0.15rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {item.company_name}
+              </div>
+            )}
+            {age && (
+              <div style={{ marginTop: "0.2rem" }}>
+                <span style={{ fontSize: "0.62rem", padding: "0.1rem 0.4rem", background: "#EDE9DF", color: "#9C998E", borderRadius: 4, fontFamily: MONO }}>{age}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Verdict */}
+          {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.78rem", color: "#9C998E" }}>Pending</span>}
+
+          {/* Price */}
+          <div>
+            {a?.current_price != null ? (
+              <>
+                <div style={{ fontWeight: 600, fontSize: "0.95rem", fontFamily: MONO, color: "#20211C" }}>${a.current_price.toFixed(2)}</div>
+                {a.day_change_pct != null && (
+                  <div style={{ fontSize: "0.72rem", color: chgColor, fontWeight: 600, fontFamily: MONO }}>
+                    {a.day_change_pct >= 0 ? "▲" : "▼"} {Math.abs(a.day_change_pct).toFixed(2)}%
+                  </div>
+                )}
+              </>
+            ) : <span style={{ color: "#9C998E", fontSize: "0.82rem" }}>—</span>}
+          </div>
+
+          {/* 52-Week Range */}
+          {a?.week_52_low != null && a?.week_52_high != null && a?.range_position_pct != null
+            ? <RangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />
+            : <span style={{ color: "#9C998E", fontSize: "0.78rem" }}>—</span>}
+
+          {/* RSI */}
+          {a?.rsi != null ? <RsiPill rsi={a.rsi} /> : <span style={{ color: "#9C998E", fontSize: "0.78rem" }}>—</span>}
+
+          {/* Trend */}
+          {a?.current_price != null
+            ? <MaBadge price={a.current_price} ma50={a.ma_50} ma200={a.ma_200} />
+            : <span style={{ color: "#9C998E", fontSize: "0.78rem" }}>—</span>}
+
+          {/* Signal */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+            {a?.analyst_consensus && (
+              <span style={{ fontSize: "0.7rem", color: "#9C998E" }}>
+                Analysts: <span style={{ color: "#20211C", fontWeight: 600 }}>{a.analyst_consensus}</span>
+              </span>
+            )}
+            {upcomingEvent && <span style={{ fontSize: "0.7rem", color: "#97703C" }}>⚡ {upcomingEvent}</span>}
+            {!a && <span style={{ fontSize: "0.75rem", color: "#9C998E" }}>No analysis yet</span>}
+          </div>
+
+          {/* Expand + Remove */}
+          <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", justifyContent: "flex-end" }}>
+            {a && (
+              <span style={{ color: "#9C998E", fontSize: "0.72rem", transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block" }}>▼</span>
+            )}
+            <button
+              onClick={e => { e.stopPropagation(); onRemove(item.ticker); }}
+              title="Remove from watchlist"
+              style={{ background: "none", border: "none", cursor: "pointer", color: "#9C998E", fontSize: "0.82rem", padding: "0.2rem 0.3rem", borderRadius: 4, lineHeight: 1, opacity: 0.5 }}
+              onMouseOver={e => { e.currentTarget.style.color = "#A8554A"; e.currentTarget.style.opacity = "1"; }}
+              onMouseOut={e => { e.currentTarget.style.color = "#9C998E"; e.currentTarget.style.opacity = "0.5"; }}
+            >✕</button>
+          </div>
+        </div>
+      )}
 
       {expanded && a && <ExpandedDetail a={a} onChat={() => onChat(item.ticker)} />}
     </div>
@@ -552,8 +635,16 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [showPortfolioPrompt, setShowPortfolioPrompt] = useState(false);
   const [portfolioInput, setPortfolioInput] = useState("");
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [isMobile, setIsMobile] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   useEffect(() => { fetchDigest(); fetchUser(); }, []);
 
@@ -980,8 +1071,8 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               </div>
             </div>
 
-            {/* Column headers */}
-            {digest.length > 0 && (
+            {/* Column headers — desktop only */}
+            {digest.length > 0 && !isMobile && (
               <div style={{ display: "grid", gridTemplateColumns: "200px 100px 120px 180px 70px 100px 1fr 48px", padding: "0 1.25rem", marginBottom: "0.5rem", gap: "1rem" }}>
                 {["Stock", "Verdict", "Price", "52-Week Range", "RSI", "Trend", "Signal", ""].map(h => (
                   <div key={h} style={{ fontSize: "0.67rem", color: "#9C998E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
@@ -1005,6 +1096,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                     expanded={expanded === item.ticker}
                     onToggle={() => setExpanded(expanded === item.ticker ? null : item.ticker)}
                     onChat={handleChat} onRemove={handleRemove}
+                    isMobile={isMobile}
                   />
                 ))
               )}
