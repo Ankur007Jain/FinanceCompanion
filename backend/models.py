@@ -143,6 +143,12 @@ class StockAnalysis(Base):
     signal_convergence_score = Column(Integer)  # 0-7, how many independent signals align
     convergence_details = Column(Text)          # JSON dict of which signals fired
 
+    # Dual-agent verdicts — Claude (A) vs Gemini (B), reconciled by judge
+    verdict_a = Column(String)       # Claude Sonnet 4.6 raw verdict
+    verdict_b = Column(String)       # Gemini 2.5 Flash raw verdict
+    verdict_agreement = Column(Boolean)  # True = both agree, False = split
+    split_reason = Column(Text)      # populated when verdict_a != verdict_b
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
