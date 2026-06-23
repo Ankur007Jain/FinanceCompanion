@@ -10,5 +10,13 @@ export default async function SignInPage({
   const session = await auth();
   if (session?.user && !(session as any).error) redirect("/dashboard");
   const { reason } = await searchParams;
-  return <SignInClient sessionExpired={reason === "session_expired"} />;
+  const testMode = process.env.AUTH_TEST_MODE === "true";
+  const testEmail = process.env.TEST_USER_EMAIL || "test@financecompanion.dev";
+  return (
+    <SignInClient
+      sessionExpired={reason === "session_expired"}
+      testMode={testMode}
+      testEmail={testEmail}
+    />
+  );
 }

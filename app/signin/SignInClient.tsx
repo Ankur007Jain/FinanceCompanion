@@ -1,11 +1,21 @@
 "use client";
 import { signIn } from "next-auth/react";
+import { useState } from "react";
 
 const MONO = "'IBM Plex Mono', monospace";
 const SANS = "'IBM Plex Sans', sans-serif";
 const SERIF = "'IBM Plex Serif', serif";
 
-export default function SignInClient({ sessionExpired }: { sessionExpired?: boolean }) {
+export default function SignInClient({
+  sessionExpired,
+  testMode = false,
+  testEmail = "",
+}: {
+  sessionExpired?: boolean;
+  testMode?: boolean;
+  testEmail?: string;
+}) {
+  const [testLoading, setTestLoading] = useState(false);
   return (
     <div style={{
       minHeight: "100vh", display: "flex", alignItems: "center",
@@ -56,6 +66,25 @@ export default function SignInClient({ sessionExpired }: { sessionExpired?: bool
         >
           Sign in with Google
         </button>
+
+        {testMode && (
+          <button
+            data-testid="test-signin-btn"
+            onClick={async () => {
+              setTestLoading(true);
+              await signIn("test-credentials", { email: testEmail, callbackUrl: "/dashboard" });
+            }}
+            disabled={testLoading}
+            style={{
+              marginTop: "0.75rem", width: "100%", padding: "0.7rem",
+              background: "transparent", color: "#9C998E",
+              border: "1px dashed #C8C6BE", borderRadius: 8,
+              fontSize: "0.82rem", cursor: "pointer", fontFamily: MONO,
+            }}
+          >
+            {testLoading ? "Signing in…" : `⚙ Test login (${testEmail})`}
+          </button>
+        )}
       </div>
     </div>
   );

@@ -12,6 +12,13 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def verify_token(token: str) -> dict:
+    # Test bypass — only active when TEST_MODE=true, never in production
+    if os.getenv("TEST_MODE") == "true" and token.startswith("test-token-"):
+        email = token[len("test-token-"):]
+        if email:
+            return {"email": email, "name": "Test User"}
+        raise HTTPException(status_code=401, detail="Invalid test token format.")
+
     client_id = os.getenv("GOOGLE_CLIENT_ID")
     if not client_id:
         raise HTTPException(status_code=500, detail="GOOGLE_CLIENT_ID not configured.")
