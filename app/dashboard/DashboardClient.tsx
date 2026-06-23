@@ -630,6 +630,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [query, setQuery] = useState("");
   const [suggestions, setSuggestions] = useState<{ ticker: string; name: string; exchange: string }[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
+  const [highlightedIdx, setHighlightedIdx] = useState(-1);
   const [activeTab, setActiveTab] = useState<Tab>("My Stocks");
   const [portfolioSize, setPortfolioSize] = useState<number | null>(null);
   const [showPortfolioPrompt, setShowPortfolioPrompt] = useState(false);
@@ -660,12 +661,12 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showProfileMenu]);
 
-  async function fetchDigest() {
-    setLoading(true);
+  async function fetchDigest(silent = false) {
+    if (!silent) setLoading(true);
     try {
       const r = await fetch(`${API}/analysis/digest?id_token=${encodeURIComponent(idToken)}`);
       if (r.ok) setDigest(await r.json());
-    } finally { setLoading(false); }
+    } finally { if (!silent) setLoading(false); }
   }
 
   async function fetchUser() {
@@ -700,21 +701,27 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
 
   async function handleAdd(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
-    if (!ticker.trim()) return;
-    setAdding(true); setError("");
+    // Allow direct-typed ticker even if user didn't select from dropdown
+    const effectiveTicker = ticker.trim() || query.trim().toUpperCase().split(/\s/)[0];
+    if (!effectiveTicker) return;
+    setAdding(true); setError(""); setShowSuggestions(false);
     try {
       const r = await fetch(`${API}/watchlist?id_token=${encodeURIComponent(idToken)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker: ticker.trim().toUpperCase(), company_name: companyName || null }),
+        body: JSON.stringify({ ticker: effectiveTicker, company_name: companyName || null }),
       });
-      if (r.ok) { setTicker(""); setCompanyName(""); setQuery(""); fetchDigest(); }
-      else { const d = await r.json(); setError(d.detail || "Failed to add."); }
+      if (r.ok) {
+        setTicker(""); setCompanyName(""); setQuery(""); setSuggestions([]);
+        // Optimistic insert — shows the row immediately as pending, then silent refresh fills in analysis
+        setDigest(prev => [...prev, { ticker: effectiveTicker, company_name: companyName || null, is_leveraged: false, analysis: null }]);
+        fetchDigest(true);
+      } else { const d = await r.json(); setError(d.detail || "Failed to add."); }
     } finally { setAdding(false); }
   }
 
   function handleSearchInput(val: string) {
-    setQuery(val); setTicker(""); setCompanyName(""); setError("");
+    setQuery(val); setTicker(""); setCompanyName(""); setError(""); setHighlightedIdx(-1);
     if (debounceRef.current) clearTimeout(debounceRef.current);
     if (val.trim().length < 1) { setSuggestions([]); setShowSuggestions(false); return; }
     debounceRef.current = setTimeout(async () => {
@@ -728,14 +735,31 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   function handleSelect(s: { ticker: string; name: string }) {
     setTicker(s.ticker); setCompanyName(s.name);
     setQuery(`${s.ticker} — ${s.name}`);
-    setSuggestions([]); setShowSuggestions(false);
+    setSuggestions([]); setShowSuggestions(false); setHighlightedIdx(-1);
+  }
+
+  function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (!showSuggestions || suggestions.length === 0) return;
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      setHighlightedIdx(i => Math.min(i + 1, suggestions.length - 1));
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      setHighlightedIdx(i => Math.max(i - 1, -1));
+    } else if (e.key === "Enter") {
+      const idx = highlightedIdx >= 0 ? highlightedIdx : 0;
+      if (suggestions[idx]) { e.preventDefault(); handleSelect(suggestions[idx]); }
+    } else if (e.key === "Escape") {
+      setShowSuggestions(false); setHighlightedIdx(-1);
+    }
   }
 
   async function handleRemove(t: string) {
+    setDigest(prev => prev.filter(d => d.ticker !== t)); // optimistic remove
     try {
       const r = await fetch(`${API}/watchlist/${encodeURIComponent(t)}?id_token=${encodeURIComponent(idToken)}`, { method: "DELETE" });
-      if (r.ok) fetchDigest();
-    } catch { /* ignore */ }
+      if (!r.ok) fetchDigest(true); // revert on failure
+    } catch { fetchDigest(true); }
   }
 
   async function handleChat(t: string) {
@@ -1213,9 +1237,10 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 <input
                   value={query}
                   onChange={e => handleSearchInput(e.target.value)}
-                  onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
+                  onKeyDown={handleSearchKeyDown}
+                  onBlur={() => setTimeout(() => { setShowSuggestions(false); setHighlightedIdx(-1); }, 200)}
                   onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-                  placeholder="Search ticker or company name…"
+                  placeholder="Type ticker (e.g. NFLX) or search by name…"
                   autoComplete="off"
                   style={{
                     width: "100%", padding: "0.5rem 0.75rem", background: "#F6F4EE",
@@ -1226,11 +1251,11 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 />
                 {showSuggestions && suggestions.length > 0 && (
                   <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50, background: "#FBFAF7", border: "1px solid #E4E1D8", borderRadius: 9, overflow: "hidden", boxShadow: "0 8px 24px rgba(32,33,28,0.1)" }}>
-                    {suggestions.map(s => (
+                    {suggestions.map((s, idx) => (
                       <div key={s.ticker} onMouseDown={() => handleSelect(s)}
-                        style={{ padding: "0.6rem 0.85rem", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", borderBottom: "1px solid #EDEAE1" }}
-                        onMouseOver={e => (e.currentTarget.style.background = "#F6F4EE")}
-                        onMouseOut={e => (e.currentTarget.style.background = "transparent")}>
+                        style={{ padding: "0.6rem 0.85rem", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", borderBottom: "1px solid #EDEAE1", background: idx === highlightedIdx ? "#F0EDE6" : "transparent" }}
+                        onMouseEnter={() => setHighlightedIdx(idx)}
+                        onMouseLeave={() => setHighlightedIdx(-1)}>
                         <div>
                           <span style={{ fontWeight: 600, fontSize: "0.88rem", color: "#20211C", fontFamily: MONO }}>{s.ticker}</span>
                           <span style={{ marginLeft: "0.5rem", fontSize: "0.82rem", color: "#6A685F" }}>{s.name}</span>
@@ -1241,12 +1266,12 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                   </div>
                 )}
               </div>
-              <button type="submit" disabled={adding || !ticker} style={{
+              <button type="submit" disabled={adding || (!ticker && !query.trim())} style={{
                 padding: "0.5rem 1.1rem",
-                background: ticker ? "#3A5A6E" : "#E4E1D8",
-                color: ticker ? "#FBFAF7" : "#9C998E",
+                background: (ticker || query.trim()) ? "#3A5A6E" : "#E4E1D8",
+                color: (ticker || query.trim()) ? "#FBFAF7" : "#9C998E",
                 border: "none", borderRadius: 7,
-                cursor: ticker ? "pointer" : "not-allowed",
+                cursor: (ticker || query.trim()) ? "pointer" : "not-allowed",
                 fontWeight: 600, fontSize: "0.88rem", fontFamily: SANS,
                 transition: "background 0.15s",
               }}>
