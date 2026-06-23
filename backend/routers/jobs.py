@@ -6,8 +6,8 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db, SessionLocal
-from models import StockAnalysis
-from schemas import NightlyJobRequest, IngestAnalysisRequest
+from models import StockAnalysis, MarketDataCache
+from schemas import NightlyJobRequest, IngestAnalysisRequest, IngestSnapshotRequest
 from services.nightly_runner import run_nightly_analysis
 from services.stock_memory import maybe_update_stock_memory
 
@@ -15,7 +15,7 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
 @router.post("/nightly")
-async def trigger_nightly(body: NightlyJobRequest, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+async def trigger_nightly(body: NightlyJobRequest, background_tasks: BackgroundTasks):
     if body.secret != os.getenv("JOB_SECRET", ""):
         raise HTTPException(status_code=401, detail="Invalid job secret.")
 
@@ -132,6 +132,25 @@ def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTas
     db.commit()
     background_tasks.add_task(_run_memory_update, body.ticker, body.verdict or "", body.reasoning or "", body.news_summary or "", "")
     return {"status": "created", "ticker": body.ticker}
+
+
+@router.post("/ingest-snapshot")
+def ingest_snapshot(body: IngestSnapshotRequest, x_job_secret: str = "", db: Session = Depends(get_db)):
+    """Called by GHA after raw data fetch — persists raw market data before verdict agents run."""
+    if x_job_secret != os.getenv("JOB_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid job secret.")
+
+    entry = MarketDataCache(
+        ticker=body.ticker,
+        cache_date=body.cache_date,
+        info_json=body.info_json,
+        history_json=body.history_json,
+        news_json=body.news_json,
+        calendar_json=body.calendar_json,
+    )
+    db.merge(entry)
+    db.commit()
+    return {"status": "saved", "ticker": body.ticker, "date": str(body.cache_date)}
 
 
 @router.get("/admin/tickers")

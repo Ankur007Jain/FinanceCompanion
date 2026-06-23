@@ -210,3 +210,43 @@ class TestAnalyzedToday:
 
         r = client.get("/jobs/admin/analyzed-today", params={"x_admin_secret": "test-admin-secret"})
         assert "OLD1" not in r.json()["analyzed"]
+
+
+class TestIngestSnapshot:
+    def test_snapshot_saves_and_returns_saved(self, client: TestClient):
+        payload = {
+            "ticker": "SNAP1",
+            "cache_date": str(date.today()),
+            "info_json": '{"currentPrice": 100.0}',
+            "history_json": '[{"Date": "2026-01-01", "Close": 99.0}]',
+            "news_json": '[{"title": "SNAP1 earnings beat"}]',
+            "calendar_json": '{"Earnings Date": ["2026-07-15"]}',
+        }
+        r = client.post("/jobs/ingest-snapshot", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        assert r.status_code == 200
+        assert r.json()["status"] == "saved"
+        assert r.json()["ticker"] == "SNAP1"
+
+    def test_snapshot_rejects_bad_secret(self, client: TestClient):
+        payload = {"ticker": "X", "cache_date": str(date.today())}
+        r = client.post("/jobs/ingest-snapshot", params={"x_job_secret": "wrong"}, json=payload)
+        assert r.status_code == 401
+
+    def test_snapshot_upserts_on_same_date(self, client: TestClient):
+        payload = {
+            "ticker": "UPSRT",
+            "cache_date": str(date.today()),
+            "info_json": '{"currentPrice": 50.0}',
+        }
+        r1 = client.post("/jobs/ingest-snapshot", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        assert r1.status_code == 200
+
+        payload["info_json"] = '{"currentPrice": 55.0}'
+        r2 = client.post("/jobs/ingest-snapshot", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        assert r2.status_code == 200
+        assert r2.json()["status"] == "saved"
+
+    def test_snapshot_accepts_null_fields(self, client: TestClient):
+        payload = {"ticker": "MINML", "cache_date": str(date.today())}
+        r = client.post("/jobs/ingest-snapshot", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        assert r.status_code == 200

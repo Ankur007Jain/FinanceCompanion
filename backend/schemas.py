@@ -199,6 +199,15 @@ class NightlyJobRequest(BaseModel):
     tickers: Optional[list[str]] = None  # None = run all watchlisted tickers
 
 
+class IngestSnapshotRequest(BaseModel):
+    ticker: str
+    cache_date: date
+    info_json: Optional[str] = None       # yf.Ticker.info as JSON string
+    history_json: Optional[str] = None    # 1-year daily OHLCV as JSON string
+    news_json: Optional[str] = None       # raw news list as JSON string
+    calendar_json: Optional[str] = None   # earnings calendar as JSON string
+
+
 class IngestAnalysisRequest(BaseModel):
     ticker: str
     analysis_date: date
