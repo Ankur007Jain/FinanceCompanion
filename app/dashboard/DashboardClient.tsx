@@ -661,12 +661,12 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showProfileMenu]);
 
-  async function fetchDigest() {
-    setLoading(true);
+  async function fetchDigest(silent = false) {
+    if (!silent) setLoading(true);
     try {
       const r = await fetch(`${API}/analysis/digest?id_token=${encodeURIComponent(idToken)}`);
       if (r.ok) setDigest(await r.json());
-    } finally { setLoading(false); }
+    } finally { if (!silent) setLoading(false); }
   }
 
   async function fetchUser() {
@@ -711,8 +711,12 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticker: effectiveTicker, company_name: companyName || null }),
       });
-      if (r.ok) { setTicker(""); setCompanyName(""); setQuery(""); setSuggestions([]); fetchDigest(); }
-      else { const d = await r.json(); setError(d.detail || "Failed to add."); }
+      if (r.ok) {
+        setTicker(""); setCompanyName(""); setQuery(""); setSuggestions([]);
+        // Optimistic insert — shows the row immediately as pending, then silent refresh fills in analysis
+        setDigest(prev => [...prev, { ticker: effectiveTicker, company_name: companyName || null, is_leveraged: false, analysis: null }]);
+        fetchDigest(true);
+      } else { const d = await r.json(); setError(d.detail || "Failed to add."); }
     } finally { setAdding(false); }
   }
 
@@ -751,10 +755,11 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   }
 
   async function handleRemove(t: string) {
+    setDigest(prev => prev.filter(d => d.ticker !== t)); // optimistic remove
     try {
       const r = await fetch(`${API}/watchlist/${encodeURIComponent(t)}?id_token=${encodeURIComponent(idToken)}`, { method: "DELETE" });
-      if (r.ok) fetchDigest();
-    } catch { /* ignore */ }
+      if (!r.ok) fetchDigest(true); // revert on failure
+    } catch { fetchDigest(true); }
   }
 
   async function handleChat(t: string) {
