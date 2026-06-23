@@ -160,6 +160,20 @@ class SendMessageRequest(BaseModel):
     id_token: str
 
 
+class ImportantFlag(BaseModel):
+    ticker: str
+    verdict: str
+    importance_reason: Optional[str] = None
+
+
+class ReportDayOut(BaseModel):
+    report_date: str
+    analyzed_count: int
+    total_watchlist: int
+    by_verdict: dict[str, list[str]]
+    important_flags: list[ImportantFlag]
+
+
 class NightlyJobRequest(BaseModel):
     secret: str
     tickers: Optional[list[str]] = None  # None = run all watchlisted tickers
