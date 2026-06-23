@@ -106,15 +106,23 @@ jobs:
 
             ## Step 1 — Fetch market data for each ticker
 
-            Run this Python script once per ticker (replace TICKER with the actual symbol):
+            Run this Python script once per ticker (replace TICKER with the actual symbol).
+            It prints the analysis summary AND saves full raw data to /tmp/raw_TICKER.json:
             ```bash
             python3 << 'EOF'
             import yfinance as yf, json
+            from datetime import date
+
             ticker = "TICKER"
             t = yf.Ticker(ticker)
-            info = t.info
+            info = t.info or {}
             hist = t.history(period="1y")
             fi = t.fast_info
+            raw_news = t.news or []
+            try:
+                calendar = t.calendar or {}
+            except Exception:
+                calendar = {}
 
             price = fi.last_price or info.get("currentPrice", 0) or 0
             prev  = fi.previous_close or info.get("previousClose", price) or price
@@ -130,18 +138,18 @@ jobs:
             loss  = (-delta.clip(upper=0)).rolling(14).mean()
             rsi   = float(100 - 100 / (1 + gain.iloc[-1] / loss.iloc[-1])) if loss.iloc[-1] != 0 else 50
 
-            news  = [n.get("content", {}).get("title") or n.get("title","") for n in (t.news or [])[:5]]
+            news_titles = [n.get("content", {}).get("title") or n.get("title","") for n in raw_news[:5]]
             rec   = (info.get("recommendationKey") or "hold").upper()
             tgt   = info.get("targetMeanPrice")
             ups   = ((tgt - price) / price * 100) if tgt and price else None
 
             try:
-                cal    = t.calendar or {}
-                edates = cal.get("Earnings Date") or []
+                edates = calendar.get("Earnings Date") or []
                 edate  = str(edates[0]) if edates else None
-            except:
+            except Exception:
                 edate = None
 
+            # Print summary dict for analysis steps below
             print(json.dumps({
                 "ticker": ticker, "price": round(price,2), "change_pct": round(chg,2),
                 "hi52": round(hi52,2), "lo52": round(lo52,2), "range_pct": round(rng,1),
@@ -149,8 +157,78 @@ jobs:
                 "ma200": round(ma200,2) if ma200 else None,
                 "rsi": round(rsi,1), "analyst": rec,
                 "upside_pct": round(ups,1) if ups else None,
-                "news": news, "earnings_date": edate,
+                "news": news_titles, "earnings_date": edate,
             }))
+
+            # Serialize full raw data for the snapshot endpoint
+            try:
+                hist_r = hist.reset_index()
+                hist_r["Date"] = hist_r["Date"].astype(str)
+                history_json = hist_r.to_json(orient="records")
+            except Exception:
+                history_json = "[]"
+
+            try:
+                cal_s = {}
+                for k, v in (calendar or {}).items():
+                    cal_s[k] = [str(x) for x in v] if isinstance(v, list) else str(v)
+                calendar_json = json.dumps(cal_s)
+            except Exception:
+                calendar_json = "{}"
+
+            try:
+                news_json = json.dumps(raw_news)
+            except Exception:
+                news_json = "[]"
+
+            try:
+                info_json = json.dumps(info)
+            except Exception:
+                info_json = "{}"
+
+            with open(f"/tmp/raw_{ticker}.json", "w") as f:
+                json.dump({
+                    "info_json": info_json,
+                    "history_json": history_json,
+                    "news_json": news_json,
+                    "calendar_json": calendar_json,
+                }, f)
+            EOF
+            ```
+
+            ## Step 1b — Save raw snapshot to backend
+
+            After fetching data for each ticker, POST the raw snapshot (replace TICKER and TODAY):
+            ```bash
+            python3 << 'EOF'
+            import json, subprocess, os
+            from datetime import date
+
+            ticker = "TICKER"
+            today = str(date.today())
+            backend = os.environ.get("BACKEND_URL", "${{ secrets.BACKEND_URL }}")
+            secret  = os.environ.get("JOB_SECRET", "${{ secrets.JOB_SECRET }}")
+
+            with open(f"/tmp/raw_{ticker}.json") as f:
+                raw = json.load(f)
+
+            payload = json.dumps({
+                "ticker": ticker,
+                "cache_date": today,
+                "info_json": raw["info_json"],
+                "history_json": raw["history_json"],
+                "news_json": raw["news_json"],
+                "calendar_json": raw["calendar_json"],
+            })
+
+            r = subprocess.run(
+                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
+                 "-X", "POST", f"{backend}/jobs/ingest-snapshot?x_job_secret={secret}",
+                 "-H", "Content-Type: application/json",
+                 "-d", payload],
+                capture_output=True, text=True
+            )
+            print(f"[{ticker}] Snapshot saved — HTTP {r.stdout.strip()}")
             EOF
             ```
 
