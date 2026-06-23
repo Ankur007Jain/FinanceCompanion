@@ -85,12 +85,20 @@ def _migrate_db():
                 "scenario_bull_prob":    "INTEGER",
                 "scenario_base_prob":    "INTEGER",
                 "scenario_bear_prob":    "INTEGER",
-                "dont_panic_note":       "TEXT",
+                "dont_panic_note":           "TEXT",
+                "signal_convergence_score":  "INTEGER",
+                "convergence_details":       "TEXT",
             }
             for col, typ in new_cols.items():
                 if col not in cols:
                     # col/typ come from a hardcoded dict — not user input; DDL cannot use bind params
                     conn.execute(text(f"ALTER TABLE stock_analyses ADD COLUMN {col} {typ}"))  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
+            conn.commit()
+
+        if "users" in tables:
+            user_cols = {c["name"] for c in inspector.get_columns("users")}
+            if "portfolio_size" not in user_cols:
+                conn.execute(text("ALTER TABLE users ADD COLUMN portfolio_size FLOAT"))  # nosemgrep
             conn.commit()
 
         if "market_data_cache" not in tables:

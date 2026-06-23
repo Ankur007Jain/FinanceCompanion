@@ -19,6 +19,7 @@ class User(Base):
     is_admin = Column(Boolean, nullable=False, default=False)
     tokens_used = Column(Integer, nullable=False, default=0)
     token_limit = Column(Integer, nullable=True)
+    portfolio_size = Column(Float, nullable=True)   # user-provided approximate portfolio value
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -137,6 +138,10 @@ class StockAnalysis(Base):
     scenario_base_prob = Column(Integer)
     scenario_bear_prob = Column(Integer)
     dont_panic_note = Column(Text)       # populated when price dropped >15% since last BUY
+
+    # Signal convergence — deterministic pre-verdict score
+    signal_convergence_score = Column(Integer)  # 0-7, how many independent signals align
+    convergence_details = Column(Text)          # JSON dict of which signals fired
 
     created_at = Column(DateTime, default=datetime.utcnow)
 

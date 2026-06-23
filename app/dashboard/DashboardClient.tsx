@@ -66,6 +66,8 @@ interface Analysis {
   scenario_base_prob: number | null;
   scenario_bear_prob: number | null;
   dont_panic_note: string | null;
+  signal_convergence_score: number | null;
+  convergence_details: string | null;
 }
 
 interface DigestItem {
@@ -529,9 +531,12 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [suggestions, setSuggestions] = useState<{ ticker: string; name: string; exchange: string }[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("My Stocks");
+  const [portfolioSize, setPortfolioSize] = useState<number | null>(null);
+  const [showPortfolioPrompt, setShowPortfolioPrompt] = useState(false);
+  const [portfolioInput, setPortfolioInput] = useState("");
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => { fetchDigest(); }, []);
+  useEffect(() => { fetchDigest(); fetchUser(); }, []);
 
   async function fetchDigest() {
     setLoading(true);
@@ -539,6 +544,36 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
       const r = await fetch(`${API}/analysis/digest?id_token=${encodeURIComponent(idToken)}`);
       if (r.ok) setDigest(await r.json());
     } finally { setLoading(false); }
+  }
+
+  async function fetchUser() {
+    const r = await fetch(`${API}/auth/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id_token: idToken }),
+    });
+    if (r.ok) {
+      const u = await r.json();
+      if (u.portfolio_size) {
+        setPortfolioSize(u.portfolio_size);
+      } else {
+        setShowPortfolioPrompt(true);
+      }
+    }
+  }
+
+  async function savePortfolioSize() {
+    const val = parseFloat(portfolioInput.replace(/[^0-9.]/g, ""));
+    if (!val || val <= 0) return;
+    const r = await fetch(`${API}/auth/me?id_token=${encodeURIComponent(idToken)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ portfolio_size: val }),
+    });
+    if (r.ok) {
+      setPortfolioSize(val);
+      setShowPortfolioPrompt(false);
+    }
   }
 
   async function handleAdd(e: React.SyntheticEvent<HTMLFormElement>) {
@@ -659,67 +694,222 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
       <main style={{ maxWidth: 1180, margin: "0 auto", padding: "30px 32px 56px" }}>
 
         {/* ── Dashboard tab ── */}
-        {activeTab === "Dashboard" && (
-          <div>
-            <div style={{ marginBottom: 24 }}>
-              <h1 style={{ margin: 0, fontFamily: SERIF, fontWeight: 600, fontSize: 25, letterSpacing: "-0.01em", color: "#20211C" }}>
-                Good morning, {userName.split(" ")[0]}
-              </h1>
-              <div style={{ marginTop: 5, fontSize: 13, color: "#9C998E" }}>Updated nightly after market close</div>
-            </div>
+        {activeTab === "Dashboard" && (() => {
+          // Spotlight: highest convergence BUY/SELL, min score 5
+          const spotlight = digest
+            .filter(d => d.analysis && (d.analysis.verdict === "BUY" || d.analysis.verdict === "SELL") && (d.analysis.signal_convergence_score ?? 0) >= 5)
+            .sort((a, b) => ((b.analysis?.signal_convergence_score ?? 0) - (a.analysis?.signal_convergence_score ?? 0)) || ((b.analysis?.conviction_score ?? 0) - (a.analysis?.conviction_score ?? 0)))
+          [0] ?? null;
 
-            {/* Stat cards */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 16, marginBottom: 16 }}>
-              {[
-                { label: "BUY SIGNALS",  count: buyCount,   color: "#3F6B4F", bg: "#F4F8F4", border: "#D6E2D7" },
-                { label: "WATCH / HOLD", count: watchCount, color: "#97703C", bg: "#FAF6EE", border: "#E6DBC4" },
-                { label: "SELL SIGNALS", count: sellCount,  color: "#A8554A", bg: "#F8F4F3", border: "#E6D2CC" },
-              ].map(s => (
-                <div key={s.label} style={{ background: s.bg, border: `1px solid ${s.border}`, borderRadius: 11, padding: "18px 20px" }}>
-                  <div style={{ fontSize: 10, fontFamily: MONO, letterSpacing: "0.13em", color: s.color, fontWeight: 600 }}>{s.label}</div>
-                  <div style={{ marginTop: 10, fontSize: 32, fontFamily: MONO, fontWeight: 600, color: s.color }}>{s.count}</div>
-                  <div style={{ marginTop: 6, fontSize: 12, color: "#9C998E" }}>across {digest.length} watched stock{digest.length !== 1 ? "s" : ""}</div>
-                </div>
-              ))}
-            </div>
+          const allClear = !loading && digest.length > 0 && !spotlight;
+          const vm = spotlight?.analysis?.verdict ? VERDICT_META[spotlight.analysis.verdict] ?? VERDICT_META.WATCH : null;
+          const sa = spotlight?.analysis ?? null;
 
-            {/* Important flags */}
-            {importantItems.length > 0 && (
-              <div style={{ background: "#FBFAF7", border: "1px solid #E4E1D8", borderRadius: 11, padding: "6px 4px 8px", marginBottom: 16 }}>
-                <div style={{ padding: "13px 18px 11px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                  <span style={{ fontSize: 15, fontWeight: 600, color: "#20211C" }}>Important signals today</span>
-                  <span style={{ fontSize: 10, color: "#9C998E", fontFamily: MONO, letterSpacing: "0.08em" }}>{importantItems.length} FLAG{importantItems.length > 1 ? "S" : ""}</span>
-                </div>
-                {importantItems.map(item => {
-                  const vm = item.analysis?.verdict ? VERDICT_META[item.analysis.verdict] ?? VERDICT_META.WATCH : null;
-                  return (
-                    <div key={item.ticker} onClick={() => { setActiveTab("My Stocks"); setExpanded(item.ticker); }}
-                      style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 18px", borderTop: "1px solid #EDEAE1", cursor: "pointer" }}>
-                      <span style={{ fontFamily: MONO, fontWeight: 600, fontSize: 13, width: 60, color: "#20211C" }}>{item.ticker}</span>
-                      {vm && <span style={{ fontSize: 10, padding: "3px 9px", background: vm.bg, color: vm.color, border: `1px solid ${vm.bd}`, borderRadius: 20, fontFamily: MONO, fontWeight: 700 }}>{vm.label}</span>}
-                      <span style={{ flex: 1, fontSize: 13, color: "#6A685F" }}>{item.analysis?.importance_reason ?? "—"}</span>
-                      <span style={{ fontSize: 12, color: "#3A5A6E", fontWeight: 600 }}>View →</span>
-                    </div>
-                  );
-                })}
+          // Share count helper
+          const shareCount = (a: Analysis | null) => {
+            if (!a || !portfolioSize || !a.position_size_pct || !a.entry_target) return null;
+            const match = a.position_size_pct.match(/(\d+)/);
+            if (!match) return null;
+            const pct = parseInt(match[1]) / 100;
+            const dollars = portfolioSize * pct;
+            const shares = Math.floor(dollars / a.entry_target);
+            return { dollars: Math.round(dollars), shares };
+          };
+
+          return (
+            <div>
+              <div style={{ marginBottom: 24 }}>
+                <h1 style={{ margin: 0, fontFamily: SERIF, fontWeight: 600, fontSize: 25, letterSpacing: "-0.01em", color: "#20211C" }}>
+                  Good morning, {userName.split(" ")[0]}
+                </h1>
+                <div style={{ marginTop: 5, fontSize: 13, color: "#9C998E" }}>Updated nightly after market close · {digest.length} stock{digest.length !== 1 ? "s" : ""} tracked</div>
               </div>
-            )}
 
-            {/* My Stocks teaser */}
-            <button onClick={() => setActiveTab("My Stocks")} style={{
-              width: "100%", textAlign: "left", background: "#FBFAF7",
-              border: "1px solid #E4E1D8", borderRadius: 11, padding: "15px 20px",
-              display: "flex", alignItems: "center", gap: 14, cursor: "pointer",
-              fontFamily: SANS,
-            }}>
-              <span style={{ fontSize: 10, fontFamily: MONO, letterSpacing: "0.12em", color: "#9C998E" }}>MY STOCKS</span>
-              <span style={{ fontSize: 14, color: "#20211C" }}>
-                Tracking <b style={{ fontFamily: MONO }}>{digest.length}</b> stock{digest.length !== 1 ? "s" : ""} · {buyCount} buy · {watchCount} hold/watch · {sellCount} sell
-              </span>
-              <span style={{ marginLeft: "auto", fontSize: 13, color: "#3A5A6E", fontWeight: 600, whiteSpace: "nowrap" }}>See full table →</span>
-            </button>
-          </div>
-        )}
+              {/* Portfolio size prompt */}
+              {showPortfolioPrompt && (
+                <div style={{ background: "#E8EFF4", border: "1px solid #C8D8E4", borderRadius: 11, padding: "18px 20px", marginBottom: 16 }}>
+                  <div style={{ fontWeight: 600, fontSize: 14, color: "#20211C", marginBottom: 6 }}>One quick question to personalise your advice</div>
+                  <div style={{ fontSize: 13, color: "#6A685F", marginBottom: 14 }}>What is your approximate investing portfolio size? This lets us suggest exact share counts — no account linking needed.</div>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    {["$5,000", "$10,000", "$25,000", "$50,000", "$100,000+"].map(opt => (
+                      <button key={opt} onClick={() => setPortfolioInput(opt.replace(/[^0-9]/g, ""))}
+                        style={{ padding: "6px 14px", borderRadius: 20, border: `1px solid ${portfolioInput === opt.replace(/[^0-9]/g, "") ? "#3A5A6E" : "#C8D8E4"}`, background: portfolioInput === opt.replace(/[^0-9]/g, "") ? "#3A5A6E" : "white", color: portfolioInput === opt.replace(/[^0-9]/g, "") ? "white" : "#3A5A6E", cursor: "pointer", fontSize: 13, fontFamily: MONO }}>
+                        {opt}
+                      </button>
+                    ))}
+                    <button onClick={savePortfolioSize} disabled={!portfolioInput}
+                      style={{ padding: "6px 18px", borderRadius: 20, background: portfolioInput ? "#3A5A6E" : "#E4E1D8", color: portfolioInput ? "white" : "#9C998E", border: "none", cursor: portfolioInput ? "pointer" : "default", fontSize: 13, fontWeight: 600, fontFamily: SANS }}>
+                      Save
+                    </button>
+                    <button onClick={() => setShowPortfolioPrompt(false)} style={{ background: "none", border: "none", fontSize: 12, color: "#9C998E", cursor: "pointer" }}>Skip</button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── Spotlight card ── */}
+              {spotlight && sa && vm && (
+                <div style={{ background: "#FBFAF7", border: "2px solid #3A5A6E", borderRadius: 13, marginBottom: 16, overflow: "hidden" }}>
+                  {/* Header */}
+                  <div style={{ background: "#3A5A6E", padding: "12px 20px", display: "flex", alignItems: "center", gap: 12 }}>
+                    <span style={{ fontSize: 13, color: "#FBFAF7", fontWeight: 700, letterSpacing: "0.04em" }}>⚡ Today's Opportunity</span>
+                    <span style={{ marginLeft: "auto", fontSize: 11, color: "rgba(251,250,247,0.7)", fontFamily: MONO }}>
+                      {sa.signal_convergence_score}/7 signals · conviction {sa.conviction_score}/100
+                    </span>
+                  </div>
+
+                  {/* Ticker + verdict */}
+                  <div style={{ padding: "16px 20px 0" }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 12 }}>
+                      <span style={{ fontFamily: MONO, fontWeight: 700, fontSize: 22, color: "#20211C" }}>{spotlight.ticker}</span>
+                      {spotlight.company_name && <span style={{ fontSize: 13, color: "#6A685F" }}>{spotlight.company_name}</span>}
+                      <span style={{ padding: "3px 12px", borderRadius: 20, fontSize: 12, fontFamily: MONO, fontWeight: 700, color: vm.color, background: vm.bg, border: `1px solid ${vm.bd}`, marginLeft: "auto" }}>
+                        {vm.label}
+                      </span>
+                    </div>
+
+                    {/* Trust badges */}
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 14 }}>
+                      {sa.entry_quality && (
+                        <span style={{ fontSize: 12, fontFamily: MONO, padding: "3px 10px", borderRadius: 20, color: sa.entry_quality === "GREAT" ? "#3F6B4F" : sa.entry_quality === "FAIR" ? "#97703C" : "#A8554A", background: sa.entry_quality === "GREAT" ? "#EAF1EC" : sa.entry_quality === "FAIR" ? "#F4EEE2" : "#F4E7E4", border: `1px solid ${sa.entry_quality === "GREAT" ? "#C8DDD0" : sa.entry_quality === "FAIR" ? "#E6DBC4" : "#E6D2CC"}` }}>
+                          Entry: {sa.entry_quality === "GREAT" ? "Great" : sa.entry_quality === "FAIR" ? "Fair" : "Wait"}
+                        </span>
+                      )}
+                      {sa.hold_and_forget_rating === "HOLD_AND_FORGET" && (
+                        <span style={{ fontSize: 12, fontFamily: MONO, padding: "3px 10px", borderRadius: 20, color: "#3F6B4F", background: "#EAF1EC", border: "1px solid #C8DDD0" }}>Hold & Forget ✓</span>
+                      )}
+                      {sa.position_size_pct && (
+                        <span style={{ fontSize: 12, fontFamily: MONO, padding: "3px 10px", borderRadius: 20, color: "#3A5A6E", background: "#E8EFF4", border: "1px solid #C8D8E4" }}>
+                          {sa.position_size_pct} of portfolio
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Why now — convergence signals */}
+                    {sa.convergence_details && (() => {
+                      try {
+                        const details: Record<string, boolean> = JSON.parse(sa.convergence_details);
+                        const fired = Object.entries(details).filter(([, v]) => v);
+                        const SIGNAL_LABELS: Record<string, string> = {
+                          oversold_rsi: "Oversold (RSI < 42)",
+                          near_52w_low: "Near 52-week low",
+                          analyst_upside_15pct: "15%+ analyst upside",
+                          no_binary_risk: "No earnings risk (21+ days)",
+                          positive_fcf: "Positive free cash flow",
+                          institutional_backing: "Institutions buying (40%+)",
+                          price_stabilizing: "Price stabilizing near MA200",
+                        };
+                        return (
+                          <div style={{ marginBottom: 14 }}>
+                            <div style={{ fontSize: 11, fontFamily: MONO, color: "#9C998E", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 6 }}>Why now</div>
+                            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                              {fired.map(([k]) => (
+                                <div key={k} style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "#3A3833" }}>
+                                  <span style={{ color: "#3F6B4F", fontWeight: 700, fontSize: 12 }}>✓</span>
+                                  {SIGNAL_LABELS[k] ?? k}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      } catch { return null; }
+                    })()}
+
+                    {/* Scenarios */}
+                    {sa.scenario_bull_prob != null && (
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginBottom: 14 }}>
+                        {([
+                          { label: "Bull", pct: sa.scenario_bull_pct, prob: sa.scenario_bull_prob, color: "#3F6B4F", bg: "#EAF1EC", bd: "#C8DDD0" },
+                          { label: "Base", pct: sa.scenario_base_pct, prob: sa.scenario_base_prob, color: "#3A5A6E", bg: "#E8EFF4", bd: "#C8D8E4" },
+                          { label: "Bear", pct: sa.scenario_bear_pct, prob: sa.scenario_bear_prob, color: "#A8554A", bg: "#F4E7E4", bd: "#E6D2CC" },
+                        ] as const).map(s => (
+                          <div key={s.label} style={{ background: s.bg, border: `1px solid ${s.bd}`, borderRadius: 8, padding: "8px 10px", textAlign: "center" }}>
+                            <div style={{ fontSize: 10, fontFamily: MONO, color: s.color, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase" }}>{s.label} · {s.prob}%</div>
+                            <div style={{ fontSize: 18, fontWeight: 700, fontFamily: MONO, color: s.color, marginTop: 2 }}>
+                              {s.pct != null ? (s.pct >= 0 ? "+" : "") + s.pct.toFixed(1) + "%" : "—"}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Action line */}
+                    <div style={{ background: "#F0EDE6", borderRadius: 8, padding: "12px 14px", marginBottom: 16, display: "flex", flexWrap: "wrap", gap: "10px 24px", alignItems: "center" }}>
+                      {sa.entry_target && <div><div style={{ fontSize: 10, color: "#9C998E", fontFamily: MONO }}>Buy ≤</div><div style={{ fontSize: 16, fontWeight: 700, fontFamily: MONO, color: "#3F6B4F" }}>${sa.entry_target.toFixed(2)}</div></div>}
+                      {sa.stop_loss    && <div><div style={{ fontSize: 10, color: "#9C998E", fontFamily: MONO }}>Stop</div><div style={{ fontSize: 16, fontWeight: 700, fontFamily: MONO, color: "#A8554A" }}>${sa.stop_loss.toFixed(2)}</div></div>}
+                      {sa.exit_target  && <div><div style={{ fontSize: 10, color: "#9C998E", fontFamily: MONO }}>Target</div><div style={{ fontSize: 16, fontWeight: 700, fontFamily: MONO, color: "#3A5A6E" }}>${sa.exit_target.toFixed(2)}</div></div>}
+                      {sa.hold_period  && <div><div style={{ fontSize: 10, color: "#9C998E", fontFamily: MONO }}>Hold</div><div style={{ fontSize: 13, fontWeight: 600, color: "#20211C" }}>{sa.hold_period}</div></div>}
+                      {(() => { const sc = shareCount(sa); return sc ? (
+                        <div style={{ marginLeft: "auto" }}>
+                          <div style={{ fontSize: 10, color: "#9C998E", fontFamily: MONO }}>~Shares</div>
+                          <div style={{ fontSize: 16, fontWeight: 700, fontFamily: MONO, color: "#20211C" }}>{sc.shares} <span style={{ fontSize: 11, color: "#9C998E", fontWeight: 400 }}>(${sc.dollars.toLocaleString()})</span></div>
+                        </div>
+                      ) : null; })()}
+                    </div>
+                  </div>
+
+                  {/* Footer */}
+                  <div style={{ padding: "0 20px 16px", display: "flex", gap: 10 }}>
+                    <button onClick={() => { setActiveTab("My Stocks"); setExpanded(spotlight.ticker); }}
+                      style={{ flex: 1, padding: "10px 0", background: "#3A5A6E", color: "#FBFAF7", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14, fontFamily: SANS }}>
+                      View Full Analysis →
+                    </button>
+                    <button onClick={() => { setActiveTab("My Stocks"); }}
+                      style={{ padding: "10px 18px", background: "none", color: "#9C998E", border: "1px solid #E4E1D8", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: SANS }}>
+                      Skip
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* ── All Clear card ── */}
+              {allClear && (
+                <div style={{ background: "#F4F8F4", border: "1px solid #D6E2D7", borderRadius: 13, padding: "28px 24px", marginBottom: 16, textAlign: "center" }}>
+                  <div style={{ fontSize: 28, marginBottom: 10 }}>✓</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, color: "#3F6B4F", marginBottom: 8, fontFamily: SERIF }}>All Clear — Nothing to do today</div>
+                  <div style={{ fontSize: 13, color: "#6A685F", lineHeight: 1.6 }}>
+                    Your {digest.length} stock{digest.length !== 1 ? "s" : ""} are being watched. No high-conviction opportunities cleared the threshold today.<br />
+                    Come back tomorrow — the nightly agent runs after market close.
+                  </div>
+                </div>
+              )}
+
+              {/* Important flags */}
+              {importantItems.length > 0 && (
+                <div style={{ background: "#FBFAF7", border: "1px solid #E4E1D8", borderRadius: 11, padding: "6px 4px 8px", marginBottom: 16 }}>
+                  <div style={{ padding: "13px 18px 11px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span style={{ fontSize: 15, fontWeight: 600, color: "#20211C" }}>Important signals today</span>
+                    <span style={{ fontSize: 10, color: "#9C998E", fontFamily: MONO, letterSpacing: "0.08em" }}>{importantItems.length} FLAG{importantItems.length > 1 ? "S" : ""}</span>
+                  </div>
+                  {importantItems.map(item => {
+                    const ivm = item.analysis?.verdict ? VERDICT_META[item.analysis.verdict] ?? VERDICT_META.WATCH : null;
+                    return (
+                      <div key={item.ticker} onClick={() => { setActiveTab("My Stocks"); setExpanded(item.ticker); }}
+                        style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 18px", borderTop: "1px solid #EDEAE1", cursor: "pointer" }}>
+                        <span style={{ fontFamily: MONO, fontWeight: 600, fontSize: 13, width: 60, color: "#20211C" }}>{item.ticker}</span>
+                        {ivm && <span style={{ fontSize: 10, padding: "3px 9px", background: ivm.bg, color: ivm.color, border: `1px solid ${ivm.bd}`, borderRadius: 20, fontFamily: MONO, fontWeight: 700 }}>{ivm.label}</span>}
+                        <span style={{ flex: 1, fontSize: 13, color: "#6A685F" }}>{item.analysis?.importance_reason ?? "—"}</span>
+                        <span style={{ fontSize: 12, color: "#3A5A6E", fontWeight: 600 }}>View →</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* My Stocks teaser */}
+              <button onClick={() => setActiveTab("My Stocks")} style={{
+                width: "100%", textAlign: "left", background: "#FBFAF7",
+                border: "1px solid #E4E1D8", borderRadius: 11, padding: "15px 20px",
+                display: "flex", alignItems: "center", gap: 14, cursor: "pointer", fontFamily: SANS,
+              }}>
+                <span style={{ fontSize: 10, fontFamily: MONO, letterSpacing: "0.12em", color: "#9C998E" }}>MY STOCKS</span>
+                <span style={{ fontSize: 14, color: "#20211C" }}>
+                  Tracking <b style={{ fontFamily: MONO }}>{digest.length}</b> stock{digest.length !== 1 ? "s" : ""} · {buyCount} buy · {watchCount} hold/watch · {sellCount} sell
+                </span>
+                <span style={{ marginLeft: "auto", fontSize: 13, color: "#3A5A6E", fontWeight: 600, whiteSpace: "nowrap" }}>See full table →</span>
+              </button>
+            </div>
+          );
+        })()}
 
         {/* ── My Stocks tab ── */}
         {activeTab === "My Stocks" && (

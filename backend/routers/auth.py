@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db
 from models import User
-from schemas import TokenVerifyRequest, UserOut
+from schemas import TokenVerifyRequest, UserOut, UserUpdate
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -38,4 +38,14 @@ def get_current_user(token: str, db: Session) -> User:
 @router.post("/verify", response_model=UserOut)
 def verify(body: TokenVerifyRequest, db: Session = Depends(get_db)):
     user = get_current_user(body.id_token, db)
+    return user
+
+
+@router.patch("/me", response_model=UserOut)
+def update_me(id_token: str, body: UserUpdate, db: Session = Depends(get_db)):
+    user = get_current_user(id_token, db)
+    if body.portfolio_size is not None:
+        user.portfolio_size = body.portfolio_size
+    db.commit()
+    db.refresh(user)
     return user
