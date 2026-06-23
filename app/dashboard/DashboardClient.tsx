@@ -701,23 +701,34 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
 
   async function handleAdd(e: React.SyntheticEvent<HTMLFormElement>) {
     e.preventDefault();
-    // Allow direct-typed ticker even if user didn't select from dropdown
     const effectiveTicker = ticker.trim() || query.trim().toUpperCase().split(/\s/)[0];
     if (!effectiveTicker) return;
-    setAdding(true); setError(""); setShowSuggestions(false);
+
+    // Optimistic — clear input and insert row immediately, before the network call
+    const savedQuery = query; const savedTicker = ticker; const savedCompany = companyName;
+    setTicker(""); setCompanyName(""); setQuery(""); setSuggestions([]); setShowSuggestions(false); setError("");
+    setDigest(prev => [...prev, { ticker: effectiveTicker, company_name: savedCompany || null, is_leveraged: false, analysis: null }]);
+
     try {
       const r = await fetch(`${API}/watchlist?id_token=${encodeURIComponent(idToken)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticker: effectiveTicker, company_name: companyName || null }),
+        body: JSON.stringify({ ticker: effectiveTicker, company_name: savedCompany || null }),
       });
       if (r.ok) {
-        setTicker(""); setCompanyName(""); setQuery(""); setSuggestions([]);
-        // Optimistic insert — shows the row immediately as pending, then silent refresh fills in analysis
-        setDigest(prev => [...prev, { ticker: effectiveTicker, company_name: companyName || null, is_leveraged: false, analysis: null }]);
-        fetchDigest(true);
-      } else { const d = await r.json(); setError(d.detail || "Failed to add."); }
-    } finally { setAdding(false); }
+        fetchDigest(true); // silent refresh to pull in any existing analysis
+      } else {
+        // Revert on failure
+        const d = await r.json();
+        setDigest(prev => prev.filter(i => i.ticker !== effectiveTicker));
+        setQuery(savedQuery); setTicker(savedTicker); setCompanyName(savedCompany);
+        setError(d.detail || "Failed to add.");
+      }
+    } catch {
+      setDigest(prev => prev.filter(i => i.ticker !== effectiveTicker));
+      setQuery(savedQuery); setTicker(savedTicker); setCompanyName(savedCompany);
+      setError("Network error — please try again.");
+    }
   }
 
   function handleSearchInput(val: string) {
@@ -1266,7 +1277,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                   </div>
                 )}
               </div>
-              <button type="submit" disabled={adding || (!ticker && !query.trim())} style={{
+              <button type="submit" disabled={!ticker && !query.trim()} style={{
                 padding: "0.5rem 1.1rem",
                 background: (ticker || query.trim()) ? "#3A5A6E" : "#E4E1D8",
                 color: (ticker || query.trim()) ? "#FBFAF7" : "#9C998E",
@@ -1275,7 +1286,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 fontWeight: 600, fontSize: "0.88rem", fontFamily: SANS,
                 transition: "background 0.15s",
               }}>
-                {adding ? "Adding…" : "+ Add"}
+                + Add
               </button>
               {error && <span style={{ color: "#A8554A", fontSize: "0.8rem", width: "100%" }}>{error}</span>}
             </form>
