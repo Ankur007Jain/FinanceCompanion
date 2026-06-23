@@ -1,3 +1,5 @@
+import asyncio
+import json
 import os
 from datetime import date
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -7,6 +9,7 @@ from database import get_db, SessionLocal
 from models import StockAnalysis
 from schemas import NightlyJobRequest, IngestAnalysisRequest
 from services.nightly_runner import run_nightly_analysis
+from services.stock_memory import maybe_update_stock_memory
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -28,8 +31,16 @@ async def trigger_nightly(body: NightlyJobRequest, background_tasks: BackgroundT
     return {"status": "started", "tickers": body.tickers or "all"}
 
 
+def _run_memory_update(ticker: str, verdict: str, reasoning: str, news_summary: str, events_json: str):
+    session = SessionLocal()
+    try:
+        asyncio.run(maybe_update_stock_memory(ticker, verdict, reasoning, news_summary, events_json, session))
+    finally:
+        session.close()
+
+
 @router.post("/ingest-analysis")
-def ingest_analysis(body: IngestAnalysisRequest, x_job_secret: str = "", db: Session = Depends(get_db)):
+def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTasks, x_job_secret: str = "", db: Session = Depends(get_db)):
     """Called by the GitHub Actions nightly agent to persist analysis results."""
     if x_job_secret != os.getenv("JOB_SECRET", ""):
         raise HTTPException(status_code=401, detail="Invalid job secret.")
@@ -99,6 +110,10 @@ def ingest_analysis(body: IngestAnalysisRequest, x_job_secret: str = "", db: Ses
         "convergence_details": body.convergence_details,
     }
 
+    # Synthesize events_json from earnings_date when the agent sends it but not events_json
+    if not mapped.get("events_json") and body.earnings_date:
+        mapped["events_json"] = json.dumps([{"date": body.earnings_date, "description": "Earnings"}])
+
     existing = db.query(StockAnalysis).filter(
         StockAnalysis.ticker == body.ticker,
         StockAnalysis.analysis_date == body.analysis_date,
@@ -109,11 +124,13 @@ def ingest_analysis(body: IngestAnalysisRequest, x_job_secret: str = "", db: Ses
             if value is not None:
                 setattr(existing, col, value)
         db.commit()
+        background_tasks.add_task(_run_memory_update, body.ticker, body.verdict or "", body.reasoning or "", body.news_summary or "", "")
         return {"status": "updated", "ticker": body.ticker}
 
     analysis = StockAnalysis(**{k: v for k, v in mapped.items() if v is not None or k in ("signal_convergence_score",)})
     db.add(analysis)
     db.commit()
+    background_tasks.add_task(_run_memory_update, body.ticker, body.verdict or "", body.reasoning or "", body.news_summary or "", "")
     return {"status": "created", "ticker": body.ticker}
 
 

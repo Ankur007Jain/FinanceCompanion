@@ -10,10 +10,72 @@ permissions:
   id-token: write
 
 jobs:
-  nightly-analysis:
-    name: "Nightly Stock Analysis Agent"
+  # ── Job 1: compute batches of 5, skip already-analyzed tickers ──────────────
+  split:
+    name: "Split tickers into batches"
     runs-on: ubuntu-latest
     environment: Production
+    outputs:
+      batches: ${{ steps.compute.outputs.batches }}
+      has_work: ${{ steps.compute.outputs.has_work }}
+    steps:
+      - name: Compute ticker batches
+        id: compute
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+        run: |
+          python3 << 'PYEOF'
+          import json, subprocess, os
+
+          backend = os.environ['BACKEND_URL']
+          secret  = os.environ['ADMIN_SECRET']
+
+          def fetch(url):
+              r = subprocess.run(['curl', '-sf', url], capture_output=True, text=True, timeout=15)
+              try:
+                  return json.loads(r.stdout)
+              except Exception:
+                  return {}
+
+          all_tickers = fetch(f"{backend}/jobs/admin/tickers?x_admin_secret={secret}").get('tickers', [])
+          if not all_tickers:
+              all_tickers = ['NFLX', 'MRVL', 'SOXQ', 'SOXL', 'MVLL']
+
+          analyzed = set(fetch(f"{backend}/jobs/admin/analyzed-today?x_admin_secret={secret}").get('analyzed', []))
+          remaining = [t for t in all_tickers if t not in analyzed]
+
+          print(f"Total watchlist : {len(all_tickers)} tickers")
+          print(f"Already done    : {len(analyzed)} — {sorted(analyzed & set(all_tickers))}")
+          print(f"To analyze      : {len(remaining)} — {remaining}")
+
+          BATCH = 5
+          if remaining:
+              batches  = [','.join(remaining[i:i+BATCH]) for i in range(0, len(remaining), BATCH)]
+              has_work = 'true'
+          else:
+              batches  = ['__SKIP__']
+              has_work = 'false'
+
+          print(f"Batches ({len(batches)}) : {batches}")
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"batches={json.dumps(batches)}\n")
+              f.write(f"has_work={has_work}\n")
+          PYEOF
+
+  # ── Job 2: one parallel job per batch of 5 ──────────────────────────────────
+  analyze:
+    name: "Analyze [${{ matrix.batch }}]"
+    needs: split
+    if: needs.split.outputs.has_work == 'true'
+    runs-on: ubuntu-latest
+    environment: Production
+    strategy:
+      matrix:
+        batch: ${{ fromJson(needs.split.outputs.batches) }}
+      fail-fast: false   # one batch failing doesn't cancel the others
+
     steps:
       - uses: actions/checkout@v4
 
@@ -25,7 +87,7 @@ jobs:
       - name: Install data deps
         run: pip install yfinance pandas pandas-ta finnhub-python requests
 
-      - name: Run nightly analysis agent
+      - name: Analyze batch
         uses: anthropics/claude-code-action@beta
         with:
           mode: agent
@@ -35,26 +97,19 @@ jobs:
           direct_prompt: |
             You are FinanceCompanion's nightly stock analysis agent. Today is $(date +%Y-%m-%d).
 
-            ## Step 1 — Get tickers (skip already-analyzed ones)
+            ## Your assigned tickers (analyze ALL of these — no skipping)
 
-            First, get all watchlisted tickers:
-            ```bash
-            curl -sf "${{ secrets.BACKEND_URL }}/jobs/admin/tickers?x_admin_secret=${{ secrets.ADMIN_SECRET }}" || echo '{"tickers":[]}'
-            ```
-            If the result is empty or the backend is unreachable, use the seed universe: NFLX, MRVL, SOXQ, SOXL, MVLL
+            ${{ matrix.batch }}
 
-            Then get tickers already analyzed today (skip these — data already saved, no need to re-fetch):
-            ```bash
-            curl -sf "${{ secrets.BACKEND_URL }}/jobs/admin/analyzed-today?x_admin_secret=${{ secrets.ADMIN_SECRET }}" || echo '{"analyzed":[]}'
-            ```
-            Remove any ticker in `analyzed` from your work list before proceeding. Log which tickers you are skipping.
+            These have already been filtered against today's analyzed list — work through every
+            ticker in the list above. If a POST returns 409 (already exists), move on.
 
-            ## Step 2 — Fetch market data for each ticker
+            ## Step 1 — Fetch market data for each ticker
 
-            Run this Python script once per ticker (substitute TICKER):
+            Run this Python script once per ticker (replace TICKER with the actual symbol):
             ```bash
             python3 << 'EOF'
-            import yfinance as yf, json, sys
+            import yfinance as yf, json
             ticker = "TICKER"
             t = yf.Ticker(ticker)
             info = t.info
@@ -81,7 +136,7 @@ jobs:
             ups   = ((tgt - price) / price * 100) if tgt and price else None
 
             try:
-                cal  = t.calendar or {}
+                cal    = t.calendar or {}
                 edates = cal.get("Earnings Date") or []
                 edate  = str(edates[0]) if edates else None
             except:
@@ -99,45 +154,35 @@ jobs:
             EOF
             ```
 
-            ## Step 3 — Compute signal convergence score for each ticker
+            ## Step 2 — Compute signal convergence score for each ticker
 
-            For each ticker, score 7 independent signals (each true or false):
+            Score 7 independent signals (true/false each):
             - oversold_rsi: rsi < 50
             - near_52w_low: range_pct < 30
             - analyst_upside_15pct: upside_pct >= 15
             - no_binary_risk: earnings_date is null OR more than 7 days from today
-            - positive_fcf: true if analyst consensus is BUY or STRONG_BUY (proxy when FCF unavailable)
-            - institutional_backing: true by default for large-cap names (cannot compute from yfinance fast_info)
+            - positive_fcf: true if analyst consensus is BUY or STRONG_BUY
+            - institutional_backing: true by default for large-cap names
             - price_stabilizing: price >= ma50 (or ma50 is null)
 
             convergence_score = count of true signals (0–7)
-            CONVICTION FLOOR: if convergence_score < 5, verdict MUST be WATCH regardless of other signals.
+            CONVICTION FLOOR: convergence_score < 5 → verdict MUST be WATCH.
 
-            ## Step 4 — Analyse and issue a verdict for each ticker
+            ## Step 3 — Analyse and issue verdict
 
-            Using the data + convergence score above, reason carefully:
+            **Check:** 52-week range position · price vs MA50/MA200 · RSI · analyst consensus ·
+            news sentiment · earnings proximity (within 5 days → is_important_day=true)
 
-            **Check:**
-            - 52-week range position (bottom third = potential value, top third = extended)
-            - Price vs MA50 and MA200 (above both = bullish structure)
-            - RSI: >70 overbought, <30 oversold
-            - Analyst consensus and upside to price target
-            - News sentiment (scan headlines for catalysts or risks)
-            - Earnings proximity: within 5 calendar days = flag is_important_day
+            **Leveraged ETF rules** (SOXL, MVLL, any 3X/2X/L ticker):
+            max hold 1–3 days · never hold through earnings · no buy after 15%+ single-day run · tight exit_target
 
-            **Leveraged ETF rules** (applies to SOXL, MVLL, any ticker with 3X/2X/L suffix):
-            - Max hold 1–3 days only
-            - Never hold through earnings
-            - Do not buy after a 15%+ single-day run
-            - Always set a tight exit_target
+            **Quality rule:** weak or conflicting signals → WATCH. Wrong advice is worse than no advice.
 
-            **Quality rule:** If signals conflict or are weak, issue WATCH — a wrong BUY/SELL is worse than no advice.
-
-            **Busy professional signals — required for every ticker:**
-            - entry_quality: GREAT (oversold/near support, excellent risk-reward) | FAIR (reasonable but not ideal) | WAIT (extended/overbought)
-            - hold_and_forget_rating: HOLD_AND_FORGET (low vol, strong fundamentals, no near-term events) | CHECK_MONTHLY (moderate risk) | WATCH_CLOSELY (earnings <30 days, high beta, leveraged, or thesis at risk)
-            - position_size_pct: scale with conviction, inverse of risk. HIGH conviction + LOW risk = "7-10%". LOW conviction + HIGH risk = "2-3%".
-            - Three scenarios (bull/base/bear probabilities MUST sum to 100).
+            **Required for every ticker:**
+            - entry_quality: GREAT | FAIR | WAIT
+            - hold_and_forget_rating: HOLD_AND_FORGET | CHECK_MONTHLY | WATCH_CLOSELY
+            - position_size_pct: e.g. "5-8%" — scale with conviction, inverse of risk
+            - Three scenarios — bull + base + bear probabilities MUST sum to 100
 
             Produce one JSON object per ticker:
             ```json
@@ -146,55 +191,60 @@ jobs:
               "entry_target": <float or null>,
               "exit_target": <float or null>,
               "stop_loss": <float or null>,
-              "hold_period": "<e.g. '3-5 days', '2-4 weeks', '1-3 months' — or null if WATCH/SELL>",
-              "reasoning": "<10-15 lines: price action, technicals, analyst view, news, risk>",
-              "conviction_score": <integer 0-100>,
+              "hold_period": "<'3-5 days' / '2-4 weeks' / '1-3 months' — null if WATCH/SELL>",
+              "reasoning": "<10-15 lines>",
+              "conviction_score": <0-100>,
               "risk_level": "LOW|MED|HIGH",
               "confidence": "High|Medium|Low",
-              "bull_case": "<one plain-English sentence>",
-              "bear_case": "<one plain-English sentence>",
-              "thesis_invalidation": "<one sentence — what would flip this verdict>",
-              "news_summary": "<3-4 sentences synthesising today's news>",
-              "ripple_analysis": "<2nd/3rd order effects of today's news on this ticker>",
+              "bull_case": "<one sentence>",
+              "bear_case": "<one sentence>",
+              "thesis_invalidation": "<one sentence>",
+              "news_summary": "<3-4 sentences>",
+              "ripple_analysis": "<2nd/3rd order effects>",
               "is_important_day": <true|false>,
               "importance_reason": "<reason or empty string>",
               "entry_quality": "GREAT|FAIR|WAIT",
               "hold_and_forget_rating": "HOLD_AND_FORGET|CHECK_MONTHLY|WATCH_CLOSELY",
               "position_size_pct": "<e.g. '5-8%'>",
               "scenario_bull": "<one sentence>",
-              "scenario_bull_pct": <float — expected % return in bull case>,
-              "scenario_bull_prob": <integer 0-100>,
+              "scenario_bull_pct": <float>,
+              "scenario_bull_prob": <0-100>,
               "scenario_base": "<one sentence>",
               "scenario_base_pct": <float>,
-              "scenario_base_prob": <integer 0-100>,
+              "scenario_base_prob": <0-100>,
               "scenario_bear": "<one sentence>",
-              "scenario_bear_pct": <float — negative>,
-              "scenario_bear_prob": <integer 0-100>,
-              "dont_panic_note": "<if price dropped >15% from a prior BUY, address it directly; otherwise empty string>",
-              "signal_convergence_score": <integer 0-7 from Step 3>,
+              "scenario_bear_pct": <negative float>,
+              "scenario_bear_prob": <0-100>,
+              "dont_panic_note": "<address >15% drop from prior BUY; otherwise empty string>",
+              "signal_convergence_score": <0-7>,
               "convergence_details": "{\"oversold_rsi\":true/false,\"near_52w_low\":true/false,\"analyst_upside_15pct\":true/false,\"no_binary_risk\":true/false,\"positive_fcf\":true/false,\"institutional_backing\":true/false,\"price_stabilizing\":true/false}"
             }
             ```
 
-            ## Step 5 — POST each result to the backend
+            ## Step 4 — POST each result to the backend
 
             ```bash
             curl -s -X POST "${{ secrets.BACKEND_URL }}/jobs/ingest-analysis?x_job_secret=${{ secrets.JOB_SECRET }}" \
               -H "Content-Type: application/json" \
-              -d '<full JSON with ticker, analysis_date, price fields + all verdict fields>'
+              -d '<full JSON: ticker, analysis_date, price fields + all verdict fields>'
             ```
 
-            Map price fields: price→current_price, change_pct→price_change_pct, hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct, ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct.
-            Include ALL verdict fields directly: stop_loss, hold_period, conviction_score, risk_level, confidence, bull_case, bear_case, thesis_invalidation, entry_quality, hold_and_forget_rating, position_size_pct, scenario_bull, scenario_bull_pct, scenario_bull_prob, scenario_base, scenario_base_pct, scenario_base_prob, scenario_bear, scenario_bear_pct, scenario_bear_prob, dont_panic_note, signal_convergence_score, convergence_details.
+            Price field mapping: price→current_price, change_pct→price_change_pct,
+            hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct,
+            ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct.
 
-            ## Step 7 — Print summary table
+            Include ALL verdict fields: stop_loss, hold_period, conviction_score, risk_level,
+            confidence, bull_case, bear_case, thesis_invalidation, entry_quality,
+            hold_and_forget_rating, position_size_pct, all scenario_* fields, dont_panic_note,
+            signal_convergence_score, convergence_details.
+
+            Also include earnings_date (the raw string from yfinance, e.g. "2026-07-15") if available, else omit it.
+
+            ## Step 5 — Print summary
 
             ```
-            === FinanceCompanion Nightly — <date> ===
-            TICKER   VERDICT  PRICE    CHG%    RSI   IMPORTANT
-            -------  -------  ------   -----   ---   ---------
-            ...
-            ==========================================
+            === Batch complete — <date> ===
+            TICKER   VERDICT  PRICE  CHG%  RSI  CONVERGENCE
             ```
 
-            On any per-ticker error (data fetch or POST failure), log the error and continue — never abort the full run.
+            On any per-ticker error, log it and continue — never abort the batch.

@@ -1071,36 +1071,85 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               </div>
             </div>
 
-            {/* Column headers — desktop only */}
-            {digest.length > 0 && !isMobile && (
-              <div style={{ display: "grid", gridTemplateColumns: "200px 100px 120px 180px 70px 100px 1fr 48px", padding: "0 1.25rem", marginBottom: "0.5rem", gap: "1rem" }}>
-                {["Stock", "Verdict", "Price", "52-Week Range", "RSI", "Trend", "Signal", ""].map(h => (
-                  <div key={h} style={{ fontSize: "0.67rem", color: "#9C998E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
-                ))}
+            {loading ? (
+              <div style={{ textAlign: "center", padding: "3rem", color: "#9C998E" }}>Loading your digest…</div>
+            ) : digest.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "3rem", background: "#FBFAF7", borderRadius: 11, border: "1px solid #E4E1D8", color: "#9C998E" }}>
+                <div style={{ fontSize: "1.8rem", marginBottom: "0.5rem" }}>—</div>
+                <div style={{ fontWeight: 600, marginBottom: "0.35rem", color: "#20211C" }}>Add your first stock to get started</div>
+                <div style={{ fontSize: "0.82rem" }}>Try: NFLX, MRVL, SOXQ, SOXL</div>
               </div>
-            )}
+            ) : (() => {
+              const GROUPS: { verdict: string; label: string; color: string; bg: string; bd: string }[] = [
+                { verdict: "BUY",   label: "Buy",   color: "#3F6B4F", bg: "#EAF1EC", bd: "#C8DDD0" },
+                { verdict: "HOLD",  label: "Hold",  color: "#97703C", bg: "#F4EEE2", bd: "#E6DBC4" },
+                { verdict: "WATCH", label: "Watch", color: "#9C998E", bg: "#F4F2EC", bd: "#E4E1D8" },
+                { verdict: "SELL",  label: "Sell",  color: "#A8554A", bg: "#F4E7E4", bd: "#E6D2CC" },
+              ];
+              const grouped = GROUPS.map(g => ({
+                ...g,
+                items: digest.filter(d => d.analysis?.verdict === g.verdict),
+              })).filter(g => g.items.length > 0);
+              const pending = digest.filter(d => !d.analysis);
 
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-              {loading ? (
-                <div style={{ textAlign: "center", padding: "3rem", color: "#9C998E" }}>Loading your digest…</div>
-              ) : digest.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "3rem", background: "#FBFAF7", borderRadius: 11, border: "1px solid #E4E1D8", color: "#9C998E" }}>
-                  <div style={{ fontSize: "1.8rem", marginBottom: "0.5rem" }}>—</div>
-                  <div style={{ fontWeight: 600, marginBottom: "0.35rem", color: "#20211C" }}>Add your first stock to get started</div>
-                  <div style={{ fontSize: "0.82rem" }}>Try: NFLX, MRVL, SOXQ, SOXL</div>
+              const colHeaders = (
+                !isMobile && (
+                  <div style={{ display: "grid", gridTemplateColumns: "200px 100px 120px 180px 70px 100px 1fr 48px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
+                    {["Stock", "Verdict", "Price", "52-Week Range", "RSI", "Trend", "Signal", ""].map(h => (
+                      <div key={h} style={{ fontSize: "0.67rem", color: "#9C998E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
+                    ))}
+                  </div>
+                )
+              );
+
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+                  {grouped.map((g, gi) => (
+                    <div key={g.verdict}>
+                      {/* Group header */}
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                        <span style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, padding: "2px 10px", borderRadius: 20, color: g.color, background: g.bg, border: `1px solid ${g.bd}`, textTransform: "uppercase", letterSpacing: "0.06em" }}>{g.label}</span>
+                        <span style={{ fontSize: "0.68rem", color: "#9C998E", fontFamily: MONO }}>{g.items.length} stock{g.items.length > 1 ? "s" : ""}</span>
+                        <div style={{ flex: 1, height: 1, background: "#E4E1D8" }} />
+                      </div>
+                      {/* Column headers once — first group only, desktop */}
+                      {gi === 0 && colHeaders}
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                        {g.items.map(item => (
+                          <StockRow
+                            key={item.ticker} item={item}
+                            expanded={expanded === item.ticker}
+                            onToggle={() => setExpanded(expanded === item.ticker ? null : item.ticker)}
+                            onChat={handleChat} onRemove={handleRemove}
+                            isMobile={isMobile}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                  {pending.length > 0 && (
+                    <div>
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                        <span style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, padding: "2px 10px", borderRadius: 20, color: "#9C998E", background: "#ECEAE3", border: "1px solid #E4E1D8", textTransform: "uppercase", letterSpacing: "0.06em" }}>Pending</span>
+                        <span style={{ fontSize: "0.68rem", color: "#9C998E", fontFamily: MONO }}>{pending.length} stock{pending.length > 1 ? "s" : ""}</span>
+                        <div style={{ flex: 1, height: 1, background: "#E4E1D8" }} />
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                        {pending.map(item => (
+                          <StockRow
+                            key={item.ticker} item={item}
+                            expanded={false}
+                            onToggle={() => {}}
+                            onChat={handleChat} onRemove={handleRemove}
+                            isMobile={isMobile}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
-              ) : (
-                digest.map(item => (
-                  <StockRow
-                    key={item.ticker} item={item}
-                    expanded={expanded === item.ticker}
-                    onToggle={() => setExpanded(expanded === item.ticker ? null : item.ticker)}
-                    onChat={handleChat} onRemove={handleRemove}
-                    isMobile={isMobile}
-                  />
-                ))
-              )}
-            </div>
+              );
+            })()}
 
             {/* Add stock form */}
             <form onSubmit={handleAdd} style={{

@@ -262,3 +262,4 @@ class IngestAnalysisRequest(BaseModel):
     dont_panic_note: Optional[str] = None
     signal_convergence_score: Optional[int] = None
     convergence_details: Optional[str] = None
+    earnings_date: Optional[str] = None
