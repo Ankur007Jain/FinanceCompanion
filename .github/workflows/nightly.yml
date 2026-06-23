@@ -99,9 +99,23 @@ jobs:
             EOF
             ```
 
-            ## Step 3 — Analyse and issue a verdict for each ticker
+            ## Step 3 — Compute signal convergence score for each ticker
 
-            Using the data above, reason carefully:
+            For each ticker, score 7 independent signals (each true or false):
+            - oversold_rsi: rsi < 50
+            - near_52w_low: range_pct < 30
+            - analyst_upside_15pct: upside_pct >= 15
+            - no_binary_risk: earnings_date is null OR more than 7 days from today
+            - positive_fcf: true if analyst consensus is BUY or STRONG_BUY (proxy when FCF unavailable)
+            - institutional_backing: true by default for large-cap names (cannot compute from yfinance fast_info)
+            - price_stabilizing: price >= ma50 (or ma50 is null)
+
+            convergence_score = count of true signals (0–7)
+            CONVICTION FLOOR: if convergence_score < 5, verdict MUST be WATCH regardless of other signals.
+
+            ## Step 4 — Analyse and issue a verdict for each ticker
+
+            Using the data + convergence score above, reason carefully:
 
             **Check:**
             - 52-week range position (bottom third = potential value, top third = extended)
@@ -119,33 +133,61 @@ jobs:
 
             **Quality rule:** If signals conflict or are weak, issue WATCH — a wrong BUY/SELL is worse than no advice.
 
+            **Busy professional signals — required for every ticker:**
+            - entry_quality: GREAT (oversold/near support, excellent risk-reward) | FAIR (reasonable but not ideal) | WAIT (extended/overbought)
+            - hold_and_forget_rating: HOLD_AND_FORGET (low vol, strong fundamentals, no near-term events) | CHECK_MONTHLY (moderate risk) | WATCH_CLOSELY (earnings <30 days, high beta, leveraged, or thesis at risk)
+            - position_size_pct: scale with conviction, inverse of risk. HIGH conviction + LOW risk = "7-10%". LOW conviction + HIGH risk = "2-3%".
+            - Three scenarios (bull/base/bear probabilities MUST sum to 100).
+
             Produce one JSON object per ticker:
             ```json
             {
               "verdict": "BUY|HOLD|SELL|WATCH",
-              "entry_target": <float or null — specific price to enter, or null if not actionable>,
-              "exit_target": <float or null — price target to take profit>,
-              "stop_loss": <float or null — price at which to cut losses>,
+              "entry_target": <float or null>,
+              "exit_target": <float or null>,
+              "stop_loss": <float or null>,
               "hold_period": "<e.g. '3-5 days', '2-4 weeks', '1-3 months' — or null if WATCH/SELL>",
               "reasoning": "<10-15 lines: price action, technicals, analyst view, news, risk>",
+              "conviction_score": <integer 0-100>,
+              "risk_level": "LOW|MED|HIGH",
+              "confidence": "High|Medium|Low",
+              "bull_case": "<one plain-English sentence>",
+              "bear_case": "<one plain-English sentence>",
+              "thesis_invalidation": "<one sentence — what would flip this verdict>",
               "news_summary": "<3-4 sentences synthesising today's news>",
-              "ripple_analysis": "<2nd/3rd order effects of today's news on this specific ticker>",
+              "ripple_analysis": "<2nd/3rd order effects of today's news on this ticker>",
               "is_important_day": <true|false>,
-              "importance_reason": "<reason or empty string>"
+              "importance_reason": "<reason or empty string>",
+              "entry_quality": "GREAT|FAIR|WAIT",
+              "hold_and_forget_rating": "HOLD_AND_FORGET|CHECK_MONTHLY|WATCH_CLOSELY",
+              "position_size_pct": "<e.g. '5-8%'>",
+              "scenario_bull": "<one sentence>",
+              "scenario_bull_pct": <float — expected % return in bull case>,
+              "scenario_bull_prob": <integer 0-100>,
+              "scenario_base": "<one sentence>",
+              "scenario_base_pct": <float>,
+              "scenario_base_prob": <integer 0-100>,
+              "scenario_bear": "<one sentence>",
+              "scenario_bear_pct": <float — negative>,
+              "scenario_bear_prob": <integer 0-100>,
+              "dont_panic_note": "<if price dropped >15% from a prior BUY, address it directly; otherwise empty string>",
+              "signal_convergence_score": <integer 0-7 from Step 3>,
+              "convergence_details": "{\"oversold_rsi\":true/false,\"near_52w_low\":true/false,\"analyst_upside_15pct\":true/false,\"no_binary_risk\":true/false,\"positive_fcf\":true/false,\"institutional_backing\":true/false,\"price_stabilizing\":true/false}"
             }
             ```
 
-            ## Step 4 — POST each result to the backend
+            ## Step 5 — POST each result to the backend
 
             ```bash
             curl -s -X POST "${{ secrets.BACKEND_URL }}/jobs/ingest-analysis?x_job_secret=${{ secrets.JOB_SECRET }}" \
               -H "Content-Type: application/json" \
-              -d '<full JSON with ticker, analysis_date, price fields + verdict fields>'
+              -d '<full JSON with ticker, analysis_date, price fields + all verdict fields>'
             ```
 
-            Map fields: price→current_price, change_pct→price_change_pct, hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct, ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct. Include stop_loss and hold_period directly.
+            Map price fields: price→current_price, change_pct→price_change_pct, hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct, ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct.
+            Include ALL verdict fields directly: stop_loss, hold_period, conviction_score, risk_level, confidence, bull_case, bear_case, thesis_invalidation, entry_quality, hold_and_forget_rating, position_size_pct, scenario_bull, scenario_bull_pct, scenario_bull_prob, scenario_base, scenario_base_pct, scenario_base_prob, scenario_bear, scenario_bear_pct, scenario_bear_prob, dont_panic_note, signal_convergence_score, convergence_details.
 
-            ## Step 5 — Print summary table
+            ## Step 7 — Print summary table
 
             ```
             === FinanceCompanion Nightly — <date> ===
