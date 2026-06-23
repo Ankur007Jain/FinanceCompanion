@@ -85,10 +85,12 @@ jobs:
           cache: pip
 
       - name: Install data deps
-        run: pip install yfinance pandas pandas-ta finnhub-python requests
+        run: pip install yfinance pandas pandas-ta finnhub-python requests google-genai
 
       - name: Analyze batch
         uses: anthropics/claude-code-action@beta
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         with:
           mode: agent
           model: claude-sonnet-4-6
@@ -150,7 +152,7 @@ jobs:
                 edate = None
 
             # Print summary dict for analysis steps below
-            print(json.dumps({
+            _summary = {
                 "ticker": ticker, "price": round(price,2), "change_pct": round(chg,2),
                 "hi52": round(hi52,2), "lo52": round(lo52,2), "range_pct": round(rng,1),
                 "ma50": round(ma50,2) if ma50 else None,
@@ -158,7 +160,10 @@ jobs:
                 "rsi": round(rsi,1), "analyst": rec,
                 "upside_pct": round(ups,1) if ups else None,
                 "news": news_titles, "earnings_date": edate,
-            }))
+            }
+            print(json.dumps(_summary))
+            with open(f"/tmp/summary_{ticker}.json", "w") as f:
+                json.dump(_summary, f)
 
             # Serialize full raw data for the snapshot endpoint
             try:
@@ -246,7 +251,7 @@ jobs:
             convergence_score = count of true signals (0–7)
             CONVICTION FLOOR: convergence_score < 5 → verdict MUST be WATCH.
 
-            ## Step 3 — Analyse and issue verdict
+            ## Step 3a — Your verdict: Claude Sonnet 4.6 (Verdict A)
 
             **Check:** 52-week range position · price vs MA50/MA200 · RSI · analyst consensus ·
             news sentiment · earnings proximity (within 5 days → is_important_day=true)
@@ -262,7 +267,7 @@ jobs:
             - position_size_pct: e.g. "5-8%" — scale with conviction, inverse of risk
             - Three scenarios — bull + base + bear probabilities MUST sum to 100
 
-            Produce one JSON object per ticker:
+            Produce one JSON object per ticker and save it to /tmp/verdict_a_TICKER.json:
             ```json
             {
               "verdict": "BUY|HOLD|SELL|WATCH",
@@ -298,6 +303,109 @@ jobs:
               "convergence_details": "{\"oversold_rsi\":true/false,\"near_52w_low\":true/false,\"analyst_upside_15pct\":true/false,\"no_binary_risk\":true/false,\"positive_fcf\":true/false,\"institutional_backing\":true/false,\"price_stabilizing\":true/false}"
             }
             ```
+            Write the JSON to disk with a bash command, e.g.:
+            ```bash
+            cat > /tmp/verdict_a_TICKER.json << 'JSONEOF'
+            {...the JSON you produced above...}
+            JSONEOF
+            ```
+
+            ## Step 3b — Gemini verdict (Verdict B)
+
+            Run this Python script per ticker (replace TICKER with the actual symbol):
+            ```bash
+            python3 << 'PYEOF'
+            import json, os, re, time
+            from google import genai
+            from google.genai import types
+
+            ticker = "TICKER"
+            api_key = os.environ.get("GEMINI_API_KEY", "")
+            if not api_key:
+                print(f"[{ticker}] GEMINI_API_KEY not set — skipping Verdict B")
+                with open(f"/tmp/verdict_b_{ticker}.json", "w") as f:
+                    json.dump({"verdict": None}, f)
+                raise SystemExit(0)
+
+            with open(f"/tmp/summary_{ticker}.json") as f:
+                d = json.load(f)
+
+            news_str = "; ".join(d.get("news", [])[:3])
+            prompt = f"""You are an independent stock analyst. Analyze {ticker} and return ONLY valid JSON with no markdown fences.
+
+            Data for {ticker}:
+            Price: ${d.get('price', 0):.2f} ({d.get('change_pct', 0):+.2f}% today)
+            52-week range: ${d.get('lo52', 0):.2f}–${d.get('hi52', 0):.2f} ({d.get('range_pct', 50):.1f}% of range)
+            RSI(14): {d.get('rsi', 50):.1f}
+            MA50: {d.get('ma50') or 'N/A'}  MA200: {d.get('ma200') or 'N/A'}
+            Analyst consensus: {d.get('analyst', 'HOLD')}  Analyst upside: {d.get('upside_pct') or 'N/A'}%
+            Recent news: {news_str}
+            Next earnings: {d.get('earnings_date') or 'Unknown'}
+
+            Reply with exactly this JSON object and nothing else:
+            {{
+              "verdict": "BUY or HOLD or SELL or WATCH",
+              "reasoning": "5-8 sentence analysis",
+              "conviction_score": 0,
+              "risk_level": "LOW or MED or HIGH",
+              "bull_case": "one sentence",
+              "bear_case": "one sentence"
+            }}"""
+
+            client = genai.Client(api_key=api_key)
+            verdict_b = None
+
+            for attempt in range(3):
+                try:
+                    resp = client.models.generate_content(
+                        model="gemini-2.5-flash",
+                        contents=prompt,
+                        config=types.GenerateContentConfig(
+                            thinking_config=types.ThinkingConfig(thinking_budget=0)
+                        ),
+                    )
+                    raw = resp.text.strip()
+                    raw = re.sub(r"^```json\s*", "", raw)
+                    raw = re.sub(r"\s*```$", "", raw)
+                    verdict_b = json.loads(raw)
+                    print(f"[{ticker}] Verdict B (Gemini): {verdict_b.get('verdict')}")
+                    break
+                except Exception as e:
+                    print(f"[{ticker}] Gemini attempt {attempt + 1}/3 failed: {e}")
+                    if attempt < 2:
+                        time.sleep(30)
+
+            if verdict_b is None:
+                print(f"[{ticker}] Gemini failed after 3 attempts — verdict_b will be null")
+                verdict_b = {"verdict": None}
+
+            with open(f"/tmp/verdict_b_{ticker}.json", "w") as f:
+                json.dump(verdict_b, f)
+            PYEOF
+            ```
+
+            ## Step 3c — Judge: reconcile both verdicts
+
+            Read /tmp/verdict_a_TICKER.json and /tmp/verdict_b_TICKER.json and apply this agreement table
+            to produce final_verdict, verdict_agreement (true/false/null), and split_reason:
+
+            | Verdict A  | Verdict B  | Final verdict | verdict_agreement |
+            |------------|------------|---------------|-------------------|
+            | X          | X (same)   | X             | true              |
+            | BUY        | HOLD       | WATCH         | false             |
+            | BUY        | SELL       | WATCH         | false             |
+            | BUY        | WATCH      | WATCH         | false             |
+            | HOLD       | SELL       | WATCH         | false             |
+            | HOLD       | WATCH      | WATCH         | false             |
+            | SELL       | WATCH      | SELL          | false             |
+            | WATCH      | SELL       | SELL          | false             |
+            | (any)      | null       | verdict_a     | null (Gemini N/A) |
+
+            When verdict_agreement=false, write split_reason as one sentence explaining the key disagreement
+            (e.g. "Claude sees oversold RSI as a buy signal; Gemini flags near-term earnings risk as bearish").
+
+            Store final_verdict, verdict_a, verdict_b, verdict_agreement, split_reason in working memory
+            for Step 4. The `verdict` field in Step 4 must be final_verdict (the judge's output).
 
             ## Step 4 — POST each result to the backend
 
@@ -316,13 +424,18 @@ jobs:
             hold_and_forget_rating, position_size_pct, all scenario_* fields, dont_panic_note,
             signal_convergence_score, convergence_details.
 
+            Include dual-agent fields from Step 3c: verdict_a, verdict_b, verdict_agreement,
+            split_reason. Use null for verdict_b/verdict_agreement/split_reason if Gemini was unavailable.
+            The `verdict` field MUST be final_verdict from Step 3c (judge output), not raw verdict_a.
+
             Also include earnings_date (the raw string from yfinance, e.g. "2026-07-15") if available, else omit it.
 
             ## Step 5 — Print summary
 
             ```
             === Batch complete — <date> ===
-            TICKER   VERDICT  PRICE  CHG%  RSI  CONVERGENCE
+            TICKER   VERDICT  VERDICT_A  VERDICT_B  AGREEMENT  PRICE  CHG%  RSI  CONVERGENCE
+            ✅ = both models agree  ⚠️ = split verdict  — = Gemini unavailable
             ```
 
             On any per-ticker error, log it and continue — never abort the batch.
