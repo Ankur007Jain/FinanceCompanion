@@ -638,11 +638,12 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [sortMode, setSortMode] = useState<"relevance" | "verdict" | "az" | "movers">("relevance");
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    const check = () => setIsMobile(window.innerWidth < 640);
+    const check = () => setIsMobile(window.innerWidth < 768);
     check();
     window.addEventListener("resize", check);
     return () => window.removeEventListener("resize", check);
@@ -791,87 +792,166 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   return (
     <div style={{ minHeight: "100vh", background: "#E8E6E0" }}>
 
+      {/* ── Mobile side-panel overlay ── */}
+      {isMobile && showMobileMenu && (
+        <>
+          {/* Backdrop */}
+          <div onClick={() => setShowMobileMenu(false)} style={{
+            position: "fixed", inset: 0, background: "rgba(32,33,28,0.45)",
+            zIndex: 80, backdropFilter: "blur(2px)",
+          }} />
+          {/* Panel */}
+          <div style={{
+            position: "fixed", top: 0, left: 0, bottom: 0, width: 270,
+            background: "#FBFAF7", zIndex: 90, boxShadow: "4px 0 24px rgba(32,33,28,0.15)",
+            display: "flex", flexDirection: "column", padding: "0 0 24px",
+          }}>
+            {/* Panel header */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0 20px", height: 60, borderBottom: "1px solid #E4E1D8", flexShrink: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                <span style={{ width: 22, height: 22, borderRadius: 5, background: "#3A5A6E", display: "flex", alignItems: "center", justifyContent: "center", color: "#FBFAF7", fontSize: 12, fontWeight: 600, fontFamily: MONO }}>✦</span>
+                <span style={{ fontWeight: 600, fontSize: 15, color: "#20211C", fontFamily: SANS }}>Stock Copilot</span>
+              </div>
+              <button onClick={() => setShowMobileMenu(false)} style={{ background: "none", border: "none", fontSize: 20, color: "#9C998E", cursor: "pointer", lineHeight: 1, padding: "4px 2px" }}>✕</button>
+            </div>
+
+            {/* User */}
+            <div style={{ padding: "18px 20px 14px", borderBottom: "1px solid #EDEAE1" }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: "#20211C" }}>{userName}</div>
+              <div style={{ fontSize: 11, color: "#9C998E", marginTop: 3, fontFamily: MONO }}>VIRTUAL BALANCE · $20,000</div>
+            </div>
+
+            {/* Nav links */}
+            <nav style={{ flex: 1, padding: "8px 12px", display: "flex", flexDirection: "column", gap: 2 }}>
+              {TABS.map(tab => (
+                <button key={tab} onClick={() => { setActiveTab(tab); setShowMobileMenu(false); }} style={{
+                  width: "100%", textAlign: "left", padding: "12px 12px",
+                  background: activeTab === tab ? "#EAF0F3" : "none",
+                  border: "none", borderRadius: 8,
+                  color: activeTab === tab ? "#3A5A6E" : "#3A3833",
+                  fontWeight: activeTab === tab ? 600 : 400,
+                  fontSize: 15, cursor: "pointer", fontFamily: SANS,
+                }}>
+                  {tab}
+                </button>
+              ))}
+              <button onClick={() => { router.push("/chat"); setShowMobileMenu(false); }} style={{
+                width: "100%", textAlign: "left", padding: "12px 12px",
+                background: "none", border: "none", borderRadius: 8,
+                color: "#3A3833", fontWeight: 400, fontSize: 15, cursor: "pointer", fontFamily: SANS,
+              }}>
+                Chat →
+              </button>
+            </nav>
+
+            {/* Sign out */}
+            <div style={{ padding: "0 12px" }}>
+              <button onClick={() => signOut({ callbackUrl: "/signin" })} style={{
+                width: "100%", textAlign: "left", padding: "12px 12px",
+                background: "none", border: "none", borderRadius: 8,
+                color: "#A8554A", fontSize: 14, cursor: "pointer", fontFamily: SANS,
+              }}>
+                Sign out
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* ── Header ── */}
       <header style={{ position: "sticky", top: 0, zIndex: 40, background: "#FBFAF7", borderBottom: "1px solid #E0DDD3" }}>
-        <div style={{ maxWidth: 1180, margin: "0 auto", height: 60, display: "flex", alignItems: "center", gap: 26, padding: "0 32px" }}>
+        <div style={{ maxWidth: 1180, margin: "0 auto", height: 60, display: "flex", alignItems: "center", gap: 26, padding: isMobile ? "0 16px" : "0 32px" }}>
 
-          {/* Logo */}
-          <div onClick={() => setActiveTab("Dashboard")} style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", flexShrink: 0 }}>
-            <span style={{ width: 22, height: 22, borderRadius: 5, background: "#3A5A6E", display: "flex", alignItems: "center", justifyContent: "center", color: "#FBFAF7", fontSize: 12, fontWeight: 600, fontFamily: MONO }}>✦</span>
-            <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.01em", color: "#20211C", fontFamily: SANS }}>Stock Copilot</span>
-          </div>
-
-          {/* Nav tabs */}
-          <nav style={{ display: "flex", gap: 2, height: "100%" }}>
-            {TABS.map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)} style={{
-                fontSize: 14, fontFamily: SANS,
-                color: activeTab === tab ? "#20211C" : "#6A685F",
-                fontWeight: activeTab === tab ? 600 : 500,
-                padding: "0 14px", height: 60, border: "none",
-                borderBottom: activeTab === tab ? "2px solid #3A5A6E" : "2px solid transparent",
-                background: "none", cursor: "pointer", transition: "color 0.15s",
-                whiteSpace: "nowrap",
-              }}>
-                {tab}
+          {/* Mobile: hamburger + logo */}
+          {isMobile ? (
+            <>
+              <button onClick={() => setShowMobileMenu(true)} style={{ background: "none", border: "none", cursor: "pointer", padding: "4px 6px 4px 0", color: "#3A3833", flexShrink: 0, lineHeight: 1 }}>
+                <svg width="22" height="22" viewBox="0 0 22 22" fill="none">
+                  <rect y="4" width="22" height="2" rx="1" fill="currentColor"/>
+                  <rect y="10" width="22" height="2" rx="1" fill="currentColor"/>
+                  <rect y="16" width="22" height="2" rx="1" fill="currentColor"/>
+                </svg>
               </button>
-            ))}
-          </nav>
-
-          {/* Right side */}
-          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
-            <button onClick={() => router.push("/chat")} style={{
-              fontSize: 13, fontFamily: SANS, color: "#6A685F",
-              background: "none", border: "1px solid #E4E1D8",
-              borderRadius: 7, padding: "6px 13px", cursor: "pointer",
-            }}>
-              Chat →
-            </button>
-            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15 }}>
-              <span style={{ fontSize: 9, letterSpacing: "0.12em", color: "#9C998E", fontFamily: MONO, fontWeight: 500 }}>VIRTUAL BALANCE</span>
-              <span style={{ fontSize: 14, fontFamily: MONO, fontWeight: 500, color: "#20211C", marginTop: 3 }}>$20,000</span>
-            </div>
-            <div ref={profileMenuRef} style={{ position: "relative" }}>
-              <div
-                onClick={() => setShowProfileMenu(v => !v)}
-                style={{
-                  width: 32, height: 32, borderRadius: "50%",
-                  background: showProfileMenu ? "#D8D5CC" : "#ECEAE3",
-                  border: "1px solid #E0DDD3",
-                  display: "flex", alignItems: "center", justifyContent: "center",
-                  fontSize: 12, fontWeight: 600, color: "#6A685F",
-                  cursor: "pointer", userSelect: "none", fontFamily: SANS,
-                  transition: "background 0.15s",
-                }}
-              >
-                {initials}
+              <div onClick={() => setActiveTab("Dashboard")} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>
+                <span style={{ width: 22, height: 22, borderRadius: 5, background: "#3A5A6E", display: "flex", alignItems: "center", justifyContent: "center", color: "#FBFAF7", fontSize: 12, fontWeight: 600, fontFamily: MONO }}>✦</span>
+                <span style={{ fontWeight: 600, fontSize: 15, color: "#20211C", fontFamily: SANS }}>Stock Copilot</span>
               </div>
-              {showProfileMenu && (
-                <div style={{
-                  position: "absolute", top: "calc(100% + 8px)", right: 0,
-                  minWidth: 180, background: "#FBFAF7",
-                  border: "1px solid #E4E1D8", borderRadius: 10,
-                  boxShadow: "0 8px 24px rgba(32,33,28,0.12)",
-                  zIndex: 100, overflow: "hidden",
-                }}>
-                  <div style={{ padding: "12px 16px 10px", borderBottom: "1px solid #EDEAE1" }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: "#20211C", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{userName}</div>
-                  </div>
-                  <button
-                    onClick={() => signOut({ callbackUrl: "/signin" })}
-                    style={{
-                      width: "100%", textAlign: "left", padding: "11px 16px",
-                      background: "none", border: "none", cursor: "pointer",
-                      fontSize: 13, color: "#A8554A", fontFamily: SANS,
-                      display: "flex", alignItems: "center", gap: 8,
-                    }}
-                  >
-                    Sign out
+              {/* Active tab label */}
+              <span style={{ marginLeft: "auto", fontSize: 13, color: "#9C998E", fontFamily: SANS, fontWeight: 500 }}>{activeTab}</span>
+            </>
+          ) : (
+            <>
+              {/* Desktop: logo + nav tabs + right side */}
+              <div onClick={() => setActiveTab("Dashboard")} style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", flexShrink: 0 }}>
+                <span style={{ width: 22, height: 22, borderRadius: 5, background: "#3A5A6E", display: "flex", alignItems: "center", justifyContent: "center", color: "#FBFAF7", fontSize: 12, fontWeight: 600, fontFamily: MONO }}>✦</span>
+                <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.01em", color: "#20211C", fontFamily: SANS }}>Stock Copilot</span>
+              </div>
+
+              <nav style={{ display: "flex", gap: 2, height: "100%" }}>
+                {TABS.map(tab => (
+                  <button key={tab} onClick={() => setActiveTab(tab)} style={{
+                    fontSize: 14, fontFamily: SANS,
+                    color: activeTab === tab ? "#20211C" : "#6A685F",
+                    fontWeight: activeTab === tab ? 600 : 500,
+                    padding: "0 14px", height: 60, border: "none",
+                    borderBottom: activeTab === tab ? "2px solid #3A5A6E" : "2px solid transparent",
+                    background: "none", cursor: "pointer", transition: "color 0.15s",
+                    whiteSpace: "nowrap",
+                  }}>
+                    {tab}
                   </button>
+                ))}
+              </nav>
+
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 14 }}>
+                <button onClick={() => router.push("/chat")} style={{
+                  fontSize: 13, fontFamily: SANS, color: "#6A685F",
+                  background: "none", border: "1px solid #E4E1D8",
+                  borderRadius: 7, padding: "6px 13px", cursor: "pointer",
+                }}>
+                  Chat →
+                </button>
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", lineHeight: 1.15 }}>
+                  <span style={{ fontSize: 9, letterSpacing: "0.12em", color: "#9C998E", fontFamily: MONO, fontWeight: 500 }}>VIRTUAL BALANCE</span>
+                  <span style={{ fontSize: 14, fontFamily: MONO, fontWeight: 500, color: "#20211C", marginTop: 3 }}>$20,000</span>
                 </div>
-              )}
-            </div>
-          </div>
+                <div ref={profileMenuRef} style={{ position: "relative" }}>
+                  <div onClick={() => setShowProfileMenu(v => !v)} style={{
+                    width: 32, height: 32, borderRadius: "50%",
+                    background: showProfileMenu ? "#D8D5CC" : "#ECEAE3",
+                    border: "1px solid #E0DDD3",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 12, fontWeight: 600, color: "#6A685F",
+                    cursor: "pointer", userSelect: "none", fontFamily: SANS,
+                    transition: "background 0.15s",
+                  }}>
+                    {initials}
+                  </div>
+                  {showProfileMenu && (
+                    <div style={{
+                      position: "absolute", top: "calc(100% + 8px)", right: 0,
+                      minWidth: 180, background: "#FBFAF7",
+                      border: "1px solid #E4E1D8", borderRadius: 10,
+                      boxShadow: "0 8px 24px rgba(32,33,28,0.12)",
+                      zIndex: 100, overflow: "hidden",
+                    }}>
+                      <div style={{ padding: "12px 16px 10px", borderBottom: "1px solid #EDEAE1" }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: "#20211C", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{userName}</div>
+                      </div>
+                      <button onClick={() => signOut({ callbackUrl: "/signin" })} style={{
+                        width: "100%", textAlign: "left", padding: "11px 16px",
+                        background: "none", border: "none", cursor: "pointer",
+                        fontSize: 13, color: "#A8554A", fontFamily: SANS,
+                        display: "flex", alignItems: "center", gap: 8,
+                      }}>
+                        Sign out
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </>
+          )}
         </div>
       </header>
 
