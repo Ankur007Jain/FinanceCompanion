@@ -636,6 +636,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [portfolioInput, setPortfolioInput] = useState("");
   const [showProfileMenu, setShowProfileMenu] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [sortMode, setSortMode] = useState<"relevance" | "verdict" | "az" | "movers">("relevance");
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -1062,13 +1063,36 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
         {/* ── My Stocks tab ── */}
         {activeTab === "My Stocks" && (
           <div>
-            <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", marginBottom: 22 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22, flexWrap: "wrap", gap: "0.75rem" }}>
               <div>
                 <h1 style={{ margin: 0, fontFamily: SERIF, fontWeight: 600, fontSize: 25, color: "#20211C" }}>My Stocks</h1>
                 <div style={{ marginTop: 5, fontSize: 13, color: "#9C998E" }}>
                   {digest.length} stock{digest.length !== 1 ? "s" : ""} · Updated nightly after market close
                 </div>
               </div>
+              {/* Sort/group control */}
+              {digest.length > 0 && (
+                <div style={{ display: "flex", gap: 4, background: "#ECEAE3", borderRadius: 9, padding: 3 }}>
+                  {([
+                    { key: "relevance", label: "Relevance" },
+                    { key: "verdict",   label: "Verdict"   },
+                    { key: "az",        label: "A–Z"       },
+                    { key: "movers",    label: "Movers"    },
+                  ] as const).map(opt => (
+                    <button key={opt.key} onClick={() => setSortMode(opt.key)} style={{
+                      padding: "4px 12px", borderRadius: 6, border: "none",
+                      background: sortMode === opt.key ? "#FBFAF7" : "transparent",
+                      boxShadow: sortMode === opt.key ? "0 1px 3px rgba(32,33,28,0.1)" : "none",
+                      color: sortMode === opt.key ? "#20211C" : "#9C998E",
+                      fontWeight: sortMode === opt.key ? 600 : 400,
+                      fontSize: "0.75rem", cursor: "pointer", fontFamily: MONO,
+                      transition: "all 0.15s", whiteSpace: "nowrap",
+                    }}>
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
             {loading ? (
@@ -1080,73 +1104,100 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 <div style={{ fontSize: "0.82rem" }}>Try: NFLX, MRVL, SOXQ, SOXL</div>
               </div>
             ) : (() => {
-              const GROUPS: { verdict: string; label: string; color: string; bg: string; bd: string }[] = [
-                { verdict: "BUY",   label: "Buy",   color: "#3F6B4F", bg: "#EAF1EC", bd: "#C8DDD0" },
-                { verdict: "HOLD",  label: "Hold",  color: "#97703C", bg: "#F4EEE2", bd: "#E6DBC4" },
-                { verdict: "WATCH", label: "Watch", color: "#9C998E", bg: "#F4F2EC", bd: "#E4E1D8" },
-                { verdict: "SELL",  label: "Sell",  color: "#A8554A", bg: "#F4E7E4", bd: "#E6D2CC" },
-              ];
-              const grouped = GROUPS.map(g => ({
-                ...g,
-                items: digest.filter(d => d.analysis?.verdict === g.verdict),
-              })).filter(g => g.items.length > 0);
-              const pending = digest.filter(d => !d.analysis);
+              const VERDICT_ORDER = ["BUY", "HOLD", "WATCH", "SELL"];
+              const VERDICT_META_GROUP: Record<string, { label: string; color: string; bg: string; bd: string }> = {
+                BUY:   { label: "Buy",   color: "#3F6B4F", bg: "#EAF1EC", bd: "#C8DDD0" },
+                HOLD:  { label: "Hold",  color: "#97703C", bg: "#F4EEE2", bd: "#E6DBC4" },
+                WATCH: { label: "Watch", color: "#9C998E", bg: "#F4F2EC", bd: "#E4E1D8" },
+                SELL:  { label: "Sell",  color: "#A8554A", bg: "#F4E7E4", bd: "#E6D2CC" },
+              };
 
-              const colHeaders = (
-                !isMobile && (
-                  <div style={{ display: "grid", gridTemplateColumns: "200px 100px 120px 180px 70px 100px 1fr 48px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
-                    {["Stock", "Verdict", "Price", "52-Week Range", "RSI", "Trend", "Signal", ""].map(h => (
-                      <div key={h} style={{ fontSize: "0.67rem", color: "#9C998E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
-                    ))}
-                  </div>
-                )
+              const colHeaders = !isMobile && (
+                <div style={{ display: "grid", gridTemplateColumns: "200px 100px 120px 180px 70px 100px 1fr 48px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
+                  {["Stock", "Verdict", "Price", "52-Week Range", "RSI", "Trend", "Signal", ""].map(h => (
+                    <div key={h} style={{ fontSize: "0.67rem", color: "#9C998E", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
+                  ))}
+                </div>
               );
 
+              const renderRow = (item: DigestItem) => (
+                <StockRow
+                  key={item.ticker} item={item}
+                  expanded={expanded === item.ticker}
+                  onToggle={() => setExpanded(expanded === item.ticker ? null : item.ticker)}
+                  onChat={handleChat} onRemove={handleRemove}
+                  isMobile={isMobile}
+                />
+              );
+
+              const sectionHeader = (label: string, count: number, color: string, bg: string, bd: string) => (
+                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+                  <span style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, padding: "2px 10px", borderRadius: 20, color, background: bg, border: `1px solid ${bd}`, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
+                  <span style={{ fontSize: "0.68rem", color: "#9C998E", fontFamily: MONO }}>{count} stock{count > 1 ? "s" : ""}</span>
+                  <div style={{ flex: 1, height: 1, background: "#E4E1D8" }} />
+                </div>
+              );
+
+              // ── Relevance: flat list sorted by convergence_score desc, then conviction_score desc ──
+              if (sortMode === "relevance") {
+                const sorted = [...digest].sort((a, b) => {
+                  const scoreA = (a.analysis?.signal_convergence_score ?? -1) * 100 + (a.analysis?.conviction_score ?? 0);
+                  const scoreB = (b.analysis?.signal_convergence_score ?? -1) * 100 + (b.analysis?.conviction_score ?? 0);
+                  return scoreB - scoreA;
+                });
+                return (
+                  <div>
+                    {colHeaders}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                      {sorted.map(renderRow)}
+                    </div>
+                  </div>
+                );
+              }
+
+              // ── Verdict: grouped by BUY / HOLD / WATCH / SELL / Pending ──
+              if (sortMode === "verdict") {
+                const grouped = VERDICT_ORDER.map(v => ({
+                  verdict: v, ...VERDICT_META_GROUP[v],
+                  items: digest.filter(d => d.analysis?.verdict === v),
+                })).filter(g => g.items.length > 0);
+                const pending = digest.filter(d => !d.analysis);
+                return (
+                  <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+                    {grouped.map((g, gi) => (
+                      <div key={g.verdict}>
+                        {sectionHeader(g.label, g.items.length, g.color, g.bg, g.bd)}
+                        {gi === 0 && colHeaders}
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{g.items.map(renderRow)}</div>
+                      </div>
+                    ))}
+                    {pending.length > 0 && (
+                      <div>
+                        {sectionHeader("Pending", pending.length, "#9C998E", "#ECEAE3", "#E4E1D8")}
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{pending.map(renderRow)}</div>
+                      </div>
+                    )}
+                  </div>
+                );
+              }
+
+              // ── A–Z: flat alphabetical ──
+              if (sortMode === "az") {
+                const sorted = [...digest].sort((a, b) => a.ticker.localeCompare(b.ticker));
+                return (
+                  <div>
+                    {colHeaders}
+                    <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{sorted.map(renderRow)}</div>
+                  </div>
+                );
+              }
+
+              // ── Movers: sorted by abs(day_change_pct) desc ──
+              const sorted = [...digest].sort((a, b) => Math.abs(b.analysis?.day_change_pct ?? 0) - Math.abs(a.analysis?.day_change_pct ?? 0));
               return (
-                <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-                  {grouped.map((g, gi) => (
-                    <div key={g.verdict}>
-                      {/* Group header */}
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
-                        <span style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, padding: "2px 10px", borderRadius: 20, color: g.color, background: g.bg, border: `1px solid ${g.bd}`, textTransform: "uppercase", letterSpacing: "0.06em" }}>{g.label}</span>
-                        <span style={{ fontSize: "0.68rem", color: "#9C998E", fontFamily: MONO }}>{g.items.length} stock{g.items.length > 1 ? "s" : ""}</span>
-                        <div style={{ flex: 1, height: 1, background: "#E4E1D8" }} />
-                      </div>
-                      {/* Column headers once — first group only, desktop */}
-                      {gi === 0 && colHeaders}
-                      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                        {g.items.map(item => (
-                          <StockRow
-                            key={item.ticker} item={item}
-                            expanded={expanded === item.ticker}
-                            onToggle={() => setExpanded(expanded === item.ticker ? null : item.ticker)}
-                            onChat={handleChat} onRemove={handleRemove}
-                            isMobile={isMobile}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                  {pending.length > 0 && (
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
-                        <span style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, padding: "2px 10px", borderRadius: 20, color: "#9C998E", background: "#ECEAE3", border: "1px solid #E4E1D8", textTransform: "uppercase", letterSpacing: "0.06em" }}>Pending</span>
-                        <span style={{ fontSize: "0.68rem", color: "#9C998E", fontFamily: MONO }}>{pending.length} stock{pending.length > 1 ? "s" : ""}</span>
-                        <div style={{ flex: 1, height: 1, background: "#E4E1D8" }} />
-                      </div>
-                      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                        {pending.map(item => (
-                          <StockRow
-                            key={item.ticker} item={item}
-                            expanded={false}
-                            onToggle={() => {}}
-                            onChat={handleChat} onRemove={handleRemove}
-                            isMobile={isMobile}
-                          />
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                <div>
+                  {colHeaders}
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{sorted.map(renderRow)}</div>
                 </div>
               );
             })()}
