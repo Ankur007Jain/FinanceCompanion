@@ -392,6 +392,16 @@ function fmtCap(v: number) {
   return "$" + v.toLocaleString();
 }
 
+function analysisAge(dateStr: string): string {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const d = new Date(dateStr + "T00:00:00"); d.setHours(0, 0, 0, 0);
+  const days = Math.round((today.getTime() - d.getTime()) / 86400000);
+  if (days <= 0) return "";
+  if (days === 1) return "1d ago";
+  if (days < 7) return `${days}d ago`;
+  return "1w+ ago";
+}
+
 function StockRow({
   item, expanded, onToggle, onChat, onRemove,
 }: {
@@ -429,6 +439,13 @@ function StockRow({
           {item.company_name && (
             <div style={{ fontSize: "0.72rem", color: "#9C998E", marginTop: "0.15rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
               {item.company_name}
+            </div>
+          )}
+          {a?.analysis_date && analysisAge(a.analysis_date) && (
+            <div style={{ marginTop: "0.2rem" }}>
+              <span style={{ fontSize: "0.62rem", padding: "0.1rem 0.4rem", background: "#EDE9DF", color: "#9C998E", borderRadius: 4, fontFamily: MONO }}>
+                {analysisAge(a.analysis_date)}
+              </span>
             </div>
           )}
         </div>
