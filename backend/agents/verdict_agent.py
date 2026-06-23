@@ -233,7 +233,7 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
     resp = await client.messages.create(
-        model=_SONNET, max_tokens=8192,
+        model=_SONNET, max_tokens=32000,
         system=_SYSTEM,
         messages=[
             {"role": "user", "content": prompt},
