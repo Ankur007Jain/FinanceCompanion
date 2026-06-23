@@ -68,6 +68,10 @@ interface Analysis {
   dont_panic_note: string | null;
   signal_convergence_score: number | null;
   convergence_details: string | null;
+  verdict_a: string | null;
+  verdict_b: string | null;
+  verdict_agreement: boolean | null;
+  split_reason: string | null;
 }
 
 interface DigestItem {
@@ -187,23 +191,40 @@ function ExpandedDetail({ a, onChat, isMobile }: { a: Analysis; onChat: () => vo
         ))}
       </div>
 
-      {/* ── Trust badges: Entry Quality · Hold & Forget · Position Size ── */}
-      {(eqMeta || hfMeta || a.position_size_pct) && (
-        <div style={{ padding: "12px 20px", borderBottom: "1px solid #EDEAE1", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px 12px" }}>
-          {eqMeta && (
-            <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: eqMeta.color, background: eqMeta.bg, border: `1px solid ${eqMeta.bd}` }}>
-              Entry: {eqMeta.label}
-            </span>
-          )}
-          {hfMeta && (
-            <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: hfMeta.color, background: hfMeta.bg, border: `1px solid ${hfMeta.bd}` }}>
-              {hfMeta.label}
-            </span>
-          )}
-          {a.position_size_pct && (
-            <span style={{ fontSize: "0.72rem", fontFamily: MONO, padding: "4px 12px", borderRadius: 20, color: "#3A5A6E", background: "#E8EFF4", border: "1px solid #C8D8E4" }}>
-              Suggested: <strong>{a.position_size_pct}</strong> of portfolio
-            </span>
+      {/* ── Trust badges: Entry Quality · Hold & Forget · Position Size · Dual-Agent ── */}
+      {(eqMeta || hfMeta || a.position_size_pct || a.verdict_agreement != null) && (
+        <div style={{ padding: "12px 20px", borderBottom: "1px solid #EDEAE1" }}>
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px 12px" }}>
+            {eqMeta && (
+              <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: eqMeta.color, background: eqMeta.bg, border: `1px solid ${eqMeta.bd}` }}>
+                Entry: {eqMeta.label}
+              </span>
+            )}
+            {hfMeta && (
+              <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: hfMeta.color, background: hfMeta.bg, border: `1px solid ${hfMeta.bd}` }}>
+                {hfMeta.label}
+              </span>
+            )}
+            {a.position_size_pct && (
+              <span style={{ fontSize: "0.72rem", fontFamily: MONO, padding: "4px 12px", borderRadius: 20, color: "#3A5A6E", background: "#E8EFF4", border: "1px solid #C8D8E4" }}>
+                Suggested: <strong>{a.position_size_pct}</strong> of portfolio
+              </span>
+            )}
+            {a.verdict_agreement === true && (
+              <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: "#3F6B4F", background: "#EAF1EC", border: "1px solid #C8DDD0" }}>
+                ✓ Both AI models agree
+              </span>
+            )}
+            {a.verdict_agreement === false && (
+              <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: "#97703C", background: "#F4EEE2", border: "1px solid #E6DBC4" }}>
+                ⚠ Split — Claude: {a.verdict_a} · Gemini: {a.verdict_b}
+              </span>
+            )}
+          </div>
+          {a.verdict_agreement === false && a.split_reason && (
+            <div style={{ marginTop: "8px", fontSize: "0.7rem", color: "#97703C", lineHeight: 1.55, fontStyle: "italic" }}>
+              {a.split_reason}
+            </div>
           )}
         </div>
       )}
@@ -464,7 +485,15 @@ function StockRow({
               )}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
-              {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.78rem", color: "#9C998E" }}>Pending</span>}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.15rem" }}>
+                {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.78rem", color: "#9C998E" }}>Pending</span>}
+                {a?.verdict_agreement === true && (
+                  <span style={{ fontSize: "0.55rem", color: "#3F6B4F", fontFamily: MONO, fontWeight: 600 }}>✓ agree</span>
+                )}
+                {a?.verdict_agreement === false && (
+                  <span style={{ fontSize: "0.55rem", color: "#97703C", fontFamily: MONO, fontWeight: 600 }}>⚠ split</span>
+                )}
+              </div>
               <button
                 onClick={e => { e.stopPropagation(); onRemove(item.ticker); }}
                 style={{ background: "none", border: "none", cursor: "pointer", color: "#CBCAC2", fontSize: "0.82rem", padding: "0.2rem 0.3rem", lineHeight: 1 }}
@@ -554,7 +583,15 @@ function StockRow({
           </div>
 
           {/* Verdict */}
-          {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.78rem", color: "#9C998E" }}>Pending</span>}
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+            {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.78rem", color: "#9C998E" }}>Pending</span>}
+            {a?.verdict_agreement === true && (
+              <span style={{ fontSize: "0.58rem", color: "#3F6B4F", fontFamily: MONO, fontWeight: 600 }}>✓ agree</span>
+            )}
+            {a?.verdict_agreement === false && (
+              <span style={{ fontSize: "0.58rem", color: "#97703C", fontFamily: MONO, fontWeight: 600 }}>⚠ split</span>
+            )}
+          </div>
 
           {/* Price */}
           <div>
