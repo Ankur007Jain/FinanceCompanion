@@ -253,4 +253,37 @@ test.describe("Dashboard — mobile viewport", () => {
     const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);
     expect(scrollWidth).toBeLessThanOrEqual(clientWidth + 20);
   });
+
+  test("hamburger button visible and desktop nav hidden on mobile", async ({ page }) => {
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(300);
+    // Hamburger present
+    await expect(page.getByTestId("hamburger-btn")).toBeVisible();
+    // Desktop nav tabs not directly visible (they're inside the drawer, which is closed)
+    await expect(page.getByRole("button", { name: "My Stocks" })).not.toBeVisible();
+  });
+
+  test("all tabs accessible via hamburger drawer", async ({ page }) => {
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(300);
+    // Open the drawer
+    await page.getByTestId("hamburger-btn").click();
+    // All four tabs should be visible in the drawer
+    for (const tab of ["Dashboard", "My Stocks", "Discover", "Compare"]) {
+      await expect(page.getByRole("button", { name: tab })).toBeVisible({ timeout: 3_000 });
+    }
+    // Selecting a tab closes the drawer
+    await page.getByRole("button", { name: "My Stocks" }).click();
+    await expect(page.getByRole("button", { name: "Dashboard" })).not.toBeVisible();
+  });
+
+  test("backdrop click closes mobile drawer", async ({ page }) => {
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(300);
+    await page.getByTestId("hamburger-btn").click();
+    await expect(page.getByRole("button", { name: "My Stocks" })).toBeVisible();
+    // Click the backdrop (left side, outside the 220px drawer)
+    await page.mouse.click(80, 300);
+    await expect(page.getByRole("button", { name: "My Stocks" })).not.toBeVisible();
+  });
 });
