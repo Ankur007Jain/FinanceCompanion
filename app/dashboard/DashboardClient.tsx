@@ -673,6 +673,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [showPortfolioPrompt, setShowPortfolioPrompt] = useState(false);
   const [portfolioInput, setPortfolioInput] = useState("");
   const [showProfileMenu, setShowProfileMenu] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [sortMode, setSortMode] = useState<"relevance" | "verdict" | "az" | "movers">("relevance");
   const profileMenuRef = useRef<HTMLDivElement>(null);
@@ -838,9 +839,9 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
             <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.01em", color: "#20211C", fontFamily: SANS }}>Stock Copilot</span>
           </div>
 
-          {/* Nav tabs — hidden on mobile */}
+          {/* Nav tabs — desktop only */}
           {!isMobile && (
-            <nav style={{ display: "flex", gap: 2, height: "100%" }}>
+            <nav style={{ display: "flex", gap: 2, height: 60 }}>
               {TABS.map(tab => (
                 <button key={tab} onClick={() => setActiveTab(tab)} style={{
                   fontSize: 14, fontFamily: SANS,
@@ -866,6 +867,17 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 borderRadius: 7, padding: "6px 13px", cursor: "pointer",
               }}>
                 Chat →
+              </button>
+            )}
+            {isMobile && (
+              <button onClick={() => setShowMobileMenu(true)} style={{
+                background: "none", border: "none", cursor: "pointer",
+                padding: "6px 4px", display: "flex", flexDirection: "column",
+                gap: 4, color: "#6A685F",
+              }}>
+                <span style={{ display: "block", width: 18, height: 2, background: "#6A685F", borderRadius: 1 }} />
+                <span style={{ display: "block", width: 18, height: 2, background: "#6A685F", borderRadius: 1 }} />
+                <span style={{ display: "block", width: 18, height: 2, background: "#6A685F", borderRadius: 1 }} />
               </button>
             )}
             {!isMobile && (
@@ -917,7 +929,60 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
             </div>
           </div>
         </div>
+
       </header>
+
+      {/* ── Mobile side drawer ── */}
+      {isMobile && showMobileMenu && (
+        <>
+          {/* Backdrop */}
+          <div
+            onClick={() => setShowMobileMenu(false)}
+            style={{
+              position: "fixed", inset: 0, zIndex: 50,
+              background: "rgba(32,33,28,0.35)",
+            }}
+          />
+          {/* Drawer */}
+          <div style={{
+            position: "fixed", top: 0, right: 0, bottom: 0, zIndex: 51,
+            width: 220, background: "#FBFAF7",
+            boxShadow: "-4px 0 24px rgba(32,33,28,0.14)",
+            display: "flex", flexDirection: "column",
+          }}>
+            <div style={{ padding: "20px 20px 12px", borderBottom: "1px solid #EDEAE1", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontWeight: 600, fontSize: 14, color: "#20211C", fontFamily: SANS }}>Menu</span>
+              <button onClick={() => setShowMobileMenu(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "#9C998E", lineHeight: 1, padding: "2px 4px" }}>✕</button>
+            </div>
+            <nav style={{ flex: 1, padding: "8px 0" }}>
+              {TABS.map(tab => (
+                <button key={tab} onClick={() => { setActiveTab(tab); setShowMobileMenu(false); }} style={{
+                  width: "100%", textAlign: "left",
+                  padding: "13px 20px", border: "none",
+                  background: activeTab === tab ? "#F0EDE6" : "none",
+                  borderLeft: activeTab === tab ? "3px solid #3A5A6E" : "3px solid transparent",
+                  fontSize: 14, fontFamily: SANS,
+                  color: activeTab === tab ? "#20211C" : "#6A685F",
+                  fontWeight: activeTab === tab ? 600 : 500,
+                  cursor: "pointer",
+                }}>
+                  {tab}
+                </button>
+              ))}
+            </nav>
+            <div style={{ padding: "12px 20px 24px", borderTop: "1px solid #EDEAE1" }}>
+              <button onClick={() => { router.push("/chat"); setShowMobileMenu(false); }} style={{
+                width: "100%", padding: "10px 0", textAlign: "center",
+                fontSize: 13, fontFamily: SANS, color: "#6A685F",
+                background: "none", border: "1px solid #E4E1D8",
+                borderRadius: 7, cursor: "pointer", marginBottom: 8,
+              }}>
+                Chat →
+              </button>
+            </div>
+          </div>
+        </>
+      )}
 
       <main style={{ maxWidth: 1180, margin: "0 auto", padding: "30px 32px 56px" }}>
 
