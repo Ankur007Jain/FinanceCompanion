@@ -870,7 +870,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               </button>
             )}
             {isMobile && (
-              <button onClick={() => setShowMobileMenu(true)} style={{
+              <button data-testid="hamburger-btn" onClick={() => setShowMobileMenu(true)} style={{
                 background: "none", border: "none", cursor: "pointer",
                 padding: "6px 4px", display: "flex", flexDirection: "column",
                 gap: 4, color: "#6A685F",
