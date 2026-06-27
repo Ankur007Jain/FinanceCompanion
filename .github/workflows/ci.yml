@@ -306,6 +306,8 @@ jobs:
       NEXT_PUBLIC_BACKEND_URL: http://localhost:8001
       BACKEND_URL: http://localhost:8001
       AUTH_SECRET: test-secret-32-chars-long-padded!!
+      AUTH_URL: http://localhost:3000
+      AUTH_TRUST_HOST: "1"
       AUTH_GOOGLE_ID: test
       AUTH_GOOGLE_SECRET: test
       E2E_BASE_URL: http://localhost:3000
