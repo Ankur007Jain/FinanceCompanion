@@ -151,6 +151,73 @@ jobs:
             except Exception:
                 edate = None
 
+            # Support / Resistance levels
+            try:
+                recent20 = hist["Close"].tail(20)
+                support_20d    = round(float(recent20.min()), 2)
+                resistance_20d = round(float(recent20.max()), 2)
+                prev_h = float(hist["High"].iloc[-2])
+                prev_l = float(hist["Low"].iloc[-2])
+                prev_c = float(hist["Close"].iloc[-2])
+                pivot  = round((prev_h + prev_l + prev_c) / 3, 2)
+                piv_r1 = round(2 * pivot - prev_l, 2)
+                piv_s1 = round(2 * pivot - prev_h, 2)
+            except Exception:
+                support_20d = resistance_20d = pivot = piv_r1 = piv_s1 = None
+
+            # Sector & S&P 500 context — relative performance
+            sector   = info.get("sector", "") or ""
+            industry = info.get("industry", "") or ""
+            SECTOR_ETF_MAP = {
+                "Technology": "XLK", "Healthcare": "XLV",
+                "Financial Services": "XLF", "Financials": "XLF",
+                "Consumer Cyclical": "XLY", "Consumer Defensive": "XLP",
+                "Energy": "XLE", "Basic Materials": "XLB", "Industrials": "XLI",
+                "Utilities": "XLU", "Real Estate": "XLRE",
+                "Communication Services": "XLC",
+            }
+            # Semiconductor override — SOXX is more precise than XLK
+            sector_etf_ticker = "SOXX" if "semiconductor" in industry.lower() \
+                else SECTOR_ETF_MAP.get(sector, "SPY")
+            try:
+                sp5   = yf.Ticker("^GSPC").history(period="25d")
+                sp500_day_chg = round(((float(sp5["Close"].iloc[-1]) - float(sp5["Close"].iloc[-2])) / float(sp5["Close"].iloc[-2])) * 100, 2)
+            except Exception:
+                sp500_day_chg = None
+            try:
+                sect  = yf.Ticker(sector_etf_ticker).history(period="25d")
+                sector_day_chg       = round(((float(sect["Close"].iloc[-1]) - float(sect["Close"].iloc[-2])) / float(sect["Close"].iloc[-2])) * 100, 2)
+                relative_strength_1d = round(chg - sector_day_chg, 2)
+            except Exception:
+                sector_day_chg = relative_strength_1d = None
+
+            # Finnhub cross-validation — price & analyst (secondary source)
+            import os as _os, requests as _req
+            fh_price = fh_analyst = data_conflicts_str = None
+            fh_key = _os.environ.get("FINNHUB_API_KEY", "")
+            if fh_key and fh_key not in ("placeholder", "test-key", ""):
+                try:
+                    _fhq = _req.get(f"https://finnhub.io/api/v1/quote?symbol={ticker}&token={fh_key}", timeout=5).json()
+                    fh_price = round(float(_fhq.get("c") or 0), 2) or None
+                except Exception:
+                    pass
+                try:
+                    _recs = _req.get(f"https://finnhub.io/api/v1/recommendation?symbol={ticker}&token={fh_key}", timeout=5).json()
+                    if _recs:
+                        _r = _recs[0]
+                        _tot = (_r.get("buy",0) + _r.get("strongBuy",0) + _r.get("hold",0) + _r.get("sell",0) + _r.get("strongSell",0))
+                        if _tot:
+                            _buy_pct = (_r.get("buy",0) + _r.get("strongBuy",0)) / _tot
+                            fh_analyst = "STRONG_BUY" if _buy_pct > 0.6 else "BUY" if _buy_pct > 0.45 else "HOLD" if _buy_pct > 0.3 else "SELL"
+                except Exception:
+                    pass
+                _conflicts = []
+                if fh_price and price and abs(price - fh_price) / price > 0.02:
+                    _conflicts.append(f"Price: yfinance={price} vs Finnhub={fh_price} ({abs(price - fh_price)/price*100:.1f}% diff)")
+                if fh_analyst and rec and fh_analyst.replace("STRONG_","") != rec.replace("STRONG_",""):
+                    _conflicts.append(f"Analyst: yfinance={rec} vs Finnhub={fh_analyst}")
+                data_conflicts_str = "; ".join(_conflicts) if _conflicts else None
+
             # Print summary dict for analysis steps below
             _summary = {
                 "ticker": ticker, "price": round(price,2), "change_pct": round(chg,2),
@@ -160,6 +227,15 @@ jobs:
                 "rsi": round(rsi,1), "analyst": rec,
                 "upside_pct": round(ups,1) if ups else None,
                 "news": news_titles, "earnings_date": edate,
+                "support_20d": support_20d, "resistance_20d": resistance_20d,
+                "pivot": pivot, "piv_r1": piv_r1, "piv_s1": piv_s1,
+                "sector": sector, "industry": industry,
+                "sector_etf": sector_etf_ticker,
+                "sp500_day_chg": sp500_day_chg,
+                "sector_day_chg": sector_day_chg,
+                "relative_strength_1d": relative_strength_1d,
+                "fh_price": fh_price, "fh_analyst": fh_analyst,
+                "data_conflicts": data_conflicts_str,
             }
             print(json.dumps(_summary))
             with open(f"/tmp/summary_{ticker}.json", "w") as f:
@@ -239,7 +315,7 @@ jobs:
 
             ## Step 2 — Compute signal convergence score for each ticker
 
-            Score 7 independent signals (true/false each):
+            Score 10 independent signals (true/false each):
             - oversold_rsi: rsi < 50
             - near_52w_low: range_pct < 30
             - analyst_upside_15pct: upside_pct >= 15
@@ -247,17 +323,29 @@ jobs:
             - positive_fcf: true if analyst consensus is BUY or STRONG_BUY
             - institutional_backing: true by default for large-cap names
             - price_stabilizing: price >= ma50 (or ma50 is null)
+            - near_support: price <= support_20d * 1.03 (within 3% of 20-day support floor)
+            - sector_outperforming: relative_strength_1d > 0 (stock outperforming its sector ETF today)
+            - sp500_tailwind: sp500_day_chg > 0 (market rising — macro tailwind)
 
-            convergence_score = count of true signals (0–7)
+            convergence_score = count of true signals (0–10)
             CONVICTION FLOOR: convergence_score < 5 → verdict MUST be WATCH.
 
             ## Step 3a — Your verdict: Claude Sonnet 4.6 (Verdict A)
 
             **Check:** 52-week range position · price vs MA50/MA200 · RSI · analyst consensus ·
-            news sentiment · earnings proximity (within 5 days → is_important_day=true)
+            news sentiment · earnings proximity (within 5 days → is_important_day=true) ·
+            price vs support/resistance levels (use S/R to set precise entry_target and stop_loss)
 
-            **Leveraged ETF rules** (SOXL, MVLL, any 3X/2X/L ticker):
-            max hold 1–3 days · never hold through earnings · no buy after 15%+ single-day run · tight exit_target
+            **Market & sector context** (from summary JSON — factor this into your reasoning):
+            - S&P 500 today: sp500_day_chg% → positive = macro tailwind, negative = headwind
+            - Sector ETF (sector_etf) today: sector_day_chg% → sector momentum
+            - Relative strength vs sector: relative_strength_1d% → positive = stock outperforming sector
+            - Finnhub cross-check: fh_price and fh_analyst (if conflicts in data_conflicts field, be more conservative)
+            - Sector-type rules:
+              · Utilities / Real Estate: rate-sensitive — factor in macro rates more than RSI
+              · Semiconductors (SOXX): high beta, amplify the sector move, tighten stop_loss
+              · Consumer Defensive: lower conviction needed for HOLD; rarely a BUY catalyst
+              · Leveraged ETFs (SOXL, MVLL, 3X/2X/L): max hold 1–3 days, never hold through earnings, tight exit_target
 
             **Quality rule:** weak or conflicting signals → WATCH. Wrong advice is worse than no advice.
 
@@ -299,8 +387,8 @@ jobs:
               "scenario_bear_pct": <negative float>,
               "scenario_bear_prob": <0-100>,
               "dont_panic_note": "<address >15% drop from prior BUY; otherwise empty string>",
-              "signal_convergence_score": <0-7>,
-              "convergence_details": "{\"oversold_rsi\":true/false,\"near_52w_low\":true/false,\"analyst_upside_15pct\":true/false,\"no_binary_risk\":true/false,\"positive_fcf\":true/false,\"institutional_backing\":true/false,\"price_stabilizing\":true/false}"
+              "signal_convergence_score": <0-10>,
+              "convergence_details": "{\"oversold_rsi\":true/false,\"near_52w_low\":true/false,\"analyst_upside_15pct\":true/false,\"no_binary_risk\":true/false,\"positive_fcf\":true/false,\"institutional_backing\":true/false,\"price_stabilizing\":true/false,\"near_support\":true/false,\"sector_outperforming\":true/false,\"sp500_tailwind\":true/false}"
             }
             ```
             Write the JSON to disk with a bash command, e.g.:
@@ -331,6 +419,12 @@ jobs:
                 d = json.load(f)
 
             news_str = "; ".join(d.get("news", [])[:3])
+            sr_line = ""
+            if d.get("support_20d"):
+                sr_line = f"Support (20d): ${d['support_20d']}  Resistance (20d): ${d.get('resistance_20d','N/A')}  Pivot: ${d.get('pivot','N/A')}  R1: ${d.get('piv_r1','N/A')}  S1: ${d.get('piv_s1','N/A')}"
+            ctx_line = ""
+            if d.get("sp500_day_chg") is not None:
+                ctx_line = f"S&P 500 today: {d['sp500_day_chg']:+.2f}%  Sector ETF ({d.get('sector_etf','N/A')}): {d.get('sector_day_chg', 0):+.2f}%  Relative strength vs sector: {d.get('relative_strength_1d', 0):+.2f}%"
             prompt = f"""You are an independent stock analyst. Analyze {ticker} and return ONLY valid JSON with no markdown fences.
 
             Data for {ticker}:
@@ -338,6 +432,8 @@ jobs:
             52-week range: ${d.get('lo52', 0):.2f}–${d.get('hi52', 0):.2f} ({d.get('range_pct', 50):.1f}% of range)
             RSI(14): {d.get('rsi', 50):.1f}
             MA50: {d.get('ma50') or 'N/A'}  MA200: {d.get('ma200') or 'N/A'}
+            {sr_line}
+            {ctx_line}
             Analyst consensus: {d.get('analyst', 'HOLD')}  Analyst upside: {d.get('upside_pct') or 'N/A'}%
             Recent news: {news_str}
             Next earnings: {d.get('earnings_date') or 'Unknown'}
@@ -417,7 +513,14 @@ jobs:
 
             Price field mapping: price→current_price, change_pct→price_change_pct,
             hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct,
-            ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct.
+            ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct,
+            support_20d→support_20d, resistance_20d→resistance_20d,
+            pivot→pivot_point, piv_r1→pivot_r1, piv_s1→pivot_s1,
+            sector→sector, industry→industry,
+            sp500_day_chg→sp500_day_chg, sector_etf→sector_etf,
+            sector_day_chg→sector_day_chg, relative_strength_1d→relative_strength_1d,
+            fh_price→fh_price, fh_analyst→fh_analyst_consensus,
+            data_conflicts→data_conflicts (include if not null, else omit).
 
             Include ALL verdict fields: stop_loss, hold_period, conviction_score, risk_level,
             confidence, bull_case, bear_case, thesis_invalidation, entry_quality,
@@ -434,8 +537,8 @@ jobs:
 
             ```
             === Batch complete — <date> ===
-            TICKER   VERDICT  VERDICT_A  VERDICT_B  AGREEMENT  PRICE  CHG%  RSI  CONVERGENCE
-            ✅ = both models agree  ⚠️ = split verdict  — = Gemini unavailable
+            TICKER   VERDICT  VERDICT_A  VERDICT_B  AGREEMENT  PRICE  CHG%  RSI  CONV  SP500  SECTOR  REL_STR  CONFLICTS
+            ✅ = both models agree  ⚠️ = split verdict  — = Gemini unavailable  ⚡ = data conflict flagged
             ```
 
             On any per-ticker error, log it and continue — never abort the batch.

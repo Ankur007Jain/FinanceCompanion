@@ -69,6 +69,23 @@ class StockAnalysis(Base):
     ma_200 = Column(Float)
     rsi = Column(Float)
 
+    # Support / Resistance levels (computed nightly from price history)
+    support_20d = Column(Float)      # 20-day swing low — short-term support floor
+    resistance_20d = Column(Float)   # 20-day swing high — short-term resistance ceiling
+    pivot_point = Column(Float)      # classic pivot: (prev_H + prev_L + prev_C) / 3
+    pivot_r1 = Column(Float)         # resistance 1: 2*pivot - prev_low
+    pivot_s1 = Column(Float)         # support 1:    2*pivot - prev_high
+
+    # Market / Sector context (relative performance)
+    sp500_day_chg = Column(Float)       # S&P 500 % change today — market tailwind/headwind
+    sector_etf = Column(String)         # e.g. "XLK", "SOXX" — sector proxy ETF
+    sector_day_chg = Column(Float)      # sector ETF % change today
+    relative_strength_1d = Column(Float)  # stock % today − sector % today (+ = outperforming)
+
+    # Finnhub cross-validation (secondary source)
+    fh_price = Column(Float)            # Finnhub last price — for conflict detection
+    fh_analyst_consensus = Column(String)  # Finnhub analyst rating — for conflict detection
+
     # Analyst data
     analyst_consensus = Column(String)
     analyst_count = Column(Integer)
