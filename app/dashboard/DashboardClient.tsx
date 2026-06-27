@@ -1322,7 +1322,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 <div style={{ fontSize: "0.82rem" }}>Try: NFLX, MRVL, SOXQ, SOXL</div>
               </div>
             ) : (() => {
-              const filterQ = query.trim().toLowerCase();
+              const filterQ = ticker ? "" : query.trim().toLowerCase();
               const filteredDigest = filterQ
                 ? digest.filter(d =>
                     d.ticker.toLowerCase().includes(filterQ) ||
