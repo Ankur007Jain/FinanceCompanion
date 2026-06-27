@@ -1207,7 +1207,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
         {/* ── My Stocks tab ── */}
         {activeTab === "My Stocks" && (
           <div>
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 22, flexWrap: "wrap", gap: "0.75rem" }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: "0.75rem" }}>
               <div>
                 <h1 style={{ margin: 0, fontFamily: SERIF, fontWeight: 600, fontSize: 25, color: "#20211C" }}>My Stocks</h1>
                 <div style={{ marginTop: 5, fontSize: 13, color: "#9C998E" }}>
@@ -1239,6 +1239,80 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               )}
             </div>
 
+            {/* ── Sticky add/search bar ── */}
+            <div style={{
+              position: "sticky", top: 60, zIndex: 30,
+              background: "#E8E6E0",
+              margin: isMobile ? "0 -16px" : "0 -32px",
+              padding: isMobile ? "8px 16px 12px" : "8px 32px 12px",
+              marginBottom: 0,
+            }}>
+              <form onSubmit={handleAdd} style={{
+                display: "flex", gap: "0.5rem",
+                padding: "0.75rem 1rem", background: "#FBFAF7",
+                border: "1px solid #E4E1D8", borderRadius: 11,
+                alignItems: "center", flexWrap: "wrap",
+                boxShadow: "0 2px 8px rgba(32,33,28,0.07)",
+              }}>
+                <div style={{ position: "relative", flex: "1 1 260px" }}>
+                  <input
+                    value={query}
+                    onChange={e => handleSearchInput(e.target.value)}
+                    onKeyDown={handleSearchKeyDown}
+                    onBlur={() => setTimeout(() => { setShowSuggestions(false); setHighlightedIdx(-1); }, 200)}
+                    onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
+                    placeholder="Search or add stock (e.g. NFLX)…"
+                    autoComplete="off"
+                    style={{
+                      width: "100%", padding: "0.5rem 2rem 0.5rem 0.75rem", background: "#F6F4EE",
+                      border: "1px solid #E4E1D8", borderRadius: 7,
+                      color: "#20211C", fontSize: "0.88rem", fontFamily: SANS,
+                      outline: "none", boxSizing: "border-box",
+                    }}
+                  />
+                  {query && (
+                    <button type="button" onClick={() => {
+                      setQuery(""); setTicker(""); setCompanyName("");
+                      setSuggestions([]); setShowSuggestions(false); setError("");
+                    }} style={{
+                      position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)",
+                      background: "none", border: "none", cursor: "pointer",
+                      color: "#9C998E", fontSize: 16, padding: "0 2px", lineHeight: 1,
+                    }}>×</button>
+                  )}
+                  {showSuggestions && suggestions.length > 0 && (
+                    <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50, background: "#FBFAF7", border: "1px solid #E4E1D8", borderRadius: 9, overflow: "hidden", boxShadow: "0 8px 24px rgba(32,33,28,0.1)" }}>
+                      {suggestions.map((s, idx) => (
+                        <div key={s.ticker} onMouseDown={() => handleSelect(s)}
+                          style={{ padding: "0.6rem 0.85rem", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", borderBottom: "1px solid #EDEAE1", background: idx === highlightedIdx ? "#F0EDE6" : "transparent" }}
+                          onMouseEnter={() => setHighlightedIdx(idx)}
+                          onMouseLeave={() => setHighlightedIdx(-1)}>
+                          <div>
+                            <span style={{ fontWeight: 600, fontSize: "0.88rem", color: "#20211C", fontFamily: MONO }}>{s.ticker}</span>
+                            <span style={{ marginLeft: "0.5rem", fontSize: "0.82rem", color: "#6A685F" }}>{s.name}</span>
+                          </div>
+                          <span style={{ fontSize: "0.75rem", color: "#9C998E", flexShrink: 0 }}>{s.exchange}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <button type="submit" disabled={!ticker && !query.trim()} style={{
+                  padding: "0.5rem 1.1rem",
+                  background: (ticker || query.trim()) ? "#3A5A6E" : "#E4E1D8",
+                  color: (ticker || query.trim()) ? "#FBFAF7" : "#9C998E",
+                  border: "none", borderRadius: 7,
+                  cursor: (ticker || query.trim()) ? "pointer" : "not-allowed",
+                  fontWeight: 600, fontSize: "0.88rem", fontFamily: SANS,
+                  transition: "background 0.15s", whiteSpace: "nowrap",
+                }}>
+                  + Add
+                </button>
+                {error && <span style={{ color: "#A8554A", fontSize: "0.8rem", width: "100%" }}>{error}</span>}
+              </form>
+            </div>
+
+            <div style={{ marginTop: 16 }}>
             {loading ? (
               <div style={{ textAlign: "center", padding: "3rem", color: "#9C998E" }}>Loading your digest…</div>
             ) : digest.length === 0 ? (
@@ -1248,6 +1322,14 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 <div style={{ fontSize: "0.82rem" }}>Try: NFLX, MRVL, SOXQ, SOXL</div>
               </div>
             ) : (() => {
+              const filterQ = query.trim().toLowerCase();
+              const filteredDigest = filterQ
+                ? digest.filter(d =>
+                    d.ticker.toLowerCase().includes(filterQ) ||
+                    (d.company_name || "").toLowerCase().includes(filterQ)
+                  )
+                : digest;
+
               const VERDICT_ORDER = ["BUY", "HOLD", "WATCH", "SELL"];
               const VERDICT_META_GROUP: Record<string, { label: string; color: string; bg: string; bd: string }> = {
                 BUY:   { label: "Buy",   color: "#3F6B4F", bg: "#EAF1EC", bd: "#C8DDD0" },
@@ -1268,7 +1350,13 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 <StockRow
                   key={item.ticker} item={item}
                   expanded={expanded === item.ticker}
-                  onToggle={() => setExpanded(expanded === item.ticker ? null : item.ticker)}
+                  onToggle={() => {
+                    setExpanded(expanded === item.ticker ? null : item.ticker);
+                    if (query.trim()) {
+                      setQuery(""); setTicker(""); setCompanyName("");
+                      setSuggestions([]); setShowSuggestions(false); setError("");
+                    }
+                  }}
                   onChat={handleChat} onRemove={handleRemove}
                   isMobile={isMobile}
                 />
@@ -1282,9 +1370,18 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 </div>
               );
 
+              if (filteredDigest.length === 0) {
+                return (
+                  <div style={{ textAlign: "center", padding: "2.5rem", background: "#FBFAF7", borderRadius: 11, border: "1px solid #E4E1D8", color: "#9C998E" }}>
+                    <div style={{ fontWeight: 600, marginBottom: "0.35rem", color: "#20211C" }}>No stocks match "{query.trim()}"</div>
+                    <div style={{ fontSize: "0.82rem" }}>Hit "+ Add" to add it to your watchlist</div>
+                  </div>
+                );
+              }
+
               // ── Relevance: flat list sorted by convergence_score desc, then conviction_score desc ──
               if (sortMode === "relevance") {
-                const sorted = [...digest].sort((a, b) => {
+                const sorted = [...filteredDigest].sort((a, b) => {
                   const scoreA = (a.analysis?.signal_convergence_score ?? -1) * 100 + (a.analysis?.conviction_score ?? 0);
                   const scoreB = (b.analysis?.signal_convergence_score ?? -1) * 100 + (b.analysis?.conviction_score ?? 0);
                   return scoreB - scoreA;
@@ -1303,9 +1400,9 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               if (sortMode === "verdict") {
                 const grouped = VERDICT_ORDER.map(v => ({
                   verdict: v, ...VERDICT_META_GROUP[v],
-                  items: digest.filter(d => d.analysis?.verdict === v),
+                  items: filteredDigest.filter(d => d.analysis?.verdict === v),
                 })).filter(g => g.items.length > 0);
-                const pending = digest.filter(d => !d.analysis);
+                const pending = filteredDigest.filter(d => !d.analysis);
                 return (
                   <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
                     {grouped.map((g, gi) => (
@@ -1327,7 +1424,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
 
               // ── A–Z: flat alphabetical ──
               if (sortMode === "az") {
-                const sorted = [...digest].sort((a, b) => a.ticker.localeCompare(b.ticker));
+                const sorted = [...filteredDigest].sort((a, b) => a.ticker.localeCompare(b.ticker));
                 return (
                   <div>
                     {colHeaders}
@@ -1337,7 +1434,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               }
 
               // ── Movers: sorted by abs(day_change_pct) desc ──
-              const sorted = [...digest].sort((a, b) => Math.abs(b.analysis?.day_change_pct ?? 0) - Math.abs(a.analysis?.day_change_pct ?? 0));
+              const sorted = [...filteredDigest].sort((a, b) => Math.abs(b.analysis?.day_change_pct ?? 0) - Math.abs(a.analysis?.day_change_pct ?? 0));
               return (
                 <div>
                   {colHeaders}
@@ -1345,60 +1442,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 </div>
               );
             })()}
-
-            {/* Add stock form */}
-            <form onSubmit={handleAdd} style={{
-              display: "flex", gap: "0.5rem", marginTop: "1.5rem",
-              padding: "1rem 1.25rem", background: "#FBFAF7",
-              border: "1px solid #E4E1D8", borderRadius: 11,
-              alignItems: "center", flexWrap: "wrap",
-            }}>
-              <div style={{ position: "relative", flex: "1 1 260px" }}>
-                <input
-                  value={query}
-                  onChange={e => handleSearchInput(e.target.value)}
-                  onKeyDown={handleSearchKeyDown}
-                  onBlur={() => setTimeout(() => { setShowSuggestions(false); setHighlightedIdx(-1); }, 200)}
-                  onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
-                  placeholder="Type ticker (e.g. NFLX) or search by name…"
-                  autoComplete="off"
-                  style={{
-                    width: "100%", padding: "0.5rem 0.75rem", background: "#F6F4EE",
-                    border: "1px solid #E4E1D8", borderRadius: 7,
-                    color: "#20211C", fontSize: "0.88rem", fontFamily: SANS,
-                    outline: "none",
-                  }}
-                />
-                {showSuggestions && suggestions.length > 0 && (
-                  <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50, background: "#FBFAF7", border: "1px solid #E4E1D8", borderRadius: 9, overflow: "hidden", boxShadow: "0 8px 24px rgba(32,33,28,0.1)" }}>
-                    {suggestions.map((s, idx) => (
-                      <div key={s.ticker} onMouseDown={() => handleSelect(s)}
-                        style={{ padding: "0.6rem 0.85rem", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", borderBottom: "1px solid #EDEAE1", background: idx === highlightedIdx ? "#F0EDE6" : "transparent" }}
-                        onMouseEnter={() => setHighlightedIdx(idx)}
-                        onMouseLeave={() => setHighlightedIdx(-1)}>
-                        <div>
-                          <span style={{ fontWeight: 600, fontSize: "0.88rem", color: "#20211C", fontFamily: MONO }}>{s.ticker}</span>
-                          <span style={{ marginLeft: "0.5rem", fontSize: "0.82rem", color: "#6A685F" }}>{s.name}</span>
-                        </div>
-                        <span style={{ fontSize: "0.75rem", color: "#9C998E", flexShrink: 0 }}>{s.exchange}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-              <button type="submit" disabled={!ticker && !query.trim()} style={{
-                padding: "0.5rem 1.1rem",
-                background: (ticker || query.trim()) ? "#3A5A6E" : "#E4E1D8",
-                color: (ticker || query.trim()) ? "#FBFAF7" : "#9C998E",
-                border: "none", borderRadius: 7,
-                cursor: (ticker || query.trim()) ? "pointer" : "not-allowed",
-                fontWeight: 600, fontSize: "0.88rem", fontFamily: SANS,
-                transition: "background 0.15s",
-              }}>
-                + Add
-              </button>
-              {error && <span style={{ color: "#A8554A", fontSize: "0.8rem", width: "100%" }}>{error}</span>}
-            </form>
+            </div>
           </div>
         )}
 
