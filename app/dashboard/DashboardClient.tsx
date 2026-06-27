@@ -671,14 +671,16 @@ function StockRow({
             </div>
           )}
 
-          {/* Row 4: Sparkline + Ask AI */}
+          {/* Row 4: Sparkline + Ask AI (Ask AI hidden when expanded — CTA lives in expanded panel) */}
           {a && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.5rem" }}>
               {item.close_5d ? <Sparkline prices={item.close_5d} width={120} height={28} /> : <span />}
-              <button
-                onClick={e => { e.stopPropagation(); onChat(item.ticker); }}
-                style={{ fontSize: "0.7rem", fontFamily: MONO, fontWeight: 600, padding: "4px 12px", borderRadius: 6, border: "1px solid var(--t-accent)", background: "transparent", color: "var(--t-accent)", cursor: "pointer" }}
-              >Ask AI →</button>
+              {!expanded && (
+                <button
+                  onClick={e => { e.stopPropagation(); onChat(item.ticker); }}
+                  style={{ fontSize: "0.7rem", fontFamily: MONO, fontWeight: 600, padding: "4px 12px", borderRadius: 6, border: "1px solid var(--t-accent)", background: "transparent", color: "var(--t-accent)", cursor: "pointer" }}
+                >Ask AI →</button>
+              )}
             </div>
           )}
 
@@ -773,9 +775,9 @@ function StockRow({
             {!a && <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)" }}>No analysis yet</span>}
           </div>
 
-          {/* Actions — Ask AI + chevron + remove */}
+          {/* Actions — Ask AI (hidden when expanded) + chevron + remove */}
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", justifyContent: "flex-end" }}>
-            {a && (
+            {a && !expanded && (
               <button
                 onClick={e => { e.stopPropagation(); onChat(item.ticker); }}
                 style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 600, padding: "4px 10px", borderRadius: 6, border: "1px solid var(--t-accent)", background: "transparent", color: "var(--t-accent)", cursor: "pointer", whiteSpace: "nowrap" }}
