@@ -97,7 +97,7 @@ function RangeBar({ lo, hi, pct }: { lo: number; hi: number; pct: number }) {
   const clamp = Math.max(0, Math.min(100, pct));
   const dotColor = clamp < 33 ? "var(--t-green)" : clamp < 67 ? "var(--t-yellow)" : "var(--t-red)";
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", minWidth: 130 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
       <div style={{ position: "relative", height: 5, background: "var(--t-border)", borderRadius: 99 }}>
         <div style={{
           position: "absolute", left: 0, width: `${clamp}%`, height: "100%",
@@ -134,14 +134,14 @@ function MaBadge({ price, ma50, ma200 }: { price: number; ma50: number | null; m
   const above50  = ma50  ? price > ma50  : null;
   const above200 = ma200 ? price > ma200 : null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+    <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
       {ma50 != null && (
-        <span style={{ fontSize: "0.68rem", color: above50 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>
+        <span style={{ fontSize: "0.64rem", color: above50 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>
           {above50 ? "▲" : "▼"} MA50
         </span>
       )}
       {ma200 != null && (
-        <span style={{ fontSize: "0.68rem", color: above200 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>
+        <span style={{ fontSize: "0.64rem", color: above200 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>
           {above200 ? "▲" : "▼"} MA200
         </span>
       )}
@@ -329,10 +329,24 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead, idT
         ))}
       </div>
 
-      {/* ── 52-Week Range (moved from collapsed row — more space here) ── */}
+      {/* ── 52-Week Range ── */}
       {a.week_52_low != null && a.week_52_high != null && a.range_position_pct != null && (
-        <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--t-border-light)" }}>
-          <RangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />
+        <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--t-border-light)", display: "flex", alignItems: "center", gap: "2rem", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>52-Week Range</div>
+            <div style={{ width: 320 }}>
+              <RangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />
+            </div>
+          </div>
+          {(a.stock_52w_change != null || a.sp500_52w_change != null) && (
+            <div>
+              <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>vs S&P 500 (52w)</div>
+              <div style={{ display: "flex", gap: "1rem", alignItems: "baseline" }}>
+                {a.stock_52w_change != null && <span style={{ fontWeight: 700, fontSize: "1rem", color: a.stock_52w_change >= 0 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>{a.stock_52w_change >= 0 ? "+" : ""}{a.stock_52w_change.toFixed(1)}%</span>}
+                {a.sp500_52w_change != null && <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)", fontFamily: MONO }}>S&P {a.sp500_52w_change >= 0 ? "+" : ""}{a.sp500_52w_change.toFixed(1)}%</span>}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -694,12 +708,12 @@ function StockRow({
         </div>
       ) : (
         /* ── Desktop grid layout ── */
-        /* Columns: STOCK | VERDICT | PRICE | CONVICTION | TREND | SIGNAL | ACTIONS */
+        /* Columns: STOCK | VERDICT | PRICE | CONVICTION | RSI/TREND | SIGNALS | ACTIONS */
         <div
           onClick={a ? onToggle : undefined}
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 100px 130px 80px 100px 140px 120px",
+            gridTemplateColumns: "1fr 110px 155px 80px 100px 130px 100px",
             alignItems: "center", padding: "0.85rem 1.25rem",
             cursor: a ? "pointer" : "default", gap: "1rem",
           }}
@@ -763,16 +777,24 @@ function StockRow({
             )}
           </div>
 
-          {/* Signal — RSI + analyst + event */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
-            {a?.rsi != null && <RsiPill rsi={a.rsi} />}
+          {/* Signals — convergence score + analyst + event (NOT RSI — that's in RSI/Trend) */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+            {a?.signal_convergence_score != null ? (
+              <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
+                <span style={{ fontWeight: 700, fontSize: "1.05rem", fontFamily: MONO, color: a.signal_convergence_score >= 6 ? "var(--t-green)" : a.signal_convergence_score >= 4 ? "var(--t-yellow)" : "var(--t-red)", lineHeight: 1 }}>
+                  {a.signal_convergence_score}
+                </span>
+                <span style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO }}>/10</span>
+              </div>
+            ) : (
+              a?.analyst_consensus ? null : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>
+            )}
             {a?.analyst_consensus && (
-              <span style={{ fontSize: "0.68rem", color: "var(--t-text-muted)", fontFamily: MONO }}>
-                Analysts: <span style={{ color: "var(--t-text)", fontWeight: 600 }}>{a.analyst_consensus}</span>
+              <span style={{ fontSize: "0.67rem", color: "var(--t-text-muted)", fontFamily: MONO, lineHeight: 1.2 }}>
+                <span style={{ color: "var(--t-text)", fontWeight: 600 }}>{a.analyst_consensus}</span> analysts
               </span>
             )}
-            {upcomingEvent && <span style={{ fontSize: "0.68rem", color: "var(--t-yellow)", fontFamily: MONO }}>⚡ {upcomingEvent}</span>}
-            {!a && <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)" }}>No analysis yet</span>}
+            {upcomingEvent && <span style={{ fontSize: "0.67rem", color: "var(--t-yellow)", fontFamily: MONO }}>⚡ {upcomingEvent}</span>}
           </div>
 
           {/* Actions — Ask AI (hidden when expanded) + chevron + remove */}
@@ -1508,8 +1530,8 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               };
 
               const colHeaders = !isMobile && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 100px 130px 80px 100px 140px 120px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
-                  {["Stock", "Verdict", "Price", "Conviction", "Trend", "Signal", ""].map(h => (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 155px 80px 100px 130px 100px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
+                  {["Stock", "Verdict", "Price", "Conviction", "RSI / Trend", "Signals", ""].map(h => (
                     <div key={h} style={{ fontSize: "0.63rem", color: "var(--t-text-dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
                   ))}
                 </div>
