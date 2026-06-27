@@ -79,6 +79,9 @@ interface DigestItem {
   company_name: string | null;
   is_leveraged: boolean;
   analysis: Analysis | null;
+  has_unread: boolean;
+  change_summary: string | null;
+  days_since_read: number | null;
 }
 
 const VERDICT_META: Record<string, { color: string; bg: string; bd: string; label: string }> = {
@@ -144,7 +147,10 @@ function MaBadge({ price, ma50, ma200 }: { price: number; ma50: number | null; m
   );
 }
 
-function ExpandedDetail({ a, onChat, isMobile }: { a: Analysis; onChat: () => void; isMobile: boolean }) {
+function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead }: {
+  a: Analysis; onChat: () => void; isMobile: boolean;
+  changeSummary?: string | null; daysSinceRead?: number | null;
+}) {
   let events: Array<{ date: string; description: string }> = [];
   try { if (a.events_json) events = JSON.parse(a.events_json).slice(0, 3); } catch {}
 
@@ -180,6 +186,17 @@ function ExpandedDetail({ a, onChat, isMobile }: { a: Analysis; onChat: () => vo
 
   return (
     <div style={{ borderTop: "1px solid #E4E1D8", background: "#F6F4EE", borderRadius: "0 0 11px 11px" }}>
+
+      {/* ── What changed strip (unread delta) ── */}
+      {changeSummary && (
+        <div style={{ padding: "8px 20px", background: "#EAF0F3", borderBottom: "1px solid #D7E1E8", display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.65rem", fontFamily: "monospace", fontWeight: 700, color: "#3A5A6E", textTransform: "uppercase", letterSpacing: "0.08em", flexShrink: 0 }}>
+            {daysSinceRead != null ? `${daysSinceRead}d ago` : "Since last read"}
+          </span>
+          <span style={{ width: 1, height: 12, background: "#C8D8E4", flexShrink: 0 }} />
+          <span style={{ fontSize: "0.78rem", color: "#2C4A5C", fontFamily: "monospace" }}>{changeSummary}</span>
+        </div>
+      )}
 
       {/* ── Signal checklist strip ── */}
       <div style={{ padding: "10px 20px", borderBottom: "1px solid #EDEAE1", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px 8px" }}>
@@ -443,6 +460,7 @@ function StockRow({
   item: DigestItem; expanded: boolean; isMobile: boolean;
   onToggle: () => void; onChat: (ticker: string) => void; onRemove: (ticker: string) => void;
 }) {
+  const showUnreadDot = item.has_unread && !!item.analysis;
   const a = item.analysis;
   const vm = a?.verdict ? VERDICT_META[a.verdict] ?? VERDICT_META.WATCH : null;
   const chgColor = (a?.day_change_pct ?? 0) >= 0 ? "#3F6B4F" : "#A8554A";
@@ -470,6 +488,7 @@ function StockRow({
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
                 <span style={{ fontWeight: 700, fontSize: "1rem", fontFamily: MONO, color: "#20211C" }}>{item.ticker}</span>
+                {showUnreadDot && <span title="New analysis — unread" style={{ width: 7, height: 7, borderRadius: "50%", background: "#3A5A6E", display: "inline-block", flexShrink: 0 }} />}
                 {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.78rem" }}>⭐</span>}
                 {item.is_leveraged && (
                   <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "#EAF0F3", color: "#3A5A6E", border: "1px solid #D7E1E8", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>
@@ -565,6 +584,7 @@ function StockRow({
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
               <span style={{ fontWeight: 600, fontSize: "0.95rem", fontFamily: MONO, color: "#20211C" }}>{item.ticker}</span>
+              {showUnreadDot && <span title="New analysis — unread" style={{ width: 7, height: 7, borderRadius: "50%", background: "#3A5A6E", display: "inline-block", flexShrink: 0 }} />}
               {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.75rem" }}>⭐</span>}
               {item.is_leveraged && (
                 <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "#EAF0F3", color: "#3A5A6E", border: "1px solid #D7E1E8", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>
@@ -647,7 +667,7 @@ function StockRow({
         </div>
       )}
 
-      {expanded && a && <ExpandedDetail a={a} onChat={() => onChat(item.ticker)} isMobile={isMobile} />}
+      {expanded && a && <ExpandedDetail a={a} onChat={() => onChat(item.ticker)} isMobile={isMobile} changeSummary={item.change_summary} daysSinceRead={item.days_since_read} />}
     </div>
   );
 }
@@ -745,7 +765,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     // Optimistic — clear input and insert row immediately, before the network call
     const savedQuery = query; const savedTicker = ticker; const savedCompany = companyName;
     setTicker(""); setCompanyName(""); setQuery(""); setSuggestions([]); setShowSuggestions(false); setError("");
-    setDigest(prev => [...prev, { ticker: effectiveTicker, company_name: savedCompany || null, is_leveraged: false, analysis: null }]);
+    setDigest(prev => [...prev, { ticker: effectiveTicker, company_name: savedCompany || null, is_leveraged: false, analysis: null, has_unread: false, change_summary: null, days_since_read: null }]);
 
     try {
       const r = await fetch(`${API}/watchlist?id_token=${encodeURIComponent(idToken)}`, {
@@ -811,6 +831,14 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     } catch { fetchDigest(true); }
   }
 
+  async function handleMarkRead(t: string) {
+    // Optimistically clear the unread dot — keep change_summary so the delta strip stays visible
+    setDigest(prev => prev.map(d => d.ticker === t ? { ...d, has_unread: false } : d));
+    try {
+      await fetch(`${API}/watchlist/${encodeURIComponent(t)}/read?id_token=${encodeURIComponent(idToken)}`, { method: "PATCH" });
+    } catch { /* silent — next digest refresh will reconcile */ }
+  }
+
   async function handleChat(t: string) {
     const r = await fetch(`${API}/conversations?id_token=${encodeURIComponent(idToken)}`, {
       method: "POST",
@@ -824,6 +852,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const watchCount    = digest.filter(d => d.analysis?.verdict === "WATCH" || d.analysis?.verdict === "HOLD").length;
   const sellCount     = digest.filter(d => d.analysis?.verdict === "SELL").length;
   const importantItems = digest.filter(d => d.analysis?.is_important_day);
+  const unreadCount   = digest.filter(d => d.has_unread).length;
   const initials = userName.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
 
   return (
@@ -852,7 +881,14 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                   background: "none", cursor: "pointer", transition: "color 0.15s",
                   whiteSpace: "nowrap",
                 }}>
-                  {tab}
+                  <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                    {tab}
+                    {tab === "My Stocks" && unreadCount > 0 && (
+                      <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 5px", borderRadius: 9, background: "#3A5A6E", color: "#FBFAF7", lineHeight: 1.4 }}>
+                        {unreadCount}
+                      </span>
+                    )}
+                  </span>
                 </button>
               ))}
             </nav>
@@ -1353,11 +1389,9 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                   key={item.ticker} item={item}
                   expanded={expanded === item.ticker}
                   onToggle={() => {
+                    const isExpanding = expanded !== item.ticker;
                     setExpanded(expanded === item.ticker ? null : item.ticker);
-                    if (query.trim()) {
-                      setQuery(""); setTicker(""); setCompanyName("");
-                      setSuggestions([]); setShowSuggestions(false); setError("");
-                    }
+                    if (isExpanding && item.has_unread) handleMarkRead(item.ticker);
                   }}
                   onChat={handleChat} onRemove={handleRemove}
                   isMobile={isMobile}
