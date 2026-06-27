@@ -34,6 +34,14 @@ def _migrate_db():
         inspector = inspect(engine)
         tables = inspector.get_table_names()
 
+        if "watchlist_items" in tables:
+            wl_cols = {c["name"] for c in inspector.get_columns("watchlist_items")}
+            if "last_read_analysis_id" not in wl_cols:
+                conn.execute(text("ALTER TABLE watchlist_items ADD COLUMN last_read_analysis_id VARCHAR"))  # nosemgrep
+            if "last_read_at" not in wl_cols:
+                conn.execute(text("ALTER TABLE watchlist_items ADD COLUMN last_read_at DATETIME"))  # nosemgrep
+            conn.commit()
+
         if "conversations" in tables:
             cols = {c["name"] for c in inspector.get_columns("conversations")}
             if "ticker" not in cols:

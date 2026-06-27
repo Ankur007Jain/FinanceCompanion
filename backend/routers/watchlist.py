@@ -115,6 +115,31 @@ def add_to_watchlist(
     return item
 
 
+@router.patch("/{ticker}/read")
+def mark_analysis_read(ticker: str, id_token: str, db: Session = Depends(get_db)):
+    """Mark the most recent analysis for a ticker as read by the current user."""
+    from datetime import datetime
+    from models import StockAnalysis
+    user = get_current_user(id_token, db)
+    item = db.query(WatchlistItem).filter(
+        WatchlistItem.user_email == user.email,
+        WatchlistItem.ticker == ticker.upper(),
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Ticker not in watchlist.")
+    latest = (
+        db.query(StockAnalysis)
+        .filter(StockAnalysis.ticker == ticker.upper())
+        .order_by(StockAnalysis.analysis_date.desc())
+        .first()
+    )
+    if latest:
+        item.last_read_analysis_id = latest.id
+        item.last_read_at = datetime.utcnow()
+        db.commit()
+    return {"ok": True, "ticker": ticker.upper()}
+
+
 @router.delete("/{ticker}")
 def remove_from_watchlist(ticker: str, id_token: str, db: Session = Depends(get_db)):
     user = get_current_user(id_token, db)

@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -8,6 +8,40 @@ from routers.auth import get_current_user
 from schemas import DigestItem, StockAnalysisOut, ImportantFlag, ReportDayOut
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+
+
+def _change_summary(cur: StockAnalysis, prev: StockAnalysis) -> tuple[bool, str]:
+    """Return (has_meaningful_change, human-readable summary string)."""
+    parts: list[str] = []
+
+    if cur.verdict != prev.verdict:
+        parts.append(f"{prev.verdict or '?'} → {cur.verdict or '?'}")
+
+    if cur.is_important_day:
+        parts.append("Important day")
+
+    c_conv = cur.conviction_score or 0
+    p_conv = prev.conviction_score or 0
+    if abs(c_conv - p_conv) >= 10:
+        parts.append(f"Conviction {p_conv}→{c_conv}")
+
+    c_rsi = cur.rsi or 0
+    p_rsi = prev.rsi or 0
+    if abs(c_rsi - p_rsi) >= 5:
+        parts.append(f"RSI {p_rsi:.0f}→{c_rsi:.0f}")
+
+    if cur.news_summary and cur.news_summary != (prev.news_summary or ""):
+        parts.append("New news")
+
+    if cur.data_conflicts and cur.data_conflicts != (prev.data_conflicts or ""):
+        parts.append("Data conflict flagged")
+
+    c_sig = cur.signal_convergence_score or 0
+    p_sig = prev.signal_convergence_score or 0
+    if abs(c_sig - p_sig) >= 2:
+        parts.append(f"Signals {p_sig}→{c_sig}/10")
+
+    return bool(parts), " · ".join(parts[:4])
 
 
 @router.get("/digest", response_model=list[DigestItem])
@@ -27,11 +61,40 @@ def get_digest(id_token: str, db: Session = Depends(get_db)):
             .order_by(StockAnalysis.analysis_date.desc())
             .first()
         )
+
+        has_unread = False
+        change_summary = None
+        days_since_read = None
+
+        if analysis:
+            if item.last_read_analysis_id is None:
+                # Never read — flag as unread with no delta (first time seeing any analysis)
+                has_unread = True
+                change_summary = "New analysis available"
+            elif item.last_read_analysis_id != analysis.id:
+                # Read before, but a newer analysis exists — compute delta
+                prev = db.query(StockAnalysis).filter(
+                    StockAnalysis.id == item.last_read_analysis_id
+                ).first()
+                if prev:
+                    has_meaningful, summary = _change_summary(analysis, prev)
+                    has_unread = has_meaningful
+                    change_summary = summary if has_meaningful else None
+                else:
+                    has_unread = True
+                    change_summary = "New analysis available"
+
+            if has_unread and item.last_read_at:
+                days_since_read = (datetime.utcnow() - item.last_read_at).days
+
         result.append(DigestItem(
             ticker=item.ticker,
             company_name=item.company_name,
             is_leveraged=item.is_leveraged or False,
             analysis=StockAnalysisOut.model_validate(analysis) if analysis else None,
+            has_unread=has_unread,
+            change_summary=change_summary,
+            days_since_read=days_since_read,
         ))
     return result
 

@@ -126,6 +126,9 @@ class DigestItem(BaseModel):
     company_name: Optional[str]
     is_leveraged: bool
     analysis: Optional[StockAnalysisOut]
+    has_unread: bool = False
+    change_summary: Optional[str] = None
+    days_since_read: Optional[int] = None
 
 
 class CopilotDecisionRequest(BaseModel):
