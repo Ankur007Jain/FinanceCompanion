@@ -189,12 +189,12 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead }: {
 
       {/* ── What changed strip (unread delta) ── */}
       {changeSummary && (
-        <div style={{ padding: "8px 20px", background: "#EAF0F3", borderBottom: "1px solid #D7E1E8", display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-          <span style={{ fontSize: "0.65rem", fontFamily: "monospace", fontWeight: 700, color: "#3A5A6E", textTransform: "uppercase", letterSpacing: "0.08em", flexShrink: 0 }}>
+        <div style={{ padding: "8px 20px", background: "#D6E8F0", borderBottom: "2px solid #3A5A6E", display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+          <span style={{ fontSize: "0.65rem", fontFamily: "monospace", fontWeight: 700, color: "#1A3A4E", textTransform: "uppercase", letterSpacing: "0.08em", flexShrink: 0 }}>
             {daysSinceRead != null ? `${daysSinceRead}d ago` : "Since last read"}
           </span>
-          <span style={{ width: 1, height: 12, background: "#C8D8E4", flexShrink: 0 }} />
-          <span style={{ fontSize: "0.78rem", color: "#2C4A5C", fontFamily: "monospace" }}>{changeSummary}</span>
+          <span style={{ width: 1, height: 12, background: "#3A5A6E", flexShrink: 0 }} />
+          <span style={{ fontSize: "0.78rem", color: "#1A3A4E", fontFamily: "monospace", fontWeight: 600 }}>{changeSummary}</span>
         </div>
       )}
 
@@ -488,7 +488,7 @@ function StockRow({
             <div style={{ flex: 1, minWidth: 0 }}>
               <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
                 <span style={{ fontWeight: 700, fontSize: "1rem", fontFamily: MONO, color: "#20211C" }}>{item.ticker}</span>
-                {showUnreadDot && <span title="New analysis — unread" style={{ width: 7, height: 7, borderRadius: "50%", background: "#3A5A6E", display: "inline-block", flexShrink: 0 }} />}
+                {showUnreadDot && <span title="New analysis — unread" style={{ fontSize: "0.55rem", fontWeight: 700, fontFamily: MONO, padding: "1px 5px", borderRadius: 10, background: "#3A5A6E", color: "#fff", display: "inline-block", flexShrink: 0, lineHeight: "1.4" }}>NEW</span>}
                 {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.78rem" }}>⭐</span>}
                 {item.is_leveraged && (
                   <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "#EAF0F3", color: "#3A5A6E", border: "1px solid #D7E1E8", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>
@@ -584,7 +584,7 @@ function StockRow({
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
               <span style={{ fontWeight: 600, fontSize: "0.95rem", fontFamily: MONO, color: "#20211C" }}>{item.ticker}</span>
-              {showUnreadDot && <span title="New analysis — unread" style={{ width: 7, height: 7, borderRadius: "50%", background: "#3A5A6E", display: "inline-block", flexShrink: 0 }} />}
+              {showUnreadDot && <span title="New analysis — unread" style={{ fontSize: "0.55rem", fontWeight: 700, fontFamily: MONO, padding: "1px 5px", borderRadius: 10, background: "#3A5A6E", color: "#fff", display: "inline-block", flexShrink: 0, lineHeight: "1.4" }}>NEW</span>}
               {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.75rem" }}>⭐</span>}
               {item.is_leveraged && (
                 <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "#EAF0F3", color: "#3A5A6E", border: "1px solid #D7E1E8", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>
@@ -1390,7 +1390,10 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                   expanded={expanded === item.ticker}
                   onToggle={() => {
                     const isExpanding = expanded !== item.ticker;
-                    setExpanded(expanded === item.ticker ? null : item.ticker);
+                    if (!isExpanding && item.change_summary) {
+                      setDigest(prev => prev.map(d => d.ticker === item.ticker ? { ...d, change_summary: null } : d));
+                    }
+                    setExpanded(isExpanding ? item.ticker : null);
                     if (isExpanding && item.has_unread) handleMarkRead(item.ticker);
                   }}
                   onChat={handleChat} onRemove={handleRemove}
