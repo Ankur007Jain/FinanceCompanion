@@ -4,23 +4,78 @@
   --t-bg: #E8E6E0;
   --t-surface: #FBFAF7;
   --t-surface-2: #F6F4EE;
+  --t-surface-3: #ECEAE3;
+  --t-surface-alt: #F0EDE6;
+  --t-surface-warm: #F4F2EC;
   --t-border: #E4E1D8;
   --t-border-light: #EDEAE1;
+  --t-border-alt: #EDE9DF;
+  --t-border-mid: #D8D5CC;
   --t-accent: #3A5A6E;
   --t-accent-hover: #2E4A5A;
   --t-accent-light: #EAF0F3;
+  --t-accent-bg: #E8EFF4;
+  --t-accent-border: #C8D8E4;
+  --t-accent-dark: #1A3A4E;
   --t-text: #20211C;
+  --t-text-dark: #3A3833;
   --t-text-secondary: #6A685F;
   --t-text-muted: #9C998E;
+  --t-text-dim: #CBCAC2;
+  --t-text-very-dim: #B0ADA6;
   --t-green: #3F6B4F;
   --t-green-bg: #EAF1EC;
   --t-green-border: #D6E2D7;
+  --t-green-mid: #C8DDD0;
+  --t-green-light-bg: #F4F8F4;
   --t-red: #A8554A;
   --t-red-bg: #F4E7E4;
   --t-red-border: #E6D2CC;
   --t-yellow: #97703C;
   --t-yellow-bg: #F4EEE2;
   --t-yellow-border: #E6DBC4;
+  --t-yellow-dark: #5A4420;
+  --t-yellow-light-bg: #FDF6EC;
+  --t-unread-bg: #D6E8F0;
+}
+
+[data-theme="dark"] {
+  --t-bg: #1A1C1F;
+  --t-surface: #242628;
+  --t-surface-2: #2C2E31;
+  --t-surface-3: #282A2D;
+  --t-surface-alt: #2C2E32;
+  --t-surface-warm: #2A2C2F;
+  --t-border: #3C3F43;
+  --t-border-light: #343638;
+  --t-border-alt: #363840;
+  --t-border-mid: #383A3E;
+  --t-accent: #5C8EA6;
+  --t-accent-hover: #6E9EB5;
+  --t-accent-light: #1C3042;
+  --t-accent-bg: #1A2C3A;
+  --t-accent-border: #2A3C4A;
+  --t-accent-dark: #7AAABB;
+  --t-text: #E2E0D8;
+  --t-text-dark: #C0BEB7;
+  --t-text-secondary: #9E9C95;
+  --t-text-muted: #6E6C66;
+  --t-text-dim: #484644;
+  --t-text-very-dim: #3E3C3A;
+  --t-green: #5E9E72;
+  --t-green-bg: #1A2C1E;
+  --t-green-border: #293C2C;
+  --t-green-mid: #293C2C;
+  --t-green-light-bg: #1C2C20;
+  --t-red: #CE7A6C;
+  --t-red-bg: #2C1C1A;
+  --t-red-border: #3C2A28;
+  --t-yellow: #C89858;
+  --t-yellow-bg: #28200E;
+  --t-yellow-border: #382E1C;
+  --t-yellow-dark: #B08840;
+  --t-yellow-light-bg: #261E0C;
+  --t-unread-bg: #1A2E3E;
 }
 
 body {
@@ -29,11 +84,12 @@ body {
   font-family: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
 
 * { box-sizing: border-box; }
 
-::selection { background: #3A5A6E22; }
+::selection { background: var(--t-accent-light); }
 
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: var(--t-bg); }
