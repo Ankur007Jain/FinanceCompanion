@@ -40,7 +40,7 @@ def _migrate_db():
             if "last_read_analysis_id" not in wl_cols:
                 conn.execute(text("ALTER TABLE watchlist_items ADD COLUMN last_read_analysis_id VARCHAR"))  # nosemgrep
             if "last_read_at" not in wl_cols:
-                conn.execute(text("ALTER TABLE watchlist_items ADD COLUMN last_read_at DATETIME"))  # nosemgrep
+                conn.execute(text("ALTER TABLE watchlist_items ADD COLUMN last_read_at TIMESTAMP"))  # nosemgrep
             conn.commit()
 
         if "conversations" in tables:
@@ -48,7 +48,7 @@ def _migrate_db():
             if "ticker" not in cols:
                 conn.execute(text("ALTER TABLE conversations ADD COLUMN ticker VARCHAR"))
             if "updated_at" not in cols:
-                conn.execute(text("ALTER TABLE conversations ADD COLUMN updated_at DATETIME"))
+                conn.execute(text("ALTER TABLE conversations ADD COLUMN updated_at TIMESTAMP"))
             conn.commit()
 
         if "stock_analyses" in tables:
@@ -143,7 +143,7 @@ def _migrate_db():
                     history_json TEXT,
                     news_json TEXT,
                     calendar_json TEXT,
-                    created_at DATETIME,
+                    created_at TIMESTAMP,
                     PRIMARY KEY (ticker, cache_date)
                 )
             """))
