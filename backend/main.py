@@ -8,7 +8,7 @@ from sqlalchemy import text, inspect
 
 from database import Base, engine, SessionLocal
 from models import AppConfig  # noqa: F401 — ensures table is registered
-from routers import auth, watchlist, analysis, simulation, conversations, streaming, jobs
+from routers import auth, watchlist, analysis, simulation, conversations, streaming, jobs, translate
 
 app = FastAPI(title="FinanceCompanion API", version="0.1.0")
 
@@ -27,6 +27,7 @@ app.include_router(simulation.router)
 app.include_router(conversations.router)
 app.include_router(streaming.router)
 app.include_router(jobs.router)
+app.include_router(translate.router)
 
 
 def _migrate_db():

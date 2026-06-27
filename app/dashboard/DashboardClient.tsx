@@ -148,10 +148,58 @@ function MaBadge({ price, ma50, ma200 }: { price: number; ma50: number | null; m
   );
 }
 
-function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead }: {
+function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead, idToken }: {
   a: Analysis; onChat: () => void; isMobile: boolean;
   changeSummary?: string | null; daysSinceRead?: number | null;
+  idToken: string;
 }) {
+  const [lang, setLang] = useState<"en" | "hi">("en");
+  const [mode, setMode] = useState<"technical" | "simple">("technical");
+  const [translating, setTranslating] = useState(false);
+  const [txCache, setTxCache] = useState<Record<string, Record<string, string | null>>>({});
+
+  const txKey = `${lang}:${mode}`;
+  const tx = txCache[txKey] ?? {};
+
+  async function applyTranslation(nextLang: "en" | "hi", nextMode: "technical" | "simple") {
+    const key = `${nextLang}:${nextMode}`;
+    if (key === "en:technical") { setLang(nextLang); setMode(nextMode); return; }
+    if (txCache[key]) { setLang(nextLang); setMode(nextMode); return; }
+    setTranslating(true);
+    try {
+      const r = await fetch(`${API}/translate?id_token=${encodeURIComponent(idToken)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ticker: a.ticker,
+          language: nextLang,
+          mode: nextMode,
+          fields: {
+            reasoning: a.reasoning,
+            bull_case: a.bull_case,
+            bear_case: a.bear_case,
+            thesis_invalidation: a.thesis_invalidation,
+            news_summary: a.news_summary,
+          },
+        }),
+      });
+      if (r.ok) {
+        const { fields } = await r.json();
+        setTxCache(prev => ({ ...prev, [key]: fields }));
+      }
+    } finally {
+      setTranslating(false);
+      setLang(nextLang);
+      setMode(nextMode);
+    }
+  }
+
+  const reasoning          = tx.reasoning          ?? a.reasoning;
+  const bull_case          = tx.bull_case          ?? a.bull_case;
+  const bear_case          = tx.bear_case          ?? a.bear_case;
+  const thesis_invalidation = tx.thesis_invalidation ?? a.thesis_invalidation;
+  const news_summary       = tx.news_summary       ?? a.news_summary;
+
   let events: Array<{ date: string; description: string }> = [];
   try { if (a.events_json) events = JSON.parse(a.events_json).slice(0, 3); } catch {}
 
@@ -199,11 +247,37 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead }: {
         </div>
       )}
 
+      {/* ── Language / mode toggles ── */}
+      <div style={{ padding: "8px 20px", borderBottom: "1px solid var(--t-border-light)", display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
+        {(["en", "hi"] as const).map(l => (
+          <button key={l} onClick={() => applyTranslation(l, mode)} disabled={translating} style={{
+            fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, padding: "2px 10px",
+            borderRadius: 20, border: `1px solid ${lang === l ? "var(--t-accent)" : "var(--t-border)"}`,
+            background: lang === l ? "var(--t-accent-light)" : "transparent",
+            color: lang === l ? "var(--t-accent)" : "var(--t-text-muted)", cursor: "pointer",
+          }}>
+            {l === "en" ? "EN" : "हि"}
+          </button>
+        ))}
+        <span style={{ width: 1, height: 14, background: "var(--t-border)", flexShrink: 0 }} />
+        {(["technical", "simple"] as const).map(m => (
+          <button key={m} onClick={() => applyTranslation(lang, m)} disabled={translating} style={{
+            fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, padding: "2px 10px",
+            borderRadius: 20, border: `1px solid ${mode === m ? "var(--t-accent)" : "var(--t-border)"}`,
+            background: mode === m ? "var(--t-accent-light)" : "transparent",
+            color: mode === m ? "var(--t-accent)" : "var(--t-text-muted)", cursor: "pointer",
+          }}>
+            {m === "technical" ? "Technical" : "Simple"}
+          </button>
+        ))}
+        {translating && <span style={{ fontSize: "0.65rem", color: "var(--t-text-muted)", fontFamily: MONO, marginLeft: 4 }}>translating…</span>}
+      </div>
+
       {/* ── Signal checklist strip ── */}
       <div style={{ padding: "10px 20px", borderBottom: "1px solid var(--t-border-light)", display: "flex", alignItems: "center", flexWrap: "wrap", gap: "6px 8px" }}>
         <span style={{ fontSize: "0.65rem", color: "var(--t-text-muted)", fontFamily: MONO, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginRight: 4, flexShrink: 0 }}>Analyzed</span>
         {signals.map(s => (
-          <span key={s.label} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.7rem", fontFamily: MONO, padding: "2px 9px", borderRadius: 20, color: s.ok ? "var(--t-green)" : "var(--t-text-very-dim)", background: s.ok ? "var(--t-green-bg)" : "var(--t-border-light)", border: `1px solid ${s.ok ? "var(--t-green-mid)" : "var(--t-border)"}` }}>
+          <span key={s.label} style={{ display: "inline-flex", alignItems: "center", gap: 4, fontSize: "0.7rem", fontFamily: MONO, padding: "2px 9px", borderRadius: 20, color: s.ok ? "var(--t-green)" : "var(--t-text-dim)", background: s.ok ? "var(--t-green-bg)" : "var(--t-surface-3)", border: `1px solid ${s.ok ? "var(--t-green-mid)" : "var(--t-border)"}` }}>
             <span style={{ fontSize: "0.65rem" }}>{s.ok ? "✓" : "—"}</span>{s.label}
           </span>
         ))}
@@ -284,7 +358,7 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead }: {
       <div style={{ padding: "1.25rem 1.5rem", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? "1.25rem" : "1.5rem" }}>
 
         {/* Conviction + bull/bear */}
-        {(a.conviction_score != null || a.bull_case || a.bear_case) && (
+        {(a.conviction_score != null || bull_case || bear_case) && (
           <div style={{ gridColumn: isMobile ? "1" : "1 / -1", display: "flex", gap: "1.5rem", alignItems: "flex-start", flexWrap: "wrap" }}>
             {a.conviction_score != null && (
               <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90 }}>
@@ -299,20 +373,20 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead }: {
               </div>
             )}
             <div style={{ flex: 1, minWidth: 240, display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-              {a.bull_case && (
+              {bull_case && (
                 <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "var(--t-text-dark)", lineHeight: 1.5 }}>
-                  <span style={{ color: "var(--t-green)", fontWeight: 700, flexShrink: 0 }}>Bull</span><span>{a.bull_case}</span>
+                  <span style={{ color: "var(--t-green)", fontWeight: 700, flexShrink: 0 }}>Bull</span><span>{bull_case}</span>
                 </div>
               )}
-              {a.bear_case && (
+              {bear_case && (
                 <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "var(--t-text-dark)", lineHeight: 1.5 }}>
-                  <span style={{ color: "var(--t-red)", fontWeight: 700, flexShrink: 0 }}>Bear</span><span>{a.bear_case}</span>
+                  <span style={{ color: "var(--t-red)", fontWeight: 700, flexShrink: 0 }}>Bear</span><span>{bear_case}</span>
                 </div>
               )}
-              {a.thesis_invalidation && (
+              {thesis_invalidation && (
                 <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.78rem", color: "var(--t-text-secondary)", lineHeight: 1.5 }}>
                   <span style={{ color: "var(--t-text-muted)", fontWeight: 600, flexShrink: 0, fontFamily: MONO, fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", paddingTop: 2 }}>Flips if</span>
-                  <span>{a.thesis_invalidation}</span>
+                  <span>{thesis_invalidation}</span>
                 </div>
               )}
             </div>
@@ -354,15 +428,15 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead }: {
         {/* AI Reasoning */}
         <div>
           <div style={secLabel}>AI Reasoning</div>
-          <div style={{ fontSize: "0.8rem", lineHeight: 1.65, color: "var(--t-text-dark)" }}>{a.reasoning ?? "—"}</div>
+          <div style={{ fontSize: "0.8rem", lineHeight: 1.65, color: "var(--t-text-dark)" }}>{reasoning ?? "—"}</div>
         </div>
 
         {/* News + Ripple + Chat */}
         <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-          {a.news_summary && (
+          {news_summary && (
             <div>
               <div style={secLabel}>News</div>
-              <div style={{ fontSize: "0.78rem", lineHeight: 1.6, color: "var(--t-text-dark)" }}>{a.news_summary}</div>
+              <div style={{ fontSize: "0.78rem", lineHeight: 1.6, color: "var(--t-text-dark)" }}>{news_summary}</div>
             </div>
           )}
           {a.ripple_analysis && (
@@ -456,9 +530,9 @@ function VerdictBadge({ vm }: { vm: { color: string; bg: string; bd: string; lab
 }
 
 function StockRow({
-  item, expanded, onToggle, onChat, onRemove, isMobile,
+  item, expanded, onToggle, onChat, onRemove, isMobile, idToken,
 }: {
-  item: DigestItem; expanded: boolean; isMobile: boolean;
+  item: DigestItem; expanded: boolean; isMobile: boolean; idToken: string;
   onToggle: () => void; onChat: (ticker: string) => void; onRemove: (ticker: string) => void;
 }) {
   const showUnreadDot = item.has_unread && !!item.analysis;
@@ -668,7 +742,7 @@ function StockRow({
         </div>
       )}
 
-      {expanded && a && <ExpandedDetail a={a} onChat={() => onChat(item.ticker)} isMobile={isMobile} changeSummary={item.change_summary} daysSinceRead={item.days_since_read} />}
+      {expanded && a && <ExpandedDetail a={a} onChat={() => onChat(item.ticker)} isMobile={isMobile} changeSummary={item.change_summary} daysSinceRead={item.days_since_read} idToken={idToken} />}
     </div>
   );
 }
@@ -1388,7 +1462,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
 
               const renderRow = (item: DigestItem) => (
                 <StockRow
-                  key={item.ticker} item={item}
+                  key={item.ticker} item={item} idToken={idToken}
                   expanded={expanded === item.ticker}
                   onToggle={() => {
                     const isExpanding = expanded !== item.ticker;
