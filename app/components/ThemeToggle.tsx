@@ -64,7 +64,7 @@ export default function ThemeToggle() {
         transition: "background 0.15s, border-color 0.15s, color 0.15s",
       }}
     >
-      {dark ? <MoonIcon /> : <BulbIcon />}
+      {dark ? <BulbIcon /> : <MoonIcon />}
     </button>
   );
 }
