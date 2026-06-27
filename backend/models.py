@@ -69,6 +69,13 @@ class StockAnalysis(Base):
     ma_200 = Column(Float)
     rsi = Column(Float)
 
+    # Support / Resistance levels (computed nightly from price history)
+    support_20d = Column(Float)      # 20-day swing low — short-term support floor
+    resistance_20d = Column(Float)   # 20-day swing high — short-term resistance ceiling
+    pivot_point = Column(Float)      # classic pivot: (prev_H + prev_L + prev_C) / 3
+    pivot_r1 = Column(Float)         # resistance 1: 2*pivot - prev_low
+    pivot_s1 = Column(Float)         # support 1:    2*pivot - prev_high
+
     # Analyst data
     analyst_consensus = Column(String)
     analyst_count = Column(Integer)

@@ -108,6 +108,11 @@ def _migrate_db():
                 ("verdict_b", "VARCHAR"),
                 ("verdict_agreement", "BOOLEAN"),
                 ("split_reason", "TEXT"),
+                ("support_20d", "FLOAT"),
+                ("resistance_20d", "FLOAT"),
+                ("pivot_point", "FLOAT"),
+                ("pivot_r1", "FLOAT"),
+                ("pivot_s1", "FLOAT"),
             ]:
                 if col not in sa_cols:
                     conn.execute(text(f"ALTER TABLE stock_analyses ADD COLUMN {col} {typ}"))  # nosemgrep

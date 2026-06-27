@@ -151,6 +151,20 @@ jobs:
             except Exception:
                 edate = None
 
+            # Support / Resistance levels
+            try:
+                recent20 = hist["Close"].tail(20)
+                support_20d    = round(float(recent20.min()), 2)
+                resistance_20d = round(float(recent20.max()), 2)
+                prev_h = float(hist["High"].iloc[-2])
+                prev_l = float(hist["Low"].iloc[-2])
+                prev_c = float(hist["Close"].iloc[-2])
+                pivot  = round((prev_h + prev_l + prev_c) / 3, 2)
+                piv_r1 = round(2 * pivot - prev_l, 2)
+                piv_s1 = round(2 * pivot - prev_h, 2)
+            except Exception:
+                support_20d = resistance_20d = pivot = piv_r1 = piv_s1 = None
+
             # Print summary dict for analysis steps below
             _summary = {
                 "ticker": ticker, "price": round(price,2), "change_pct": round(chg,2),
@@ -160,6 +174,8 @@ jobs:
                 "rsi": round(rsi,1), "analyst": rec,
                 "upside_pct": round(ups,1) if ups else None,
                 "news": news_titles, "earnings_date": edate,
+                "support_20d": support_20d, "resistance_20d": resistance_20d,
+                "pivot": pivot, "piv_r1": piv_r1, "piv_s1": piv_s1,
             }
             print(json.dumps(_summary))
             with open(f"/tmp/summary_{ticker}.json", "w") as f:
@@ -239,7 +255,7 @@ jobs:
 
             ## Step 2 — Compute signal convergence score for each ticker
 
-            Score 7 independent signals (true/false each):
+            Score 8 independent signals (true/false each):
             - oversold_rsi: rsi < 50
             - near_52w_low: range_pct < 30
             - analyst_upside_15pct: upside_pct >= 15
@@ -247,14 +263,16 @@ jobs:
             - positive_fcf: true if analyst consensus is BUY or STRONG_BUY
             - institutional_backing: true by default for large-cap names
             - price_stabilizing: price >= ma50 (or ma50 is null)
+            - near_support: price <= support_20d * 1.03 (within 3% of 20-day support floor)
 
-            convergence_score = count of true signals (0–7)
+            convergence_score = count of true signals (0–8)
             CONVICTION FLOOR: convergence_score < 5 → verdict MUST be WATCH.
 
             ## Step 3a — Your verdict: Claude Sonnet 4.6 (Verdict A)
 
             **Check:** 52-week range position · price vs MA50/MA200 · RSI · analyst consensus ·
-            news sentiment · earnings proximity (within 5 days → is_important_day=true)
+            news sentiment · earnings proximity (within 5 days → is_important_day=true) ·
+            price vs support/resistance levels (use S/R to set precise entry_target and stop_loss)
 
             **Leveraged ETF rules** (SOXL, MVLL, any 3X/2X/L ticker):
             max hold 1–3 days · never hold through earnings · no buy after 15%+ single-day run · tight exit_target
@@ -300,7 +318,7 @@ jobs:
               "scenario_bear_prob": <0-100>,
               "dont_panic_note": "<address >15% drop from prior BUY; otherwise empty string>",
               "signal_convergence_score": <0-7>,
-              "convergence_details": "{\"oversold_rsi\":true/false,\"near_52w_low\":true/false,\"analyst_upside_15pct\":true/false,\"no_binary_risk\":true/false,\"positive_fcf\":true/false,\"institutional_backing\":true/false,\"price_stabilizing\":true/false}"
+              "convergence_details": "{\"oversold_rsi\":true/false,\"near_52w_low\":true/false,\"analyst_upside_15pct\":true/false,\"no_binary_risk\":true/false,\"positive_fcf\":true/false,\"institutional_backing\":true/false,\"price_stabilizing\":true/false,\"near_support\":true/false}"
             }
             ```
             Write the JSON to disk with a bash command, e.g.:
@@ -331,6 +349,9 @@ jobs:
                 d = json.load(f)
 
             news_str = "; ".join(d.get("news", [])[:3])
+            sr_line = ""
+            if d.get("support_20d"):
+                sr_line = f"Support (20d): ${d['support_20d']}  Resistance (20d): ${d.get('resistance_20d','N/A')}  Pivot: ${d.get('pivot','N/A')}  R1: ${d.get('piv_r1','N/A')}  S1: ${d.get('piv_s1','N/A')}"
             prompt = f"""You are an independent stock analyst. Analyze {ticker} and return ONLY valid JSON with no markdown fences.
 
             Data for {ticker}:
@@ -338,6 +359,7 @@ jobs:
             52-week range: ${d.get('lo52', 0):.2f}–${d.get('hi52', 0):.2f} ({d.get('range_pct', 50):.1f}% of range)
             RSI(14): {d.get('rsi', 50):.1f}
             MA50: {d.get('ma50') or 'N/A'}  MA200: {d.get('ma200') or 'N/A'}
+            {sr_line}
             Analyst consensus: {d.get('analyst', 'HOLD')}  Analyst upside: {d.get('upside_pct') or 'N/A'}%
             Recent news: {news_str}
             Next earnings: {d.get('earnings_date') or 'Unknown'}
@@ -417,7 +439,9 @@ jobs:
 
             Price field mapping: price→current_price, change_pct→price_change_pct,
             hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct,
-            ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct.
+            ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct,
+            support_20d→support_20d, resistance_20d→resistance_20d,
+            pivot→pivot_point, piv_r1→pivot_r1, piv_s1→pivot_s1.
 
             Include ALL verdict fields: stop_loss, hold_period, conviction_score, risk_level,
             confidence, bull_case, bear_case, thesis_invalidation, entry_quality,

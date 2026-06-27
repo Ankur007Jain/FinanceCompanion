@@ -223,6 +223,11 @@ class IngestAnalysisRequest(BaseModel):
     ma50: Optional[float] = None
     ma200: Optional[float] = None
     rsi: Optional[float] = None
+    support_20d: Optional[float] = None
+    resistance_20d: Optional[float] = None
+    pivot_point: Optional[float] = None
+    pivot_r1: Optional[float] = None
+    pivot_s1: Optional[float] = None
     analyst_consensus: Optional[str] = None
     analyst_upside_pct: Optional[float] = None
     pe_trailing: Optional[float] = None
