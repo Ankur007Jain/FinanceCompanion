@@ -93,6 +93,25 @@ const VERDICT_META: Record<string, { color: string; bg: string; bd: string; labe
   WATCH: { color: "var(--t-text-muted)", bg: "var(--t-surface-warm)", bd: "var(--t-border)", label: "WATCH" },
 };
 
+function MiniRangeBar({ lo, hi, pct }: { lo?: number | null; hi?: number | null; pct: number }) {
+  const clamp = Math.max(0, Math.min(100, pct));
+  const dotColor = clamp < 33 ? "var(--t-green)" : clamp < 67 ? "var(--t-yellow)" : "var(--t-red)";
+  const fmt = (n: number) => n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${n.toFixed(0)}`;
+  return (
+    <div style={{ marginTop: "0.3rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+        {lo != null && <span style={{ fontSize: "0.58rem", color: "var(--t-text-muted)", fontFamily: MONO, flexShrink: 0 }}>{fmt(lo)}</span>}
+        <div style={{ position: "relative", height: 3, background: "var(--t-border)", borderRadius: 99, flex: 1 }}>
+          <div style={{ position: "absolute", left: 0, width: `${clamp}%`, height: "100%", background: dotColor, borderRadius: 99, opacity: 0.3 }} />
+          <div style={{ position: "absolute", left: `${clamp}%`, top: "50%", transform: "translate(-50%, -50%)", width: 7, height: 7, borderRadius: "50%", background: dotColor, border: "1.5px solid var(--t-surface)" }} />
+        </div>
+        {hi != null && <span style={{ fontSize: "0.58rem", color: "var(--t-text-muted)", fontFamily: MONO, flexShrink: 0 }}>{fmt(hi)}</span>}
+        <span style={{ fontSize: "0.6rem", color: dotColor, fontFamily: MONO, fontWeight: 700, flexShrink: 0 }}>{clamp.toFixed(0)}%</span>
+      </div>
+    </div>
+  );
+}
+
 function RangeBar({ lo, hi, pct }: { lo: number; hi: number; pct: number }) {
   const clamp = Math.max(0, Math.min(100, pct));
   const dotColor = clamp < 33 ? "var(--t-green)" : clamp < 67 ? "var(--t-yellow)" : "var(--t-red)";
@@ -149,8 +168,8 @@ function MaBadge({ price, ma50, ma200 }: { price: number; ma50: number | null; m
   );
 }
 
-function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead, idToken }: {
-  a: Analysis; onChat: () => void; isMobile: boolean;
+function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: {
+  a: Analysis; isMobile: boolean;
   changeSummary?: string | null; daysSinceRead?: number | null;
   idToken: string;
 }) {
@@ -484,25 +503,6 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead, idT
           <div />
         </div>
 
-        {/* Ask AI — full-width CTA */}
-        <div style={{ gridColumn: "1 / -1", paddingTop: "0.5rem" }}>
-          <button
-            onClick={onChat}
-            style={{
-              width: "100%", padding: "13px 20px", borderRadius: 8,
-              background: "var(--t-accent)", color: "#fff", border: "none",
-              fontFamily: MONO, fontWeight: 700, fontSize: "0.88rem",
-              letterSpacing: "0.04em", cursor: "pointer",
-              display: "flex", alignItems: "center", justifyContent: "center", gap: "0.5rem",
-              transition: "opacity 0.15s",
-            }}
-            onMouseOver={e => { e.currentTarget.style.opacity = "0.88"; }}
-            onMouseOut={e => { e.currentTarget.style.opacity = "1"; }}
-          >
-            Ask AI about this →
-          </button>
-        </div>
-
         {/* Fundamentals */}
         {(a.pe_trailing || a.revenue_growth || a.profit_margin || a.beta || a.market_cap || a.sector) && (
           <div style={{ gridColumn: isMobile ? "1" : "1 / -1", borderTop: isMobile ? "none" : "1px solid var(--t-border)", paddingTop: isMobile ? 0 : "1rem" }}>
@@ -685,16 +685,21 @@ function StockRow({
             </div>
           )}
 
-          {/* Row 4: Sparkline + Ask AI (Ask AI hidden when expanded — CTA lives in expanded panel) */}
+          {/* Row 4: 52w mini bar (if available) */}
+          {a?.range_position_pct != null && (
+            <div style={{ marginTop: "0.35rem" }}>
+              <MiniRangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />
+            </div>
+          )}
+
+          {/* Row 5: Sparkline + Ask AI (always visible) */}
           {a && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.5rem" }}>
               {item.close_5d ? <Sparkline prices={item.close_5d} width={120} height={28} /> : <span />}
-              {!expanded && (
-                <button
-                  onClick={e => { e.stopPropagation(); onChat(item.ticker); }}
-                  style={{ fontSize: "0.7rem", fontFamily: MONO, fontWeight: 600, padding: "4px 12px", borderRadius: 6, border: "1px solid var(--t-accent)", background: "transparent", color: "var(--t-accent)", cursor: "pointer" }}
-                >Ask AI →</button>
-              )}
+              <button
+                onClick={e => { e.stopPropagation(); onChat(item.ticker); }}
+                style={{ fontSize: "0.7rem", fontFamily: MONO, fontWeight: 600, padding: "4px 12px", borderRadius: 6, border: "1px solid var(--t-accent)", background: "transparent", color: "var(--t-accent)", cursor: "pointer" }}
+              >Ask AI →</button>
             </div>
           )}
 
@@ -713,7 +718,7 @@ function StockRow({
           onClick={a ? onToggle : undefined}
           style={{
             display: "grid",
-            gridTemplateColumns: "1fr 110px 155px 80px 100px 130px 100px",
+            gridTemplateColumns: "1fr 110px 185px 80px 100px 130px 100px",
             alignItems: "center", padding: "0.85rem 1.25rem",
             cursor: a ? "pointer" : "default", gap: "1rem",
           }}
@@ -741,7 +746,7 @@ function StockRow({
             {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.78rem", color: "var(--t-text-muted)" }}>Pending</span>}
           </div>
 
-          {/* Price + change */}
+          {/* Price + change + 52w mini bar + MA */}
           <div>
             {a?.current_price != null ? (
               <>
@@ -751,7 +756,8 @@ function StockRow({
                     {a.day_change_pct >= 0 ? "▲" : "▼"} {Math.abs(a.day_change_pct).toFixed(2)}%
                   </div>
                 )}
-                {a.current_price != null && (a.ma_50 || a.ma_200) && (
+                {a.range_position_pct != null && <MiniRangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />}
+                {(a.ma_50 || a.ma_200) && (
                   <div style={{ marginTop: "0.15rem" }}>
                     <MaBadge price={a.current_price} ma50={a.ma_50} ma200={a.ma_200} />
                   </div>
@@ -797,9 +803,9 @@ function StockRow({
             {upcomingEvent && <span style={{ fontSize: "0.67rem", color: "var(--t-yellow)", fontFamily: MONO }}>⚡ {upcomingEvent}</span>}
           </div>
 
-          {/* Actions — Ask AI (hidden when expanded) + chevron + remove */}
+          {/* Actions — Ask AI (always visible) + chevron + remove */}
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", justifyContent: "flex-end" }}>
-            {a && !expanded && (
+            {a && (
               <button
                 onClick={e => { e.stopPropagation(); onChat(item.ticker); }}
                 style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 600, padding: "4px 10px", borderRadius: 6, border: "1px solid var(--t-accent)", background: "transparent", color: "var(--t-accent)", cursor: "pointer", whiteSpace: "nowrap" }}
@@ -819,7 +825,7 @@ function StockRow({
         </div>
       )}
 
-      {expanded && a && <ExpandedDetail a={a} onChat={() => onChat(item.ticker)} isMobile={isMobile} changeSummary={item.change_summary} daysSinceRead={item.days_since_read} idToken={idToken} />}
+      {expanded && a && <ExpandedDetail a={a} isMobile={isMobile} changeSummary={item.change_summary} daysSinceRead={item.days_since_read} idToken={idToken} />}
     </div>
   );
 }
@@ -833,7 +839,6 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [loading, setLoading] = useState(true);
   const [ticker, setTicker] = useState("");
   const [companyName, setCompanyName] = useState("");
-  const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -1530,7 +1535,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               };
 
               const colHeaders = !isMobile && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 155px 80px 100px 130px 100px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 185px 80px 100px 130px 100px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
                   {["Stock", "Verdict", "Price", "Conviction", "RSI / Trend", "Signals", ""].map(h => (
                     <div key={h} style={{ fontSize: "0.63rem", color: "var(--t-text-dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
                   ))}
