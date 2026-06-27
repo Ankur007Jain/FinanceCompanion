@@ -1325,8 +1325,10 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               const filterQ = ticker ? ticker.toLowerCase() : query.trim().toLowerCase();
               const filteredDigest = filterQ
                 ? digest.filter(d =>
-                    d.ticker.toLowerCase().includes(filterQ) ||
-                    (d.company_name || "").toLowerCase().includes(filterQ)
+                    ticker
+                      ? d.ticker.toLowerCase() === filterQ
+                      : d.ticker.toLowerCase().includes(filterQ) ||
+                        (d.company_name || "").toLowerCase().includes(filterQ)
                   )
                 : digest;
 
