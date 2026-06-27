@@ -113,6 +113,13 @@ def _migrate_db():
                 ("pivot_point", "FLOAT"),
                 ("pivot_r1", "FLOAT"),
                 ("pivot_s1", "FLOAT"),
+                ("sp500_day_chg", "FLOAT"),
+                ("sector_etf", "VARCHAR"),
+                ("sector_day_chg", "FLOAT"),
+                ("relative_strength_1d", "FLOAT"),
+                ("fh_price", "FLOAT"),
+                ("fh_analyst_consensus", "VARCHAR"),
+                ("data_conflicts", "TEXT"),
             ]:
                 if col not in sa_cols:
                     conn.execute(text(f"ALTER TABLE stock_analyses ADD COLUMN {col} {typ}"))  # nosemgrep
