@@ -33,6 +33,8 @@ class WatchlistItem(Base):
     sector = Column(String)
     is_leveraged = Column(Boolean, default=False)
     added_at = Column(DateTime, default=datetime.utcnow)
+    last_read_analysis_id = Column(String, ForeignKey("stock_analyses.id"), nullable=True)
+    last_read_at = Column(DateTime, nullable=True)
 
 
 class MarketDataCache(Base):
