@@ -129,6 +129,7 @@ class DigestItem(BaseModel):
     has_unread: bool = False
     change_summary: Optional[str] = None
     days_since_read: Optional[int] = None
+    close_5d: Optional[list[float]] = None
 
 
 class CopilotDecisionRequest(BaseModel):

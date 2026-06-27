@@ -1,9 +1,10 @@
+import json
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import StockAnalysis, WatchlistItem
+from models import StockAnalysis, WatchlistItem, MarketDataCache
 from routers.auth import get_current_user
 from schemas import DigestItem, StockAnalysisOut, ImportantFlag, ReportDayOut
 
@@ -87,6 +88,22 @@ def get_digest(id_token: str, db: Session = Depends(get_db)):
             if has_unread and item.last_read_at:
                 days_since_read = (datetime.utcnow() - item.last_read_at).days
 
+        close_5d = None
+        if analysis:
+            cache = (
+                db.query(MarketDataCache)
+                .filter(MarketDataCache.ticker == item.ticker)
+                .order_by(MarketDataCache.cache_date.desc())
+                .first()
+            )
+            if cache and cache.history_json:
+                try:
+                    hist = json.loads(cache.history_json)
+                    closes = [day["Close"] for day in hist if day.get("Close") is not None]
+                    close_5d = [round(c, 2) for c in closes[-7:]] if len(closes) >= 2 else None
+                except Exception:
+                    pass
+
         result.append(DigestItem(
             ticker=item.ticker,
             company_name=item.company_name,
@@ -95,6 +112,7 @@ def get_digest(id_token: str, db: Session = Depends(get_db)):
             has_unread=has_unread,
             change_summary=change_summary,
             days_since_read=days_since_read,
+            close_5d=close_5d,
         ))
     return result
 

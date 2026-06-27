@@ -83,6 +83,7 @@ interface DigestItem {
   has_unread: boolean;
   change_summary: string | null;
   days_since_read: number | null;
+  close_5d: number[] | null;
 }
 
 const VERDICT_META: Record<string, { color: string; bg: string; bd: string; label: string }> = {
@@ -92,11 +93,30 @@ const VERDICT_META: Record<string, { color: string; bg: string; bd: string; labe
   WATCH: { color: "var(--t-text-muted)", bg: "var(--t-surface-warm)", bd: "var(--t-border)", label: "WATCH" },
 };
 
+function MiniRangeBar({ lo, hi, pct }: { lo?: number | null; hi?: number | null; pct: number }) {
+  const clamp = Math.max(0, Math.min(100, pct));
+  const dotColor = clamp < 33 ? "var(--t-green)" : clamp < 67 ? "var(--t-yellow)" : "var(--t-red)";
+  const fmt = (n: number) => n >= 1000 ? `$${(n / 1000).toFixed(1)}k` : `$${n.toFixed(0)}`;
+  return (
+    <div style={{ marginTop: "0.3rem" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.3rem" }}>
+        {lo != null && <span style={{ fontSize: "0.58rem", color: "var(--t-text-muted)", fontFamily: MONO, flexShrink: 0 }}>{fmt(lo)}</span>}
+        <div style={{ position: "relative", height: 3, background: "var(--t-border)", borderRadius: 99, flex: 1 }}>
+          <div style={{ position: "absolute", left: 0, width: `${clamp}%`, height: "100%", background: dotColor, borderRadius: 99, opacity: 0.3 }} />
+          <div style={{ position: "absolute", left: `${clamp}%`, top: "50%", transform: "translate(-50%, -50%)", width: 7, height: 7, borderRadius: "50%", background: dotColor, border: "1.5px solid var(--t-surface)" }} />
+        </div>
+        {hi != null && <span style={{ fontSize: "0.58rem", color: "var(--t-text-muted)", fontFamily: MONO, flexShrink: 0 }}>{fmt(hi)}</span>}
+        <span style={{ fontSize: "0.6rem", color: dotColor, fontFamily: MONO, fontWeight: 700, flexShrink: 0 }}>{clamp.toFixed(0)}%</span>
+      </div>
+    </div>
+  );
+}
+
 function RangeBar({ lo, hi, pct }: { lo: number; hi: number; pct: number }) {
   const clamp = Math.max(0, Math.min(100, pct));
   const dotColor = clamp < 33 ? "var(--t-green)" : clamp < 67 ? "var(--t-yellow)" : "var(--t-red)";
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", minWidth: 130 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
       <div style={{ position: "relative", height: 5, background: "var(--t-border)", borderRadius: 99 }}>
         <div style={{
           position: "absolute", left: 0, width: `${clamp}%`, height: "100%",
@@ -133,14 +153,14 @@ function MaBadge({ price, ma50, ma200 }: { price: number; ma50: number | null; m
   const above50  = ma50  ? price > ma50  : null;
   const above200 = ma200 ? price > ma200 : null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+    <div style={{ display: "flex", gap: "0.4rem", flexWrap: "wrap" }}>
       {ma50 != null && (
-        <span style={{ fontSize: "0.68rem", color: above50 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>
+        <span style={{ fontSize: "0.64rem", color: above50 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>
           {above50 ? "▲" : "▼"} MA50
         </span>
       )}
       {ma200 != null && (
-        <span style={{ fontSize: "0.68rem", color: above200 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>
+        <span style={{ fontSize: "0.64rem", color: above200 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>
           {above200 ? "▲" : "▼"} MA200
         </span>
       )}
@@ -148,8 +168,8 @@ function MaBadge({ price, ma50, ma200 }: { price: number; ma50: number | null; m
   );
 }
 
-function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead, idToken }: {
-  a: Analysis; onChat: () => void; isMobile: boolean;
+function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: {
+  a: Analysis; isMobile: boolean;
   changeSummary?: string | null; daysSinceRead?: number | null;
   idToken: string;
 }) {
@@ -247,6 +267,51 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead, idT
         </div>
       )}
 
+      {/* ── Conviction Hero Strip ── */}
+      {(a.conviction_score != null || a.risk_level || a.hold_period || eqMeta || hfMeta) && (
+        <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--t-border-light)", display: "flex", alignItems: "flex-start", gap: "2rem", flexWrap: "wrap", background: "var(--t-surface)" }}>
+          {a.conviction_score != null && (
+            <div>
+              <div style={{ display: "flex", alignItems: "baseline", gap: "0.25rem" }}>
+                <span style={{ fontSize: "2.4rem", fontWeight: 700, fontFamily: MONO, lineHeight: 1, color: a.conviction_score >= 70 ? "var(--t-green)" : a.conviction_score >= 45 ? "var(--t-yellow)" : "var(--t-red)" }}>{a.conviction_score}</span>
+                <span style={{ fontSize: "0.9rem", color: "var(--t-text-dim)", fontFamily: MONO }}>/100</span>
+              </div>
+              <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>Conviction</div>
+            </div>
+          )}
+          {a.risk_level && (
+            <div>
+              <div style={{ fontSize: "1rem", fontWeight: 700, fontFamily: MONO, color: a.risk_level === "LOW" ? "var(--t-green)" : a.risk_level === "MEDIUM" || a.risk_level === "MED" ? "var(--t-yellow)" : "var(--t-red)" }}>{a.risk_level}</div>
+              <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>Risk</div>
+            </div>
+          )}
+          {a.hold_period && (
+            <div>
+              <div style={{ fontSize: "1rem", fontWeight: 600, fontFamily: SANS, color: "var(--t-text)" }}>{a.hold_period}</div>
+              <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>Hold Period</div>
+            </div>
+          )}
+          {eqMeta && (
+            <div>
+              <div style={{ fontSize: "1rem", fontWeight: 600, fontFamily: SANS, color: eqMeta.color }}>{eqMeta.label}</div>
+              <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>Entry</div>
+            </div>
+          )}
+          {hfMeta && (
+            <div>
+              <div style={{ fontSize: "1rem", fontWeight: 600, fontFamily: SANS, color: hfMeta.color }}>{hfMeta.label}</div>
+              <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>Strategy</div>
+            </div>
+          )}
+          {a.position_size_pct && (
+            <div>
+              <div style={{ fontSize: "1rem", fontWeight: 700, fontFamily: MONO, color: "var(--t-accent)" }}>{a.position_size_pct}</div>
+              <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>Position Size</div>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* ── Language / mode toggles ── */}
       <div style={{ padding: "8px 20px", borderBottom: "1px solid var(--t-border-light)", display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
         {(["en", "hi"] as const).map(l => (
@@ -283,25 +348,31 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead, idT
         ))}
       </div>
 
-      {/* ── Trust badges: Entry Quality · Hold & Forget · Position Size · Dual-Agent ── */}
-      {(eqMeta || hfMeta || a.position_size_pct || a.verdict_agreement != null) && (
-        <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--t-border-light)" }}>
+      {/* ── 52-Week Range ── */}
+      {a.week_52_low != null && a.week_52_high != null && a.range_position_pct != null && (
+        <div style={{ padding: "12px 20px", borderBottom: "1px solid var(--t-border-light)", display: "flex", alignItems: "center", gap: "2rem", flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>52-Week Range</div>
+            <div style={{ width: 320 }}>
+              <RangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />
+            </div>
+          </div>
+          {(a.stock_52w_change != null || a.sp500_52w_change != null) && (
+            <div>
+              <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>vs S&P 500 (52w)</div>
+              <div style={{ display: "flex", gap: "1rem", alignItems: "baseline" }}>
+                {a.stock_52w_change != null && <span style={{ fontWeight: 700, fontSize: "1rem", color: a.stock_52w_change >= 0 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>{a.stock_52w_change >= 0 ? "+" : ""}{a.stock_52w_change.toFixed(1)}%</span>}
+                {a.sp500_52w_change != null && <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)", fontFamily: MONO }}>S&P {a.sp500_52w_change >= 0 ? "+" : ""}{a.sp500_52w_change.toFixed(1)}%</span>}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Dual-Agent Agreement ── */}
+      {a.verdict_agreement != null && (
+        <div style={{ padding: "10px 20px", borderBottom: "1px solid var(--t-border-light)" }}>
           <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "8px 12px" }}>
-            {eqMeta && (
-              <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: eqMeta.color, background: eqMeta.bg, border: `1px solid ${eqMeta.bd}` }}>
-                Entry: {eqMeta.label}
-              </span>
-            )}
-            {hfMeta && (
-              <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: hfMeta.color, background: hfMeta.bg, border: `1px solid ${hfMeta.bd}` }}>
-                {hfMeta.label}
-              </span>
-            )}
-            {a.position_size_pct && (
-              <span style={{ fontSize: "0.72rem", fontFamily: MONO, padding: "4px 12px", borderRadius: 20, color: "var(--t-accent)", background: "var(--t-accent-bg)", border: "1px solid var(--t-accent-border)" }}>
-                Suggested: <strong>{a.position_size_pct}</strong> of portfolio
-              </span>
-            )}
             {a.verdict_agreement === true && (
               <span style={{ fontSize: "0.72rem", fontFamily: MONO, fontWeight: 700, padding: "4px 12px", borderRadius: 20, color: "var(--t-green)", background: "var(--t-green-bg)", border: "1px solid var(--t-green-mid)" }}>
                 ✓ Both AI models agree
@@ -314,9 +385,7 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead, idT
             )}
           </div>
           {a.verdict_agreement === false && a.split_reason && (
-            <div style={{ marginTop: "8px", fontSize: "0.7rem", color: "var(--t-yellow)", lineHeight: 1.55, fontStyle: "italic" }}>
-              {a.split_reason}
-            </div>
+            <div style={{ marginTop: "6px", fontSize: "0.7rem", color: "var(--t-yellow)", lineHeight: 1.55, fontStyle: "italic" }}>{a.split_reason}</div>
           )}
         </div>
       )}
@@ -357,39 +426,25 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead, idT
       {/* ── Main content — 3-col on desktop, stacked on mobile ── */}
       <div style={{ padding: "1.25rem 1.5rem", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? "1.25rem" : "1.5rem" }}>
 
-        {/* Conviction + bull/bear */}
-        {(a.conviction_score != null || bull_case || bear_case) && (
-          <div style={{ gridColumn: isMobile ? "1" : "1 / -1", display: "flex", gap: "1.5rem", alignItems: "flex-start", flexWrap: "wrap" }}>
-            {a.conviction_score != null && (
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 4, minWidth: 90 }}>
-                <span style={{ fontSize: "1.6rem", fontWeight: 600, fontFamily: MONO, color: a.conviction_score >= 70 ? "var(--t-green)" : a.conviction_score >= 50 ? "var(--t-yellow)" : "var(--t-red)" }}>
-                  {a.conviction_score}<span style={{ fontSize: "0.8rem", color: "var(--t-text-muted)" }}>/100</span>
-                </span>
-                <span style={{ ...secLabel, marginBottom: 0 }}>Conviction</span>
-                <div style={{ display: "flex", gap: 6 }}>
-                  {a.risk_level && <span style={{ fontSize: "0.62rem", fontFamily: MONO, fontWeight: 600, padding: "2px 7px", borderRadius: 20, color: a.risk_level === "LOW" ? "var(--t-green)" : a.risk_level === "MED" ? "var(--t-yellow)" : "var(--t-red)", background: a.risk_level === "LOW" ? "var(--t-green-bg)" : a.risk_level === "MED" ? "var(--t-yellow-bg)" : "var(--t-red-bg)", border: `1px solid ${a.risk_level === "LOW" ? "var(--t-green-border)" : a.risk_level === "MED" ? "var(--t-yellow-border)" : "var(--t-red-border)"}` }}>{a.risk_level} RISK</span>}
-                  {a.confidence && <span style={{ fontSize: "0.62rem", fontFamily: MONO, color: "var(--t-text-muted)" }}>{a.confidence} conf.</span>}
-                </div>
+        {/* Bull / bear / thesis — conviction lives in the hero strip above */}
+        {(bull_case || bear_case || thesis_invalidation) && (
+          <div style={{ gridColumn: isMobile ? "1" : "1 / -1", display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+            {bull_case && (
+              <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "var(--t-text-dark)", lineHeight: 1.5 }}>
+                <span style={{ color: "var(--t-green)", fontWeight: 700, flexShrink: 0 }}>Bull</span><span>{bull_case}</span>
               </div>
             )}
-            <div style={{ flex: 1, minWidth: 240, display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-              {bull_case && (
-                <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "var(--t-text-dark)", lineHeight: 1.5 }}>
-                  <span style={{ color: "var(--t-green)", fontWeight: 700, flexShrink: 0 }}>Bull</span><span>{bull_case}</span>
-                </div>
-              )}
-              {bear_case && (
-                <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "var(--t-text-dark)", lineHeight: 1.5 }}>
-                  <span style={{ color: "var(--t-red)", fontWeight: 700, flexShrink: 0 }}>Bear</span><span>{bear_case}</span>
-                </div>
-              )}
-              {thesis_invalidation && (
-                <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.78rem", color: "var(--t-text-secondary)", lineHeight: 1.5 }}>
-                  <span style={{ color: "var(--t-text-muted)", fontWeight: 600, flexShrink: 0, fontFamily: MONO, fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", paddingTop: 2 }}>Flips if</span>
-                  <span>{thesis_invalidation}</span>
-                </div>
-              )}
-            </div>
+            {bear_case && (
+              <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "var(--t-text-dark)", lineHeight: 1.5 }}>
+                <span style={{ color: "var(--t-red)", fontWeight: 700, flexShrink: 0 }}>Bear</span><span>{bear_case}</span>
+              </div>
+            )}
+            {thesis_invalidation && (
+              <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.78rem", color: "var(--t-text-secondary)", lineHeight: 1.5 }}>
+                <span style={{ color: "var(--t-text-muted)", fontWeight: 600, flexShrink: 0, fontFamily: MONO, fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", paddingTop: 2 }}>Flips if</span>
+                <span>{thesis_invalidation}</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -445,9 +500,7 @@ function ExpandedDetail({ a, onChat, isMobile, changeSummary, daysSinceRead, idT
               <div style={{ fontSize: "0.78rem", lineHeight: 1.6, color: "var(--t-text-dark)" }}>{a.ripple_analysis}</div>
             </div>
           )}
-          <button onClick={onChat} style={{ marginTop: "auto", padding: "0.5rem 1rem", background: "var(--t-accent)", color: "var(--t-surface)", border: "none", borderRadius: 7, cursor: "pointer", fontWeight: 600, fontSize: "0.82rem", alignSelf: "flex-start", fontFamily: SANS }}>
-            Ask AI about this →
-          </button>
+          <div />
         </div>
 
         {/* Fundamentals */}
@@ -519,13 +572,32 @@ function VerdictBadge({ vm }: { vm: { color: string; bg: string; bd: string; lab
   return (
     <div style={{
       display: "inline-flex", alignItems: "center", justifyContent: "center",
-      padding: "0.3rem 0.7rem", background: vm.bg, color: vm.color,
-      border: `1px solid ${vm.bd}`, borderRadius: 20,
-      fontWeight: 700, fontSize: "0.75rem", letterSpacing: "0.06em",
-      fontFamily: MONO, whiteSpace: "nowrap",
+      padding: "0.3rem 0.85rem", background: vm.color, color: "#fff",
+      borderRadius: 6, fontWeight: 700, fontSize: "0.78rem",
+      letterSpacing: "0.08em", fontFamily: MONO, whiteSpace: "nowrap",
     }}>
       {vm.label}
     </div>
+  );
+}
+
+function Sparkline({ prices, width = 88, height = 30 }: { prices: number[]; width?: number; height?: number }) {
+  if (!prices || prices.length < 2) return <span style={{ color: "var(--t-text-dim)", fontSize: "0.75rem" }}>—</span>;
+  const min = Math.min(...prices);
+  const max = Math.max(...prices);
+  const range = max - min || 1;
+  const pad = 3;
+  const pts = prices.map((p, i) => {
+    const x = (i / (prices.length - 1)) * (width - 2) + 1;
+    const y = height - pad - ((p - min) / range) * (height - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  const isUp = prices[prices.length - 1] >= prices[0];
+  const stroke = isUp ? "var(--t-green)" : "var(--t-red)";
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: "block", overflow: "visible" }}>
+      <polyline points={pts} fill="none" stroke={stroke} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   );
 }
 
@@ -557,192 +629,203 @@ function StockRow({
     }}>
       {isMobile ? (
         /* ── Mobile card layout ── */
-        <div onClick={a ? onToggle : undefined} style={{ padding: "0.9rem 1rem", cursor: a ? "pointer" : "default" }}>
-          {/* Row 1: Ticker + Verdict + Remove */}
-          <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "0.5rem" }}>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", flexWrap: "wrap" }}>
-                <span style={{ fontWeight: 700, fontSize: "1rem", fontFamily: MONO, color: "var(--t-text)" }}>{item.ticker}</span>
-                {showUnreadDot && <span title="New analysis — unread" style={{ fontSize: "0.55rem", fontWeight: 700, fontFamily: MONO, padding: "1px 5px", borderRadius: 10, background: "var(--t-accent)", color: "#fff", display: "inline-block", flexShrink: 0, lineHeight: "1.4" }}>NEW</span>}
-                {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.78rem" }}>⭐</span>}
-                {item.is_leveraged && (
-                  <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "var(--t-accent-light)", color: "var(--t-accent)", border: "1px solid var(--t-accent-border)", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>
-                )}
-                {age && (
-                  <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "var(--t-border-alt)", color: "var(--t-text-muted)", borderRadius: 4, fontFamily: MONO }}>{age}</span>
-                )}
-              </div>
-              {item.company_name && (
-                <div style={{ fontSize: "0.72rem", color: "var(--t-text-muted)", marginTop: "0.15rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {item.company_name}
-                </div>
-              )}
+        <div onClick={a ? onToggle : undefined} style={{ padding: "0.85rem 1rem", cursor: a ? "pointer" : "default" }}>
+          {/* Row 1: Ticker + badges + Verdict */}
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", minWidth: 0, flex: 1 }}>
+              <span style={{ fontWeight: 700, fontSize: "1.05rem", fontFamily: MONO, color: "var(--t-text)" }}>{item.ticker}</span>
+              {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.78rem" }}>⭐</span>}
+              {showUnreadDot && <span style={{ fontSize: "0.52rem", fontWeight: 700, fontFamily: MONO, padding: "1px 5px", borderRadius: 10, background: "var(--t-accent)", color: "#fff", flexShrink: 0, lineHeight: "1.4" }}>NEW</span>}
+              {item.is_leveraged && <span style={{ fontSize: "0.58rem", padding: "0.1rem 0.35rem", background: "var(--t-accent-light)", color: "var(--t-accent)", border: "1px solid var(--t-accent-border)", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
-              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.15rem" }}>
-                {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.78rem", color: "var(--t-text-muted)" }}>Pending</span>}
-                {a?.verdict_agreement === true && (
-                  <span style={{ fontSize: "0.55rem", color: "var(--t-green)", fontFamily: MONO, fontWeight: 600 }}>✓ agree</span>
-                )}
-                {a?.verdict_agreement === false && (
-                  <span style={{ fontSize: "0.55rem", color: "var(--t-yellow)", fontFamily: MONO, fontWeight: 600 }}>⚠ split</span>
-                )}
-              </div>
-              <button
-                onClick={e => { e.stopPropagation(); onRemove(item.ticker); }}
-                style={{ background: "none", border: "none", cursor: "pointer", color: "var(--t-text-dim)", fontSize: "0.82rem", padding: "0.2rem 0.3rem", lineHeight: 1 }}
-              >✕</button>
+              {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)" }}>Pending</span>}
+              <button onClick={e => { e.stopPropagation(); onRemove(item.ticker); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--t-text-dim)", fontSize: "0.82rem", padding: "0.2rem 0.3rem", lineHeight: 1, opacity: 0.4 }}>✕</button>
             </div>
           </div>
 
-          {/* Row 2: Price + change | RSI + Trend */}
+          {/* Row 2: Company + age + dual-agent agreement */}
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginTop: "0.25rem", flexWrap: "wrap" }}>
+            {item.company_name && <span style={{ fontSize: "0.72rem", color: "var(--t-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.company_name}</span>}
+            {age && <span style={{ fontSize: "0.62rem", color: "var(--t-text-dim)", fontFamily: MONO, flexShrink: 0 }}>· {age}</span>}
+            {a?.verdict_agreement === true && <span style={{ fontSize: "0.58rem", color: "var(--t-green)", fontFamily: MONO, fontWeight: 600 }}>✓ agree</span>}
+            {a?.verdict_agreement === false && <span style={{ fontSize: "0.58rem", color: "var(--t-yellow)", fontFamily: MONO, fontWeight: 600 }}>⚠ split</span>}
+          </div>
+
+          {/* Row 3: Price + change · RSI · Conviction */}
           {a && (
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.6rem", gap: "0.5rem" }}>
-              <div style={{ display: "flex", alignItems: "baseline", gap: "0.5rem" }}>
-                {a.current_price != null && (
-                  <>
-                    <span style={{ fontWeight: 700, fontSize: "1.05rem", fontFamily: MONO, color: "var(--t-text)" }}>${a.current_price.toFixed(2)}</span>
-                    {a.day_change_pct != null && (
-                      <span style={{ fontSize: "0.78rem", color: chgColor, fontWeight: 600, fontFamily: MONO }}>
-                        {a.day_change_pct >= 0 ? "▲" : "▼"}{Math.abs(a.day_change_pct).toFixed(2)}%
-                      </span>
-                    )}
-                  </>
-                )}
-              </div>
-              <div style={{ display: "flex", alignItems: "center", gap: "0.35rem" }}>
-                {a.rsi != null && <RsiPill rsi={a.rsi} />}
-                {a.current_price != null && <MaBadge price={a.current_price} ma50={a.ma_50} ma200={a.ma_200} />}
-              </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.6rem", marginTop: "0.5rem", flexWrap: "wrap" }}>
+              {a.current_price != null && (
+                <>
+                  <span style={{ fontWeight: 700, fontSize: "1rem", fontFamily: MONO, color: "var(--t-text)" }}>${a.current_price.toFixed(2)}</span>
+                  {a.day_change_pct != null && (
+                    <span style={{ fontSize: "0.75rem", color: chgColor, fontWeight: 600, fontFamily: MONO }}>
+                      {a.day_change_pct >= 0 ? "▲" : "▼"}{Math.abs(a.day_change_pct).toFixed(2)}%
+                    </span>
+                  )}
+                </>
+              )}
+              {a.rsi != null && (
+                <span style={{ fontSize: "0.72rem", fontFamily: MONO, color: a.rsi >= 70 ? "var(--t-red)" : a.rsi <= 30 ? "var(--t-green)" : "var(--t-text-muted)" }}>
+                  RSI {a.rsi.toFixed(0)}{a.rsi >= 70 ? " OB" : a.rsi <= 30 ? " OS" : ""}
+                </span>
+              )}
+              {a.conviction_score != null && (
+                <span style={{ fontSize: "0.72rem", fontFamily: MONO, color: "var(--t-text-secondary)", fontWeight: 600 }}>
+                  · {a.conviction_score}/100
+                </span>
+              )}
+              {a.current_price != null && (a.ma_50 || a.ma_200) && (
+                <MaBadge price={a.current_price} ma50={a.ma_50} ma200={a.ma_200} />
+              )}
+              {a.analyst_consensus && (
+                <span style={{ fontSize: "0.7rem", color: "var(--t-text-muted)", fontFamily: MONO }}>Analysts: <span style={{ color: "var(--t-text)", fontWeight: 600 }}>{a.analyst_consensus}</span></span>
+              )}
+              {upcomingEvent && <span style={{ fontSize: "0.68rem", color: "var(--t-yellow)" }}>⚡ {upcomingEvent}</span>}
             </div>
           )}
 
-          {/* Row 3: 52-week range + analyst + event */}
+          {/* Row 4: 52w mini bar (if available) */}
+          {a?.range_position_pct != null && (
+            <div style={{ marginTop: "0.35rem" }}>
+              <MiniRangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />
+            </div>
+          )}
+
+          {/* Row 5: Sparkline + Ask AI (always visible) */}
           {a && (
-            <div style={{ marginTop: "0.55rem", display: "flex", flexDirection: "column", gap: "0.35rem" }}>
-              {a.week_52_low != null && a.week_52_high != null && a.range_position_pct != null && (
-                <RangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />
-              )}
-              <div style={{ display: "flex", gap: "0.75rem", flexWrap: "wrap" }}>
-                {a.analyst_consensus && (
-                  <span style={{ fontSize: "0.7rem", color: "var(--t-text-muted)" }}>
-                    Analysts: <span style={{ color: "var(--t-text)", fontWeight: 600 }}>{a.analyst_consensus}</span>
-                  </span>
-                )}
-                {upcomingEvent && (
-                  <span style={{ fontSize: "0.7rem", color: "var(--t-yellow)" }}>⚡ {upcomingEvent}</span>
-                )}
-              </div>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.5rem" }}>
+              {item.close_5d ? <Sparkline prices={item.close_5d} width={120} height={28} /> : <span />}
+              <button
+                onClick={e => { e.stopPropagation(); onChat(item.ticker); }}
+                style={{ fontSize: "0.7rem", fontFamily: MONO, fontWeight: 600, padding: "4px 12px", borderRadius: 6, border: "1px solid var(--t-accent)", background: "transparent", color: "var(--t-accent)", cursor: "pointer" }}
+              >Ask AI →</button>
             </div>
           )}
 
           {!a && <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "var(--t-text-muted)" }}>No analysis yet</div>}
 
           {a && (
-            <div style={{ marginTop: "0.5rem", textAlign: "right" }}>
-              <span style={{ color: "var(--t-text-muted)", fontSize: "0.68rem", transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block" }}>▼</span>
+            <div style={{ marginTop: "0.4rem", textAlign: "right" }}>
+              <span style={{ color: "var(--t-text-dim)", fontSize: "0.68rem", transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block" }}>▼</span>
             </div>
           )}
         </div>
       ) : (
         /* ── Desktop grid layout ── */
+        /* Columns: STOCK | VERDICT | PRICE | CONVICTION | RSI/TREND | SIGNALS | ACTIONS */
         <div
           onClick={a ? onToggle : undefined}
           style={{
             display: "grid",
-            gridTemplateColumns: "200px 100px 120px 180px 70px 100px 1fr 48px",
-            alignItems: "center", padding: "0.9rem 1.25rem",
+            gridTemplateColumns: "1fr 110px 185px 80px 100px 130px 100px",
+            alignItems: "center", padding: "0.85rem 1.25rem",
             cursor: a ? "pointer" : "default", gap: "1rem",
           }}
         >
-          {/* Stock */}
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
-              <span style={{ fontWeight: 600, fontSize: "0.95rem", fontFamily: MONO, color: "var(--t-text)" }}>{item.ticker}</span>
-              {showUnreadDot && <span title="New analysis — unread" style={{ fontSize: "0.55rem", fontWeight: 700, fontFamily: MONO, padding: "1px 5px", borderRadius: 10, background: "var(--t-accent)", color: "#fff", display: "inline-block", flexShrink: 0, lineHeight: "1.4" }}>NEW</span>}
-              {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.75rem" }}>⭐</span>}
-              {item.is_leveraged && (
-                <span style={{ fontSize: "0.6rem", padding: "0.1rem 0.35rem", background: "var(--t-accent-light)", color: "var(--t-accent)", border: "1px solid var(--t-accent-border)", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>
-              )}
+          {/* Stock — all inline */}
+          <div style={{ minWidth: 0 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", overflow: "hidden" }}>
+              <span style={{ fontWeight: 700, fontSize: "0.98rem", fontFamily: MONO, color: "var(--t-text)", flexShrink: 0 }}>{item.ticker}</span>
+              {a?.is_important_day && <span title={a.importance_reason ?? ""} style={{ fontSize: "0.75rem", flexShrink: 0 }}>⭐</span>}
+              {showUnreadDot && <span style={{ fontSize: "0.52rem", fontWeight: 700, fontFamily: MONO, padding: "1px 5px", borderRadius: 10, background: "var(--t-accent)", color: "#fff", flexShrink: 0, lineHeight: "1.4" }}>NEW</span>}
+              {item.is_leveraged && <span style={{ fontSize: "0.58rem", padding: "0.1rem 0.35rem", background: "var(--t-accent-light)", color: "var(--t-accent)", border: "1px solid var(--t-accent-border)", borderRadius: 4, fontWeight: 700, fontFamily: MONO, flexShrink: 0 }}>3X</span>}
+              {item.company_name && <span style={{ fontSize: "0.72rem", color: "var(--t-text-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>· {item.company_name}</span>}
+              {age && <span style={{ fontSize: "0.62rem", color: "var(--t-text-dim)", fontFamily: MONO, flexShrink: 0 }}>· {age}</span>}
             </div>
-            {item.company_name && (
-              <div style={{ fontSize: "0.72rem", color: "var(--t-text-muted)", marginTop: "0.15rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {item.company_name}
-              </div>
-            )}
-            {age && (
-              <div style={{ marginTop: "0.2rem" }}>
-                <span style={{ fontSize: "0.62rem", padding: "0.1rem 0.4rem", background: "var(--t-border-alt)", color: "var(--t-text-muted)", borderRadius: 4, fontFamily: MONO }}>{age}</span>
+            {(a?.verdict_agreement === true || a?.verdict_agreement === false) && (
+              <div style={{ marginTop: "0.15rem" }}>
+                {a.verdict_agreement === true && <span style={{ fontSize: "0.58rem", color: "var(--t-green)", fontFamily: MONO, fontWeight: 600 }}>✓ agree</span>}
+                {a.verdict_agreement === false && <span style={{ fontSize: "0.58rem", color: "var(--t-yellow)", fontFamily: MONO, fontWeight: 600 }}>⚠ split</span>}
               </div>
             )}
           </div>
 
-          {/* Verdict */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
+          {/* Verdict — solid block */}
+          <div>
             {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.78rem", color: "var(--t-text-muted)" }}>Pending</span>}
-            {a?.verdict_agreement === true && (
-              <span style={{ fontSize: "0.58rem", color: "var(--t-green)", fontFamily: MONO, fontWeight: 600 }}>✓ agree</span>
-            )}
-            {a?.verdict_agreement === false && (
-              <span style={{ fontSize: "0.58rem", color: "var(--t-yellow)", fontFamily: MONO, fontWeight: 600 }}>⚠ split</span>
-            )}
           </div>
 
-          {/* Price */}
+          {/* Price + change + 52w mini bar + MA */}
           <div>
             {a?.current_price != null ? (
               <>
-                <div style={{ fontWeight: 600, fontSize: "0.95rem", fontFamily: MONO, color: "var(--t-text)" }}>${a.current_price.toFixed(2)}</div>
+                <div style={{ fontWeight: 700, fontSize: "0.98rem", fontFamily: MONO, color: "var(--t-text)" }}>${a.current_price.toFixed(2)}</div>
                 {a.day_change_pct != null && (
                   <div style={{ fontSize: "0.72rem", color: chgColor, fontWeight: 600, fontFamily: MONO }}>
                     {a.day_change_pct >= 0 ? "▲" : "▼"} {Math.abs(a.day_change_pct).toFixed(2)}%
+                  </div>
+                )}
+                {a.range_position_pct != null && <MiniRangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />}
+                {(a.ma_50 || a.ma_200) && (
+                  <div style={{ marginTop: "0.15rem" }}>
+                    <MaBadge price={a.current_price} ma50={a.ma_50} ma200={a.ma_200} />
                   </div>
                 )}
               </>
             ) : <span style={{ color: "var(--t-text-muted)", fontSize: "0.82rem" }}>—</span>}
           </div>
 
-          {/* 52-Week Range */}
-          {a?.week_52_low != null && a?.week_52_high != null && a?.range_position_pct != null
-            ? <RangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />
-            : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>}
-
-          {/* RSI */}
-          {a?.rsi != null ? <RsiPill rsi={a.rsi} /> : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>}
-
-          {/* Trend */}
-          {a?.current_price != null
-            ? <MaBadge price={a.current_price} ma50={a.ma_50} ma200={a.ma_200} />
-            : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>}
-
-          {/* Signal */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-            {a?.analyst_consensus && (
-              <span style={{ fontSize: "0.7rem", color: "var(--t-text-muted)" }}>
-                Analysts: <span style={{ color: "var(--t-text)", fontWeight: 600 }}>{a.analyst_consensus}</span>
-              </span>
-            )}
-            {upcomingEvent && <span style={{ fontSize: "0.7rem", color: "var(--t-yellow)" }}>⚡ {upcomingEvent}</span>}
-            {!a && <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)" }}>No analysis yet</span>}
+          {/* Conviction — hero number */}
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+            {a?.conviction_score != null ? (
+              <>
+                <span style={{ fontSize: "1.3rem", fontWeight: 700, fontFamily: MONO, color: a.conviction_score >= 70 ? "var(--t-green)" : a.conviction_score >= 45 ? "var(--t-yellow)" : "var(--t-red)", lineHeight: 1 }}>{a.conviction_score}</span>
+                <span style={{ fontSize: "0.58rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.05em" }}>/100</span>
+              </>
+            ) : <span style={{ color: "var(--t-text-muted)", fontSize: "0.82rem" }}>—</span>}
           </div>
 
-          {/* Expand + Remove */}
-          <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", justifyContent: "flex-end" }}>
+          {/* Trend — sparkline */}
+          <div style={{ display: "flex", alignItems: "center" }}>
+            {item.close_5d ? <Sparkline prices={item.close_5d} width={88} height={30} /> : (
+              a?.rsi != null ? <RsiPill rsi={a.rsi} /> : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>
+            )}
+          </div>
+
+          {/* Signals — convergence score + analyst + event (NOT RSI — that's in RSI/Trend) */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+            {a?.signal_convergence_score != null ? (
+              <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
+                <span style={{ fontWeight: 700, fontSize: "1.05rem", fontFamily: MONO, color: a.signal_convergence_score >= 6 ? "var(--t-green)" : a.signal_convergence_score >= 4 ? "var(--t-yellow)" : "var(--t-red)", lineHeight: 1 }}>
+                  {a.signal_convergence_score}
+                </span>
+                <span style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO }}>/10</span>
+              </div>
+            ) : (
+              a?.analyst_consensus ? null : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>
+            )}
+            {a?.analyst_consensus && (
+              <span style={{ fontSize: "0.67rem", color: "var(--t-text-muted)", fontFamily: MONO, lineHeight: 1.2 }}>
+                <span style={{ color: "var(--t-text)", fontWeight: 600 }}>{a.analyst_consensus}</span> analysts
+              </span>
+            )}
+            {upcomingEvent && <span style={{ fontSize: "0.67rem", color: "var(--t-yellow)", fontFamily: MONO }}>⚡ {upcomingEvent}</span>}
+          </div>
+
+          {/* Actions — Ask AI (always visible) + chevron + remove */}
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", justifyContent: "flex-end" }}>
             {a && (
-              <span style={{ color: "var(--t-text-muted)", fontSize: "0.72rem", transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block" }}>▼</span>
+              <button
+                onClick={e => { e.stopPropagation(); onChat(item.ticker); }}
+                style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 600, padding: "4px 10px", borderRadius: 6, border: "1px solid var(--t-accent)", background: "transparent", color: "var(--t-accent)", cursor: "pointer", whiteSpace: "nowrap" }}
+              >Ask AI →</button>
+            )}
+            {a && (
+              <span style={{ color: "var(--t-text-dim)", fontSize: "0.72rem", transition: "transform 0.2s", transform: expanded ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block" }}>▼</span>
             )}
             <button
               onClick={e => { e.stopPropagation(); onRemove(item.ticker); }}
               title="Remove from watchlist"
-              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--t-text-muted)", fontSize: "0.82rem", padding: "0.2rem 0.3rem", borderRadius: 4, lineHeight: 1, opacity: 0.5 }}
-              onMouseOver={e => { e.currentTarget.style.color = "var(--t-red)"; e.currentTarget.style.opacity = "1"; }}
-              onMouseOut={e => { e.currentTarget.style.color = "var(--t-text-muted)"; e.currentTarget.style.opacity = "0.5"; }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: "var(--t-text-muted)", fontSize: "0.82rem", padding: "0.2rem 0.3rem", borderRadius: 4, lineHeight: 1, opacity: 0 }}
+              onMouseOver={e => { e.currentTarget.style.opacity = "1"; e.currentTarget.style.color = "var(--t-red)"; }}
+              onMouseOut={e => { e.currentTarget.style.opacity = "0"; e.currentTarget.style.color = "var(--t-text-muted)"; }}
             >✕</button>
           </div>
         </div>
       )}
 
-      {expanded && a && <ExpandedDetail a={a} onChat={() => onChat(item.ticker)} isMobile={isMobile} changeSummary={item.change_summary} daysSinceRead={item.days_since_read} idToken={idToken} />}
+      {expanded && a && <ExpandedDetail a={a} isMobile={isMobile} changeSummary={item.change_summary} daysSinceRead={item.days_since_read} idToken={idToken} />}
     </div>
   );
 }
@@ -756,7 +839,6 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [loading, setLoading] = useState(true);
   const [ticker, setTicker] = useState("");
   const [companyName, setCompanyName] = useState("");
-  const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [query, setQuery] = useState("");
@@ -840,7 +922,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     // Optimistic — clear input and insert row immediately, before the network call
     const savedQuery = query; const savedTicker = ticker; const savedCompany = companyName;
     setTicker(""); setCompanyName(""); setQuery(""); setSuggestions([]); setShowSuggestions(false); setError("");
-    setDigest(prev => [...prev, { ticker: effectiveTicker, company_name: savedCompany || null, is_leveraged: false, analysis: null, has_unread: false, change_summary: null, days_since_read: null }]);
+    setDigest(prev => [...prev, { ticker: effectiveTicker, company_name: savedCompany || null, is_leveraged: false, analysis: null, has_unread: false, change_summary: null, days_since_read: null, close_5d: null }]);
 
     try {
       const r = await fetch(`${API}/watchlist?id_token=${encodeURIComponent(idToken)}`, {
@@ -1453,9 +1535,9 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               };
 
               const colHeaders = !isMobile && (
-                <div style={{ display: "grid", gridTemplateColumns: "200px 100px 120px 180px 70px 100px 1fr 48px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
-                  {["Stock", "Verdict", "Price", "52-Week Range", "RSI", "Trend", "Signal", ""].map(h => (
-                    <div key={h} style={{ fontSize: "0.67rem", color: "var(--t-text-muted)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 185px 80px 100px 130px 100px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
+                  {["Stock", "Verdict", "Price", "Conviction", "RSI / Trend", "Signals", ""].map(h => (
+                    <div key={h} style={{ fontSize: "0.63rem", color: "var(--t-text-dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
                   ))}
                 </div>
               );
