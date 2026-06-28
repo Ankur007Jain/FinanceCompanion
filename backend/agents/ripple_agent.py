@@ -19,10 +19,11 @@ Rules:
 """
 
 
-async def analyze_ripple(ticker: str, news_summary: str, sector: str = "") -> str:
+async def analyze_ripple(ticker: str, news_summary: str, sector: str = "") -> tuple[str, dict]:
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    _empty_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": _SONNET}
     if not api_key or not news_summary or news_summary == "No recent news found.":
-        return "No macro events with meaningful ripple effects identified today."
+        return "No macro events with meaningful ripple effects identified today.", _empty_usage
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
     prompt = (
@@ -36,4 +37,11 @@ async def analyze_ripple(ticker: str, news_summary: str, sector: str = "") -> st
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
     )
-    return resp.content[0].text.strip()
+    usage = {
+        "input_tokens": resp.usage.input_tokens,
+        "output_tokens": resp.usage.output_tokens,
+        "cache_read": getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        "cache_write": getattr(resp.usage, "cache_write_input_tokens", 0) or 0,
+        "model": _SONNET,
+    }
+    return resp.content[0].text.strip(), usage

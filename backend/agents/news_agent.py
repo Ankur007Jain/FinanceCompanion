@@ -69,7 +69,10 @@ def _deduplicate(yf_lines: list[str], fh_lines: list[str]) -> str:
     return "\n".join(merged[:12])
 
 
-async def fetch_news(ticker: str, company_name: str = "", yf_data=None) -> str:
+_EMPTY_USAGE = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": "claude-haiku-4-5-20251001"}
+
+
+async def fetch_news(ticker: str, company_name: str = "", yf_data=None) -> tuple[str, dict]:
     loop = asyncio.get_event_loop()
     yf_lines, fh_lines = await asyncio.gather(
         loop.run_in_executor(None, _yf_news, ticker, yf_data),
@@ -77,11 +80,11 @@ async def fetch_news(ticker: str, company_name: str = "", yf_data=None) -> str:
     )
     raw = _deduplicate(yf_lines, fh_lines)
     if not raw.strip():
-        return "No recent news found."
+        return "No recent news found.", _EMPTY_USAGE
 
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
-        return raw
+        return raw, _EMPTY_USAGE
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
     name = company_name or ticker
@@ -97,4 +100,11 @@ async def fetch_news(ticker: str, company_name: str = "", yf_data=None) -> str:
         model=_HAIKU, max_tokens=300,
         messages=[{"role": "user", "content": prompt}],
     )
-    return resp.content[0].text.strip()
+    usage = {
+        "input_tokens": resp.usage.input_tokens,
+        "output_tokens": resp.usage.output_tokens,
+        "cache_read": getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        "cache_write": getattr(resp.usage, "cache_write_input_tokens", 0) or 0,
+        "model": _HAIKU,
+    }
+    return resp.content[0].text.strip(), usage

@@ -168,6 +168,13 @@ class StockAnalysis(Base):
     verdict_agreement = Column(Boolean)  # True = both agree, False = split
     split_reason = Column(Text)      # populated when verdict_a != verdict_b
 
+    # Token usage + cost tracking (Python agents only — excludes GHA claude-code-action)
+    tokens_input = Column(Integer, default=0)
+    tokens_output = Column(Integer, default=0)
+    tokens_cache_read = Column(Integer, default=0)
+    tokens_cache_write = Column(Integer, default=0)
+    cost_usd = Column(Float)         # total USD cost for verdict + ripple + news agents
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
