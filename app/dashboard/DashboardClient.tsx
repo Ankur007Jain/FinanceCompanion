@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import ThemeToggle from "@/app/components/ThemeToggle";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 
@@ -631,8 +633,8 @@ function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile }: {
                     AI Report · {report.analyses_count} analyses · {report.report_date}
                   </span>
                 </div>
-                <div style={{ fontSize: "0.82rem", color: "var(--t-text)", lineHeight: 1.65, fontFamily: SANS, whiteSpace: "pre-wrap" }}>
-                  {report.content}
+                <div style={{ fontSize: "0.82rem", color: "var(--t-text)", lineHeight: 1.65, fontFamily: SANS }} className="report-markdown">
+                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.content}</ReactMarkdown>
                 </div>
               </div>
             ) : (
