@@ -115,3 +115,4 @@ body {
 .report-markdown strong { font-weight: 700; color: var(--t-text); }
 .report-markdown ul, .report-markdown ol { padding-left: 1.25rem; margin: 0 0 0.6rem; }
 .report-markdown li { margin-bottom: 0.25rem; }
+.report-markdown del, .report-markdown s { text-decoration: none; }

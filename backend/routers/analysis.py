@@ -238,7 +238,8 @@ Each analysis includes: verdict (BUY/HOLD/SELL/WATCH), price, conviction score (
 bull case, bear case, entry target, exit target, stop loss, and scenario probabilities.
 
 Write a concise analytical report in markdown. Be specific with numbers and dates. No jargon.
-Write like a smart friend who tracked this stock for a month and is catching you up."""
+Write like a smart friend who tracked this stock for a month and is catching you up.
+Use only: ## headers, **bold**, bullet points, and plain text. Never use strikethrough (~~)."""
 
 _REPORT_PROMPT = """Here are the past {n} daily analyses for {ticker}, newest first:
 
@@ -316,7 +317,8 @@ def generate_report(ticker: str, id_token: str, background_tasks: BackgroundTask
         system=_REPORT_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
     )
-    content = resp.content[0].text.strip()
+    import re
+    content = re.sub(r"~~(.+?)~~", r"\1", resp.content[0].text.strip())
 
     report = StockReport(
         ticker=ticker,
