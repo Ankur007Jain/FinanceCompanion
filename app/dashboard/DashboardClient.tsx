@@ -686,7 +686,7 @@ function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile }: {
                       </span>
                     )}
                     {h.conviction_score != null && (
-                      <span style={{ fontSize: "0.65rem", fontFamily: MONO, color: "var(--t-text-muted)" }}>{h.conviction_score}/100</span>
+                      <span style={{ fontSize: "0.65rem", fontFamily: MONO, color: "var(--t-text-muted)" }}>CONVICTION {h.conviction_score}</span>
                     )}
                     {h.is_important_day && <span style={{ fontSize: "0.7rem", flexShrink: 0 }} title={h.importance_reason ?? ""}>⭐</span>}
                     <span style={{ marginLeft: "auto", fontSize: "0.6rem", color: "var(--t-text-dim)", transition: "transform 0.15s", transform: isExp ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block", flexShrink: 0 }}>▼</span>
