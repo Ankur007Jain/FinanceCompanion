@@ -550,7 +550,9 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: 
         )}
 
       {/* ── History + Report ── */}
-      <HistoryPanel ticker={a.ticker} idToken={idToken} currentAnalysis={a} isMobile={isMobile} />
+      <div style={{ gridColumn: "1 / -1" }}>
+        <HistoryPanel ticker={a.ticker} idToken={idToken} currentAnalysis={a} isMobile={isMobile} />
+      </div>
 
       </div>
     </div>
