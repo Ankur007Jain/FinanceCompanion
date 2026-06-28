@@ -23,6 +23,29 @@ from services.stock_memory import get_stock_memory, maybe_update_stock_memory
 
 logger = logging.getLogger(__name__)
 
+# Pricing per million tokens — Sonnet 4.6 and Haiku 4.5
+_PRICING = {
+    "claude-sonnet-4-6":        {"in": 3.0,  "out": 15.0, "cache_read": 0.30},
+    "claude-haiku-4-5-20251001": {"in": 0.80, "out": 4.0,  "cache_read": 0.08},
+}
+
+
+def _sum_usages(usages: list[dict]) -> tuple[int, int, int, int, float]:
+    """Returns (tokens_input, tokens_output, cache_read, cache_write, cost_usd)."""
+    tin = tout = tcr = tcw = 0
+    cost = 0.0
+    for u in usages:
+        p = _PRICING.get(u.get("model", "claude-sonnet-4-6"), _PRICING["claude-sonnet-4-6"])
+        inp = u.get("input_tokens", 0) or 0
+        out = u.get("output_tokens", 0) or 0
+        cr  = u.get("cache_read", 0) or 0
+        cw  = u.get("cache_write", 0) or 0
+        tin  += inp;  tout += out;  tcr += cr;  tcw += cw
+        cost += (inp / 1_000_000) * p["in"]
+        cost += (out / 1_000_000) * p["out"]
+        cost += (cr  / 1_000_000) * p["cache_read"]
+    return tin, tout, tcr, tcw, round(cost, 6)
+
 
 def _compute_signal_convergence(price, analyst, events: list[dict]) -> tuple[int, dict]:
     """Deterministically scores 7 independent low-hanging-fruit signals."""
@@ -79,7 +102,7 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
     logger.info(f"[{ticker}] Starting parallel data agents...")
 
     try:
-        price, news, events, analyst = await asyncio.gather(
+        price, (news, news_usage), events, analyst = await asyncio.gather(
             fetch_price_data(ticker, yf_data=yf),
             fetch_news(ticker, company_name, yf_data=yf),
             fetch_events(ticker, prefetched=yf),
@@ -97,10 +120,11 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
 
     logger.info(f"[{ticker}] Running Ripple agent...")
     try:
-        ripple = await analyze_ripple(ticker, news, sector)
+        ripple, ripple_usage = await analyze_ripple(ticker, news, sector)
     except Exception as e:
         logger.error(f"[{ticker}] Ripple agent failed: {e}")
         ripple = "Ripple analysis unavailable."
+        ripple_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": "claude-sonnet-4-6"}
 
     logger.info(f"[{ticker}] Running Verdict agent...")
     try:
@@ -130,7 +154,7 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         conv_score, conv_details = _compute_signal_convergence(price, analyst, events)
         logger.info(f"[{ticker}] Signal convergence: {conv_score}/7 {conv_details}")
 
-        verdict = await generate_verdict(
+        verdict, verdict_usage = await generate_verdict(
             ticker, price, news, events, analyst, ripple, stock_mem, is_leveraged,
             recent_analyses=recent_analyses,
             last_buy_price=last_buy_price,
@@ -140,6 +164,10 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
     except Exception as e:
         logger.error(f"[{ticker}] Verdict agent failed: {e}")
         return
+
+    tokens_in, tokens_out, tokens_cr, tokens_cw, cost_usd = _sum_usages([
+        news_usage, ripple_usage, verdict_usage,
+    ])
 
     # Persist analysis
     analysis = StockAnalysis(
@@ -216,11 +244,16 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         dont_panic_note=verdict.dont_panic_note,
         signal_convergence_score=conv_score,
         convergence_details=json.dumps(conv_details),
+        tokens_input=tokens_in,
+        tokens_output=tokens_out,
+        tokens_cache_read=tokens_cr,
+        tokens_cache_write=tokens_cw,
+        cost_usd=cost_usd,
     )
     db.add(analysis)
     db.commit()
     db.refresh(analysis)
-    logger.info(f"[{ticker}] Analysis saved. Verdict: {verdict.verdict}")
+    logger.info(f"[{ticker}] Analysis saved. Verdict: {verdict.verdict} | tokens in={tokens_in} out={tokens_out} | cost=${cost_usd:.4f}")
 
     await maybe_update_stock_memory(ticker, verdict.verdict, verdict.reasoning, news, json.dumps(events), db)
 
