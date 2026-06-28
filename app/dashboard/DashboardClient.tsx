@@ -139,12 +139,16 @@ function RangeBar({ lo, hi, pct }: { lo: number; hi: number; pct: number }) {
 }
 
 function RsiPill({ rsi }: { rsi: number }) {
-  const color = rsi >= 70 ? "var(--t-red)" : rsi <= 30 ? "var(--t-green)" : "var(--t-text-muted)";
-  const label = rsi >= 70 ? "OB" : rsi <= 30 ? "OS" : "";
+  const isOB = rsi >= 70;
+  const isOS = rsi <= 30;
+  const color    = isOB ? "var(--t-red)"   : isOS ? "var(--t-green)"   : "var(--t-text-secondary)";
+  const bg       = isOB ? "var(--t-red-bg)" : isOS ? "var(--t-green-bg)" : "var(--t-surface-3)";
+  const border   = isOB ? "var(--t-red-border)" : isOS ? "var(--t-green-border)" : "var(--t-border)";
+  const tag      = isOB ? "OB" : isOS ? "OS" : null;
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2 }}>
-      <span style={{ fontWeight: 600, fontSize: "0.95rem", color, fontFamily: MONO }}>{rsi.toFixed(0)}</span>
-      {label && <span style={{ fontSize: "0.62rem", color, fontWeight: 600, letterSpacing: "0.05em", fontFamily: MONO }}>{label}</span>}
+    <div style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 20, background: bg, border: `1px solid ${border}` }}>
+      <span style={{ fontWeight: 700, fontSize: "0.75rem", color, fontFamily: MONO, letterSpacing: "0.02em" }}>RSI {rsi.toFixed(0)}</span>
+      {tag && <span style={{ fontSize: "0.6rem", color, fontWeight: 700, fontFamily: MONO, letterSpacing: "0.06em" }}>{tag}</span>}
     </div>
   );
 }
@@ -254,7 +258,7 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: 
   const hasScenarios = a.scenario_bull_prob != null && a.scenario_base_prob != null && a.scenario_bear_prob != null;
 
   return (
-    <div style={{ borderTop: "1px solid var(--t-border)", background: "var(--t-surface-2)", borderRadius: "0 0 11px 11px" }}>
+    <div style={{ borderTop: "1px solid var(--t-border)", background: "var(--t-surface-2)", borderRadius: "0 0 11px 11px", animation: "expandDown 0.18s ease" }}>
 
       {/* ── What changed strip (unread delta) ── */}
       {changeSummary && (
@@ -639,7 +643,7 @@ function StockRow({
               {item.is_leveraged && <span style={{ fontSize: "0.58rem", padding: "0.1rem 0.35rem", background: "var(--t-accent-light)", color: "var(--t-accent)", border: "1px solid var(--t-accent-border)", borderRadius: 4, fontWeight: 700, fontFamily: MONO }}>3X</span>}
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexShrink: 0 }}>
-              {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)" }}>Pending</span>}
+              {vm ? <VerdictBadge vm={vm} /> : null}
               <button onClick={e => { e.stopPropagation(); onRemove(item.ticker); }} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--t-text-dim)", fontSize: "0.82rem", padding: "0.2rem 0.3rem", lineHeight: 1, opacity: 0.4 }}>✕</button>
             </div>
           </div>
@@ -703,7 +707,13 @@ function StockRow({
             </div>
           )}
 
-          {!a && <div style={{ marginTop: "0.5rem", fontSize: "0.75rem", color: "var(--t-text-muted)" }}>No analysis yet</div>}
+          {!a && (
+            <div style={{ marginTop: "0.5rem" }}>
+              <span style={{ fontSize: "0.65rem", fontFamily: MONO, fontWeight: 600, padding: "3px 10px", borderRadius: 20, background: "var(--t-surface-3)", border: "1px solid var(--t-border)", color: "var(--t-text-muted)", letterSpacing: "0.04em" }}>
+                Analysis runs nightly
+              </span>
+            </div>
+          )}
 
           {a && (
             <div style={{ marginTop: "0.4rem", textAlign: "right" }}>
@@ -716,11 +726,14 @@ function StockRow({
         /* Columns: STOCK | VERDICT | PRICE | CONVICTION | RSI/TREND | SIGNALS | ACTIONS */
         <div
           onClick={a ? onToggle : undefined}
+          onMouseEnter={e => { if (a) e.currentTarget.style.background = "var(--t-surface-2)"; }}
+          onMouseLeave={e => { e.currentTarget.style.background = ""; }}
           style={{
             display: "grid",
             gridTemplateColumns: "1fr 110px 185px 80px 100px 130px 100px",
             alignItems: "center", padding: "0.85rem 1.25rem",
             cursor: a ? "pointer" : "default", gap: "1rem",
+            transition: "background 0.12s ease",
           }}
         >
           {/* Stock — all inline */}
@@ -741,67 +754,77 @@ function StockRow({
             )}
           </div>
 
-          {/* Verdict — solid block */}
-          <div>
-            {vm ? <VerdictBadge vm={vm} /> : <span style={{ fontSize: "0.78rem", color: "var(--t-text-muted)" }}>Pending</span>}
-          </div>
-
-          {/* Price + change + 52w mini bar + MA */}
-          <div>
-            {a?.current_price != null ? (
-              <>
-                <div style={{ fontWeight: 700, fontSize: "0.98rem", fontFamily: MONO, color: "var(--t-text)" }}>${a.current_price.toFixed(2)}</div>
-                {a.day_change_pct != null && (
-                  <div style={{ fontSize: "0.72rem", color: chgColor, fontWeight: 600, fontFamily: MONO }}>
-                    {a.day_change_pct >= 0 ? "▲" : "▼"} {Math.abs(a.day_change_pct).toFixed(2)}%
-                  </div>
-                )}
-                {a.range_position_pct != null && <MiniRangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />}
-                {(a.ma_50 || a.ma_200) && (
-                  <div style={{ marginTop: "0.15rem" }}>
-                    <MaBadge price={a.current_price} ma50={a.ma_50} ma200={a.ma_200} />
-                  </div>
-                )}
-              </>
-            ) : <span style={{ color: "var(--t-text-muted)", fontSize: "0.82rem" }}>—</span>}
-          </div>
-
-          {/* Conviction — hero number */}
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
-            {a?.conviction_score != null ? (
-              <>
-                <span style={{ fontSize: "1.3rem", fontWeight: 700, fontFamily: MONO, color: a.conviction_score >= 70 ? "var(--t-green)" : a.conviction_score >= 45 ? "var(--t-yellow)" : "var(--t-red)", lineHeight: 1 }}>{a.conviction_score}</span>
-                <span style={{ fontSize: "0.58rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.05em" }}>/100</span>
-              </>
-            ) : <span style={{ color: "var(--t-text-muted)", fontSize: "0.82rem" }}>—</span>}
-          </div>
-
-          {/* Trend — sparkline */}
-          <div style={{ display: "flex", alignItems: "center" }}>
-            {item.close_5d ? <Sparkline prices={item.close_5d} width={88} height={30} /> : (
-              a?.rsi != null ? <RsiPill rsi={a.rsi} /> : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>
-            )}
-          </div>
-
-          {/* Signals — convergence score + analyst + event (NOT RSI — that's in RSI/Trend) */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
-            {a?.signal_convergence_score != null ? (
-              <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
-                <span style={{ fontWeight: 700, fontSize: "1.05rem", fontFamily: MONO, color: a.signal_convergence_score >= 6 ? "var(--t-green)" : a.signal_convergence_score >= 4 ? "var(--t-yellow)" : "var(--t-red)", lineHeight: 1 }}>
-                  {a.signal_convergence_score}
-                </span>
-                <span style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO }}>/10</span>
-              </div>
-            ) : (
-              a?.analyst_consensus ? null : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>
-            )}
-            {a?.analyst_consensus && (
-              <span style={{ fontSize: "0.67rem", color: "var(--t-text-muted)", fontFamily: MONO, lineHeight: 1.2 }}>
-                <span style={{ color: "var(--t-text)", fontWeight: 600 }}>{a.analyst_consensus}</span> analysts
+          {/* Verdict — solid block (or pending spanning message) */}
+          {!a ? (
+            <div style={{ gridColumn: "2 / 7", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <span style={{ fontSize: "0.65rem", fontFamily: MONO, fontWeight: 600, padding: "3px 10px", borderRadius: 20, background: "var(--t-surface-3)", border: "1px solid var(--t-border)", color: "var(--t-text-muted)", letterSpacing: "0.04em" }}>
+                Analysis runs nightly
               </span>
-            )}
-            {upcomingEvent && <span style={{ fontSize: "0.67rem", color: "var(--t-yellow)", fontFamily: MONO }}>⚡ {upcomingEvent}</span>}
-          </div>
+            </div>
+          ) : (
+            <>
+              <div>
+                {vm ? <VerdictBadge vm={vm} /> : null}
+              </div>
+
+              {/* Price + change + 52w mini bar + MA */}
+              <div>
+                {a.current_price != null ? (
+                  <>
+                    <div style={{ fontWeight: 700, fontSize: "0.98rem", fontFamily: MONO, color: "var(--t-text)" }}>${a.current_price.toFixed(2)}</div>
+                    {a.day_change_pct != null && (
+                      <div style={{ fontSize: "0.72rem", color: chgColor, fontWeight: 600, fontFamily: MONO }}>
+                        {a.day_change_pct >= 0 ? "▲" : "▼"} {Math.abs(a.day_change_pct).toFixed(2)}%
+                      </div>
+                    )}
+                    {a.range_position_pct != null && <MiniRangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />}
+                    {(a.ma_50 || a.ma_200) && (
+                      <div style={{ marginTop: "0.15rem" }}>
+                        <MaBadge price={a.current_price} ma50={a.ma_50} ma200={a.ma_200} />
+                      </div>
+                    )}
+                  </>
+                ) : <span style={{ color: "var(--t-text-muted)", fontSize: "0.82rem" }}>—</span>}
+              </div>
+
+              {/* Conviction — hero number */}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+                {a.conviction_score != null ? (
+                  <>
+                    <span style={{ fontSize: "1.3rem", fontWeight: 700, fontFamily: MONO, color: a.conviction_score >= 70 ? "var(--t-green)" : a.conviction_score >= 45 ? "var(--t-yellow)" : "var(--t-red)", lineHeight: 1 }}>{a.conviction_score}</span>
+                    <span style={{ fontSize: "0.58rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.05em" }}>/100</span>
+                  </>
+                ) : <span style={{ color: "var(--t-text-muted)", fontSize: "0.82rem" }}>—</span>}
+              </div>
+
+              {/* Trend — sparkline */}
+              <div style={{ display: "flex", alignItems: "center" }}>
+                {item.close_5d ? <Sparkline prices={item.close_5d} width={88} height={30} /> : (
+                  a.rsi != null ? <RsiPill rsi={a.rsi} /> : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>
+                )}
+              </div>
+
+              {/* Signals — convergence score + analyst + event (NOT RSI — that's in RSI/Trend) */}
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
+                {a.signal_convergence_score != null ? (
+                  <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
+                    <span style={{ fontWeight: 700, fontSize: "1.05rem", fontFamily: MONO, color: a.signal_convergence_score >= 6 ? "var(--t-green)" : a.signal_convergence_score >= 4 ? "var(--t-yellow)" : "var(--t-red)", lineHeight: 1 }}>
+                      {a.signal_convergence_score}
+                    </span>
+                    <span style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO }}>/10</span>
+                  </div>
+                ) : (
+                  a.analyst_consensus ? null : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>
+                )}
+                {a.analyst_consensus && (
+                  <span style={{ fontSize: "0.67rem", color: "var(--t-text-muted)", fontFamily: MONO, lineHeight: 1.2 }}>
+                    <span style={{ color: "var(--t-text)", fontWeight: 600 }}>{a.analyst_consensus}</span> analysts
+                  </span>
+                )}
+                {upcomingEvent && <span style={{ fontSize: "0.67rem", color: "var(--t-yellow)", fontFamily: MONO }}>⚡ {upcomingEvent}</span>}
+              </div>
+            </>
+          )}
 
           {/* Actions — Ask AI (always visible) + chevron + remove */}
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", justifyContent: "flex-end" }}>
