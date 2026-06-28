@@ -134,6 +134,7 @@ async def generate_verdict(
     last_buy_price: Optional[float] = None,
     signal_convergence_score: int = 0,
     convergence_details: dict | None = None,
+    performance_retrospective: str = "",
 ) -> tuple[VerdictResult, dict]:
     _empty_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": _SONNET}
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
@@ -221,6 +222,8 @@ Score: {signal_convergence_score}/7 independent signals confirmed
 
 CONVICTION FLOOR RULE: If score < 5, verdict MUST be WATCH. Do not issue BUY on weak setups.
 {"⚠ Score is " + str(signal_convergence_score) + "/7 — you MUST issue WATCH, not BUY." if signal_convergence_score < 5 else "✓ Score clears the threshold — BUY is eligible if analysis supports it."}
+
+{performance_retrospective}
 
 {f"""=== DON'T PANIC CHECK ===
 Last BUY was issued at ${last_buy_price:.2f}. Current price is ${price.current_price:.2f} — a drop of {abs((price.current_price - last_buy_price) / last_buy_price * 100):.1f}%. Address this directly in dont_panic_note: what changed, what didn't, and whether the user should hold, add, or exit.""" if last_buy_price and price.current_price < last_buy_price * 0.85 else ""}

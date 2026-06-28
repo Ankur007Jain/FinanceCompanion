@@ -85,6 +85,62 @@ def _is_quiet_stock(
     return True
 
 
+def _build_performance_retrospective(recent: list, current_price: float | None) -> str:
+    """Factual check: what actually happened after each past verdict. recent is newest-first."""
+    if len(recent) < 2:
+        return ""
+
+    lines = ["=== PERFORMANCE RETROSPECTIVE (factual — recalibrate entry targets and direction calls) ==="]
+    found = False
+
+    for i in range(1, len(recent)):
+        a = recent[i]          # older analysis
+        next_a = recent[i - 1] # the analysis that came after it
+
+        if not a.verdict or not a.current_price or not next_a.current_price:
+            continue
+
+        days = (next_a.analysis_date - a.analysis_date).days
+        chg_pct = (next_a.current_price - a.current_price) / a.current_price * 100
+        direction_ok = (a.verdict == "BUY" and chg_pct > 0) or (a.verdict == "SELL" and chg_pct < 0)
+
+        line = f"  {a.analysis_date}: {a.verdict} @ ${a.current_price:.2f}"
+        if a.entry_target:
+            line += f" | entry target ${a.entry_target:.2f}"
+        if a.exit_target:
+            line += f" | exit ${a.exit_target:.2f}"
+        if a.stop_loss:
+            line += f" | stop ${a.stop_loss:.2f}"
+        outcome = f"{'✓' if direction_ok else '✗'} {'correct' if direction_ok else 'WRONG'} direction"
+        line += f"\n    → {days}d later: ${next_a.current_price:.2f} ({chg_pct:+.1f}%) — {outcome}"
+
+        if a.stop_loss and next_a.current_price <= a.stop_loss:
+            line += " ⚠ STOP LOSS TRIGGERED"
+        if a.exit_target and next_a.current_price >= a.exit_target:
+            line += " ✓ EXIT TARGET HIT"
+        if a.verdict == "BUY" and a.entry_target and next_a.current_price < a.entry_target:
+            line += f" — entry target ${a.entry_target:.2f} was never reached (set too high)"
+
+        lines.append(line)
+        found = True
+
+    if not found:
+        return ""
+
+    if current_price and recent[0].current_price and recent[0].verdict:
+        chg = (current_price - recent[0].current_price) / recent[0].current_price * 100
+        lines.append(
+            f"\n  Yesterday ({recent[0].analysis_date}): {recent[0].verdict} @ "
+            f"${recent[0].current_price:.2f} → today ${current_price:.2f} ({chg:+.1f}%)"
+        )
+
+    lines.append(
+        "\nRecalibrate based on this: were entry targets realistic? "
+        "If BUY calls were followed by drops, tighten entry targets or raise conviction threshold."
+    )
+    return "\n".join(lines)
+
+
 def _compute_signal_convergence(price, analyst, events: list[dict]) -> tuple[int, dict]:
     """Deterministically scores 7 independent low-hanging-fruit signals."""
     today = date.today()
@@ -200,12 +256,16 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         conv_score, conv_details = _compute_signal_convergence(price, analyst, events)
         logger.info(f"[{ticker}] Signal convergence: {conv_score}/7 {conv_details}")
 
+        # Factual performance retrospective — what actually happened after past verdicts
+        perf_retro = _build_performance_retrospective(recent, price.current_price)
+
         verdict, verdict_usage = await generate_verdict(
             ticker, price, news, events, analyst, ripple, stock_mem, is_leveraged,
             recent_analyses=recent_analyses,
             last_buy_price=last_buy_price,
             signal_convergence_score=conv_score,
             convergence_details=conv_details,
+            performance_retrospective=perf_retro,
         )
     except Exception as e:
         logger.error(f"[{ticker}] Verdict agent failed: {e}")

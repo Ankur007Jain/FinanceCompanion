@@ -20,6 +20,48 @@ async def get_stock_memory(ticker: str, db: Session) -> str:
     return mem.memory_narrative if mem and mem.memory_narrative else ""
 
 
+async def update_memory_from_report(ticker: str, report_content: str, db: Session) -> None:
+    """Extract lessons from a generated report and append to StockMemory."""
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        return
+
+    existing = await get_stock_memory(ticker, db)
+    prompt = (
+        f"Ticker: {ticker}\n\n"
+        f"An AI report was just generated for this stock. Extract ONLY concrete lessons about what the AI "
+        f"got wrong — bad entry targets, incorrect direction calls, data quality issues, patterns that didn't hold.\n\n"
+        f"Report:\n{report_content}\n\n"
+        f"Existing memory:\n{existing or '(none)'}\n\n"
+        "Return a single updated memory paragraph (max 1200 chars) that keeps the existing context AND appends "
+        "a short 'Past mistakes to avoid:' section with 2-3 specific bullet points. "
+        "If the report shows no clear mistakes, reply exactly: NO_UPDATE"
+    )
+
+    try:
+        client = anthropic.AsyncAnthropic(api_key=api_key)
+        resp = await client.messages.create(
+            model=_HAIKU, max_tokens=500,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        result = resp.content[0].text.strip()
+        if result == "NO_UPDATE" or result == existing:
+            return
+
+        result = result[:_MAX_CHARS]
+        from datetime import datetime
+        mem = db.get(StockMemory, ticker)
+        if mem:
+            mem.memory_narrative = result
+            mem.last_updated = datetime.utcnow()
+            mem.update_count = (mem.update_count or 0) + 1
+        else:
+            db.add(StockMemory(ticker=ticker, memory_narrative=result, last_updated=datetime.utcnow(), update_count=1))
+        db.commit()
+    except Exception:
+        pass
+
+
 async def maybe_update_stock_memory(
     ticker: str,
     verdict: str,
