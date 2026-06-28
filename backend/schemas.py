@@ -73,6 +73,10 @@ class StockAnalysisOut(BaseModel):
     short_ratio: Optional[float]
     inst_ownership_pct: Optional[float]
     insider_ownership_pct: Optional[float]
+    sp500_day_chg: Optional[float] = None
+    sector_etf: Optional[str] = None
+    sector_day_chg: Optional[float] = None
+    relative_strength_1d: Optional[float] = None
     sp500_52w_change: Optional[float]
     stock_52w_change: Optional[float]
     dividend_yield: Optional[float]
@@ -115,6 +119,11 @@ class StockAnalysisOut(BaseModel):
     verdict_b: Optional[str] = None
     verdict_agreement: Optional[bool] = None
     split_reason: Optional[str] = None
+    tokens_input: Optional[int] = None
+    tokens_output: Optional[int] = None
+    tokens_cache_read: Optional[int] = None
+    tokens_cache_write: Optional[int] = None
+    cost_usd: Optional[float] = None
     created_at: datetime
 
     class Config:

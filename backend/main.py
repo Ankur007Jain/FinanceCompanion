@@ -134,6 +134,19 @@ def _migrate_db():
                     conn.execute(text(f"ALTER TABLE stock_analyses ADD COLUMN {col} {typ}"))  # nosemgrep
             conn.commit()
 
+        if "stock_analyses" in tables:
+            sa_cols2 = {c["name"] for c in inspector.get_columns("stock_analyses")}
+            for col, typ in [
+                ("tokens_input",       "INTEGER"),
+                ("tokens_output",      "INTEGER"),
+                ("tokens_cache_read",  "INTEGER"),
+                ("tokens_cache_write", "INTEGER"),
+                ("cost_usd",           "FLOAT"),
+            ]:
+                if col not in sa_cols2:
+                    conn.execute(text(f"ALTER TABLE stock_analyses ADD COLUMN {col} {typ}"))  # nosemgrep
+            conn.commit()
+
         if "market_data_cache" not in tables:
             conn.execute(text("""
                 CREATE TABLE market_data_cache (

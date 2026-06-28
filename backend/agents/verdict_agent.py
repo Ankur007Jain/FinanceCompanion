@@ -135,7 +135,8 @@ async def generate_verdict(
     signal_convergence_score: int = 0,
     convergence_details: dict | None = None,
     performance_retrospective: str = "",
-) -> VerdictResult:
+) -> tuple[VerdictResult, dict]:
+    _empty_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": _SONNET}
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     if not api_key:
         return VerdictResult(
@@ -143,7 +144,7 @@ async def generate_verdict(
             stop_loss=None, hold_period=None,
             reasoning="ANTHROPIC_API_KEY not set — cannot generate verdict.",
             conflict_flags="",
-        )
+        ), _empty_usage
 
     history_block = ""
     if recent_analyses:
@@ -236,14 +237,21 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
     resp = await client.messages.create(
-        model=_SONNET, max_tokens=32000,
-        system=_SYSTEM,
+        model=_SONNET, max_tokens=2500,
+        system=[{"type": "text", "text": _SYSTEM, "cache_control": {"type": "ephemeral"}}],
         messages=[
             {"role": "user", "content": prompt},
             {"role": "assistant", "content": "{"},   # prefill forces JSON output
         ],
     )
     raw = ("{" + resp.content[0].text).strip()
+    usage = {
+        "input_tokens": resp.usage.input_tokens,
+        "output_tokens": resp.usage.output_tokens,
+        "cache_read": getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        "cache_write": getattr(resp.usage, "cache_write_input_tokens", 0) or 0,
+        "model": _SONNET,
+    }
 
     # Strip markdown code fences if present (shouldn't happen with prefill but be safe)
     if raw.startswith("```"):
@@ -286,7 +294,7 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
             scenario_base_prob=_i("scenario_base_prob"),
             scenario_bear_prob=_i("scenario_bear_prob"),
             dont_panic_note=data.get("dont_panic_note", ""),
-        )
+        ), usage
     except Exception:
         return VerdictResult(
             verdict="WATCH",
@@ -296,4 +304,4 @@ to give no advice than wrong advice. Output JSON only, matching this schema:
             hold_period=None,
             reasoning=raw[:500],
             conflict_flags="JSON parse error — raw reasoning stored.",
-        )
+        ), usage

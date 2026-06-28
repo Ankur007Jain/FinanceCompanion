@@ -1,11 +1,11 @@
 """
-Ripple Agent — uses Claude Sonnet to trace 2nd/3rd order effects of today's
-macro news on the tracked ticker. Requires deep reasoning — uses Sonnet, not Haiku.
+Ripple Agent — traces 2nd/3rd order effects of today's macro news on the tracked ticker.
+Uses Haiku (fast, cheap) — the task is pattern-matching, not deep reasoning.
 """
 import os
 import anthropic
 
-_SONNET = "claude-sonnet-4-6"
+_HAIKU = "claude-haiku-4-5-20251001"
 
 _SYSTEM = """You are explaining to a busy professional — not a finance expert — how today's broader news
 might indirectly affect a specific stock they own or are watching.
@@ -19,10 +19,11 @@ Rules:
 """
 
 
-async def analyze_ripple(ticker: str, news_summary: str, sector: str = "") -> str:
+async def analyze_ripple(ticker: str, news_summary: str, sector: str = "") -> tuple[str, dict]:
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    _empty_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": _SONNET}
     if not api_key or not news_summary or news_summary == "No recent news found.":
-        return "No macro events with meaningful ripple effects identified today."
+        return "No macro events with meaningful ripple effects identified today.", _empty_usage
 
     client = anthropic.AsyncAnthropic(api_key=api_key)
     prompt = (
@@ -32,8 +33,15 @@ async def analyze_ripple(ticker: str, news_summary: str, sector: str = "") -> st
         f"that could impact {ticker}. If none, say so."
     )
     resp = await client.messages.create(
-        model=_SONNET, max_tokens=300,
+        model=_HAIKU, max_tokens=300,
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
     )
-    return resp.content[0].text.strip()
+    usage = {
+        "input_tokens": resp.usage.input_tokens,
+        "output_tokens": resp.usage.output_tokens,
+        "cache_read": getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
+        "cache_write": getattr(resp.usage, "cache_write_input_tokens", 0) or 0,
+        "model": _SONNET,
+    }
+    return resp.content[0].text.strip(), usage

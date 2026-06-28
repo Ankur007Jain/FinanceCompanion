@@ -23,6 +23,67 @@ from services.stock_memory import get_stock_memory, maybe_update_stock_memory
 
 logger = logging.getLogger(__name__)
 
+# Pricing per million tokens — Sonnet 4.6 and Haiku 4.5
+_PRICING = {
+    "claude-sonnet-4-6":        {"in": 3.0,  "out": 15.0, "cache_read": 0.30},
+    "claude-haiku-4-5-20251001": {"in": 0.80, "out": 4.0,  "cache_read": 0.08},
+}
+
+
+def _sum_usages(usages: list[dict]) -> tuple[int, int, int, int, float]:
+    """Returns (tokens_input, tokens_output, cache_read, cache_write, cost_usd)."""
+    tin = tout = tcr = tcw = 0
+    cost = 0.0
+    for u in usages:
+        p = _PRICING.get(u.get("model", "claude-sonnet-4-6"), _PRICING["claude-sonnet-4-6"])
+        inp = u.get("input_tokens", 0) or 0
+        out = u.get("output_tokens", 0) or 0
+        cr  = u.get("cache_read", 0) or 0
+        cw  = u.get("cache_write", 0) or 0
+        tin  += inp;  tout += out;  tcr += cr;  tcw += cw
+        cost += (inp / 1_000_000) * p["in"]
+        cost += (out / 1_000_000) * p["out"]
+        cost += (cr  / 1_000_000) * p["cache_read"]
+    return tin, tout, tcr, tcw, round(cost, 6)
+
+
+def _is_quiet_stock(
+    price_change_pct: float | None,
+    recent_analyses: list,
+    events: list[dict],
+) -> bool:
+    """
+    Returns True when a stock is quiet enough to skip LLM calls and reuse yesterday's analysis.
+    Criteria (ALL must hold):
+      - Price moved < 2% today
+      - No upcoming event within 5 days
+      - Same verdict for the last 3 consecutive days
+      - Yesterday was not flagged as an important day
+    """
+    if price_change_pct is None or abs(price_change_pct) >= 2.0:
+        return False
+
+    today = date.today()
+    for e in events:
+        try:
+            event_date = date.fromisoformat(str(e["date"]))
+            if 0 < (event_date - today).days <= 5:
+                return False
+        except (ValueError, KeyError):
+            pass
+
+    if len(recent_analyses) < 3:
+        return False
+
+    verdicts = [a.verdict for a in recent_analyses[:3]]
+    if len(set(verdicts)) > 1:
+        return False
+
+    if recent_analyses[0].is_important_day:
+        return False
+
+    return True
+
 
 def _build_performance_retrospective(recent: list, current_price: float | None) -> str:
     """Factual check: what actually happened after each past verdict. recent is newest-first."""
@@ -135,7 +196,7 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
     logger.info(f"[{ticker}] Starting parallel data agents...")
 
     try:
-        price, news, events, analyst = await asyncio.gather(
+        price, (news, news_usage), events, analyst = await asyncio.gather(
             fetch_price_data(ticker, yf_data=yf),
             fetch_news(ticker, company_name, yf_data=yf),
             fetch_events(ticker, prefetched=yf),
@@ -151,23 +212,32 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         logger.error(f"[{ticker}] Data agent failure: {e}")
         return
 
+    # Smart skip — avoid Sonnet calls on quiet days (saves ~90% of LLM cost for those stocks)
+    recent_all = (
+        db.query(StockAnalysis)
+        .filter(StockAnalysis.ticker == ticker)
+        .order_by(StockAnalysis.analysis_date.desc())
+        .limit(5)
+        .all()
+    )
+    if _is_quiet_stock(price.day_change_pct, recent_all, events):
+        logger.info(
+            f"[{ticker}] Quiet day (Δ{price.day_change_pct:+.1f}%, "
+            f"verdict stable={recent_all[0].verdict if recent_all else '?'}) — skipping LLM, reusing yesterday's analysis."
+        )
+        return
+
     logger.info(f"[{ticker}] Running Ripple agent...")
     try:
-        ripple = await analyze_ripple(ticker, news, sector)
+        ripple, ripple_usage = await analyze_ripple(ticker, news, sector)
     except Exception as e:
         logger.error(f"[{ticker}] Ripple agent failed: {e}")
         ripple = "Ripple analysis unavailable."
+        ripple_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": "claude-sonnet-4-6"}
 
     logger.info(f"[{ticker}] Running Verdict agent...")
     try:
         stock_mem = await get_stock_memory(ticker, db)
-        recent = (
-            db.query(StockAnalysis)
-            .filter(StockAnalysis.ticker == ticker)
-            .order_by(StockAnalysis.analysis_date.desc())
-            .limit(5)
-            .all()
-        )
         recent_analyses = [
             {
                 "date": str(r.analysis_date),
@@ -176,10 +246,10 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
                 "is_important_day": r.is_important_day,
                 "importance_reason": r.importance_reason,
             }
-            for r in recent
+            for r in recent_all
         ]
         # Find most recent BUY price to power the don't-panic check
-        last_buy = next((r for r in recent if r.verdict == "BUY" and r.current_price), None)
+        last_buy = next((r for r in recent_all if r.verdict == "BUY" and r.current_price), None)
         last_buy_price = last_buy.current_price if last_buy else None
 
         # Deterministic convergence score — computed before calling Claude
@@ -189,7 +259,7 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         # Factual performance retrospective — what actually happened after past verdicts
         perf_retro = _build_performance_retrospective(recent, price.current_price)
 
-        verdict = await generate_verdict(
+        verdict, verdict_usage = await generate_verdict(
             ticker, price, news, events, analyst, ripple, stock_mem, is_leveraged,
             recent_analyses=recent_analyses,
             last_buy_price=last_buy_price,
@@ -200,6 +270,10 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
     except Exception as e:
         logger.error(f"[{ticker}] Verdict agent failed: {e}")
         return
+
+    tokens_in, tokens_out, tokens_cr, tokens_cw, cost_usd = _sum_usages([
+        news_usage, ripple_usage, verdict_usage,
+    ])
 
     # Persist analysis
     analysis = StockAnalysis(
@@ -276,11 +350,16 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         dont_panic_note=verdict.dont_panic_note,
         signal_convergence_score=conv_score,
         convergence_details=json.dumps(conv_details),
+        tokens_input=tokens_in,
+        tokens_output=tokens_out,
+        tokens_cache_read=tokens_cr,
+        tokens_cache_write=tokens_cw,
+        cost_usd=cost_usd,
     )
     db.add(analysis)
     db.commit()
     db.refresh(analysis)
-    logger.info(f"[{ticker}] Analysis saved. Verdict: {verdict.verdict}")
+    logger.info(f"[{ticker}] Analysis saved. Verdict: {verdict.verdict} | tokens in={tokens_in} out={tokens_out} | cost=${cost_usd:.4f}")
 
     await maybe_update_stock_memory(ticker, verdict.verdict, verdict.reasoning, news, json.dumps(events), db)
 
