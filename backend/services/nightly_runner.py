@@ -24,6 +24,44 @@ from services.stock_memory import get_stock_memory, maybe_update_stock_memory
 logger = logging.getLogger(__name__)
 
 
+def _is_quiet_stock(
+    price_change_pct: float | None,
+    recent_analyses: list,
+    events: list[dict],
+) -> bool:
+    """
+    Returns True when a stock is quiet enough to skip LLM calls and reuse yesterday's analysis.
+    Criteria (ALL must hold):
+      - Price moved < 2% today
+      - No upcoming event within 5 days
+      - Same verdict for the last 3 consecutive days
+      - Yesterday was not flagged as an important day
+    """
+    if price_change_pct is None or abs(price_change_pct) >= 2.0:
+        return False
+
+    today = date.today()
+    for e in events:
+        try:
+            event_date = date.fromisoformat(str(e["date"]))
+            if 0 < (event_date - today).days <= 5:
+                return False
+        except (ValueError, KeyError):
+            pass
+
+    if len(recent_analyses) < 3:
+        return False
+
+    verdicts = [a.verdict for a in recent_analyses[:3]]
+    if len(set(verdicts)) > 1:
+        return False
+
+    if recent_analyses[0].is_important_day:
+        return False
+
+    return True
+
+
 def _compute_signal_convergence(price, analyst, events: list[dict]) -> tuple[int, dict]:
     """Deterministically scores 7 independent low-hanging-fruit signals."""
     today = date.today()
@@ -95,6 +133,21 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         logger.error(f"[{ticker}] Data agent failure: {e}")
         return
 
+    # Smart skip — avoid Sonnet calls on quiet days (saves ~90% of LLM cost for those stocks)
+    recent_all = (
+        db.query(StockAnalysis)
+        .filter(StockAnalysis.ticker == ticker)
+        .order_by(StockAnalysis.analysis_date.desc())
+        .limit(5)
+        .all()
+    )
+    if _is_quiet_stock(price.day_change_pct, recent_all, events):
+        logger.info(
+            f"[{ticker}] Quiet day (Δ{price.day_change_pct:+.1f}%, "
+            f"verdict stable={recent_all[0].verdict if recent_all else '?'}) — skipping LLM, reusing yesterday's analysis."
+        )
+        return
+
     logger.info(f"[{ticker}] Running Ripple agent...")
     try:
         ripple = await analyze_ripple(ticker, news, sector)
@@ -105,13 +158,6 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
     logger.info(f"[{ticker}] Running Verdict agent...")
     try:
         stock_mem = await get_stock_memory(ticker, db)
-        recent = (
-            db.query(StockAnalysis)
-            .filter(StockAnalysis.ticker == ticker)
-            .order_by(StockAnalysis.analysis_date.desc())
-            .limit(5)
-            .all()
-        )
         recent_analyses = [
             {
                 "date": str(r.analysis_date),
@@ -120,10 +166,10 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
                 "is_important_day": r.is_important_day,
                 "importance_reason": r.importance_reason,
             }
-            for r in recent
+            for r in recent_all
         ]
         # Find most recent BUY price to power the don't-panic check
-        last_buy = next((r for r in recent if r.verdict == "BUY" and r.current_price), None)
+        last_buy = next((r for r in recent_all if r.verdict == "BUY" and r.current_price), None)
         last_buy_price = last_buy.current_price if last_buy else None
 
         # Deterministic convergence score — computed before calling Claude

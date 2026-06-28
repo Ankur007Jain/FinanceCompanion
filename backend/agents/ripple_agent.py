@@ -1,11 +1,11 @@
 """
-Ripple Agent — uses Claude Sonnet to trace 2nd/3rd order effects of today's
-macro news on the tracked ticker. Requires deep reasoning — uses Sonnet, not Haiku.
+Ripple Agent — traces 2nd/3rd order effects of today's macro news on the tracked ticker.
+Uses Haiku (fast, cheap) — the task is pattern-matching, not deep reasoning.
 """
 import os
 import anthropic
 
-_SONNET = "claude-sonnet-4-6"
+_HAIKU = "claude-haiku-4-5-20251001"
 
 _SYSTEM = """You are explaining to a busy professional — not a finance expert — how today's broader news
 might indirectly affect a specific stock they own or are watching.
@@ -32,7 +32,7 @@ async def analyze_ripple(ticker: str, news_summary: str, sector: str = "") -> st
         f"that could impact {ticker}. If none, say so."
     )
     resp = await client.messages.create(
-        model=_SONNET, max_tokens=300,
+        model=_HAIKU, max_tokens=300,
         system=_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
     )
