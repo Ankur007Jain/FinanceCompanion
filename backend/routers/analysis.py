@@ -1,7 +1,8 @@
+import asyncio
 import json
 import os
 from datetime import date, datetime, timedelta
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from sqlalchemy.orm import Session
 import anthropic
 
@@ -9,6 +10,7 @@ from database import get_db
 from models import StockAnalysis, WatchlistItem, MarketDataCache, StockReport
 from routers.auth import get_current_user
 from schemas import DigestItem, StockAnalysisOut, ImportantFlag, ReportDayOut, StockReportOut
+from services.stock_memory import update_memory_from_report
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -266,7 +268,7 @@ Keep the whole report under 600 words. Be specific, not generic."""
 
 
 @router.post("/{ticker}/report", response_model=StockReportOut)
-def generate_report(ticker: str, id_token: str, db: Session = Depends(get_db)):
+def generate_report(ticker: str, id_token: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     get_current_user(id_token, db)
     ticker = ticker.upper()
     today = date.today()
@@ -325,4 +327,10 @@ def generate_report(ticker: str, id_token: str, db: Session = Depends(get_db)):
     db.add(report)
     db.commit()
     db.refresh(report)
+
+    # Option B: extract lessons from report → append to StockMemory (background, non-blocking)
+    def _run_memory_update():
+        asyncio.run(update_memory_from_report(ticker, content, db))
+    background_tasks.add_task(_run_memory_update)
+
     return report
