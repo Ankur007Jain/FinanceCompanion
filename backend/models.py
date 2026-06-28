@@ -187,6 +187,17 @@ class StockMemory(Base):
     update_count = Column(Integer, default=0)
 
 
+class StockReport(Base):
+    """On-demand AI-generated report synthesizing past analyses for a ticker. One per ticker per day."""
+    __tablename__ = "stock_reports"
+    id = Column(String, primary_key=True, default=_uid)
+    ticker = Column(String, nullable=False, index=True)
+    report_date = Column(Date, nullable=False, index=True)
+    content = Column(Text, nullable=False)   # markdown narrative
+    analyses_count = Column(Integer)         # how many past analyses were fed in
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class SimulationPortfolio(Base):
     """Virtual $10k portfolio per user per mode (autopilot / copilot)."""
     __tablename__ = "simulation_portfolios"

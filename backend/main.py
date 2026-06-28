@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import text, inspect
 
 from database import Base, engine, SessionLocal
-from models import AppConfig  # noqa: F401 — ensures table is registered
+from models import AppConfig, StockReport  # noqa: F401 — ensures tables are registered
 from routers import auth, watchlist, analysis, simulation, conversations, streaming, jobs, translate
 
 app = FastAPI(title="FinanceCompanion API", version="0.1.0")

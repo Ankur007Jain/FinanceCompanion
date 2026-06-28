@@ -1,12 +1,14 @@
 import json
+import os
 from datetime import date, datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+import anthropic
 
 from database import get_db
-from models import StockAnalysis, WatchlistItem, MarketDataCache
+from models import StockAnalysis, WatchlistItem, MarketDataCache, StockReport
 from routers.auth import get_current_user
-from schemas import DigestItem, StockAnalysisOut, ImportantFlag, ReportDayOut
+from schemas import DigestItem, StockAnalysisOut, ImportantFlag, ReportDayOut, StockReportOut
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
 
@@ -214,3 +216,112 @@ def get_history(ticker: str, id_token: str, days: int = 30, db: Session = Depend
         .all()
     )
     return rows
+
+
+@router.get("/{ticker}/report", response_model=StockReportOut | None)
+def get_report(ticker: str, id_token: str, db: Session = Depends(get_db)):
+    get_current_user(id_token, db)
+    report = (
+        db.query(StockReport)
+        .filter(StockReport.ticker == ticker.upper(), StockReport.report_date == date.today())
+        .first()
+    )
+    return report
+
+
+_REPORT_SYSTEM = """You are a financial analyst writing a plain-English debrief for a busy professional.
+You have access to the last 30 days of AI-generated daily analyses for a specific stock.
+Each analysis includes: verdict (BUY/HOLD/SELL/WATCH), price, conviction score (0-100), reasoning,
+bull case, bear case, entry target, exit target, stop loss, and scenario probabilities.
+
+Write a concise analytical report in markdown. Be specific with numbers and dates. No jargon.
+Write like a smart friend who tracked this stock for a month and is catching you up."""
+
+_REPORT_PROMPT = """Here are the past {n} daily analyses for {ticker}, newest first:
+
+{analyses}
+
+Write a report covering these sections (use ## headers):
+
+## Verdict Trajectory
+How did the verdict move over this period and why? Note any flips and what drove them.
+
+## Conviction Trend
+Was confidence building or declining? Highlight the highest and lowest conviction days.
+
+## Price Target Accuracy
+Compare past entry/exit targets to what actually happened with the price. Were the calls useful?
+
+## Recurring Themes
+What macro factors, catalysts, or risks kept showing up across multiple days?
+
+## What the AI Got Right vs Wrong
+Honest assessment — where was the analysis accurate, where did it miss?
+
+## Watch For
+One or two things to monitor going forward based on the pattern you've seen.
+
+Keep the whole report under 600 words. Be specific, not generic."""
+
+
+@router.post("/{ticker}/report", response_model=StockReportOut)
+def generate_report(ticker: str, id_token: str, db: Session = Depends(get_db)):
+    get_current_user(id_token, db)
+    ticker = ticker.upper()
+    today = date.today()
+
+    # Return cached report if already generated today
+    existing = db.query(StockReport).filter(
+        StockReport.ticker == ticker, StockReport.report_date == today
+    ).first()
+    if existing:
+        return existing
+
+    # Fetch last 30 analyses
+    analyses = (
+        db.query(StockAnalysis)
+        .filter(StockAnalysis.ticker == ticker)
+        .order_by(StockAnalysis.analysis_date.desc())
+        .limit(30)
+        .all()
+    )
+    if not analyses:
+        raise HTTPException(status_code=404, detail="No analyses found for this ticker.")
+
+    # Build compact text representation of each analysis
+    def _fmt_analysis(a: StockAnalysis) -> str:
+        lines = [f"Date: {a.analysis_date}  |  Verdict: {a.verdict}  |  Price: ${a.current_price or 'N/A'}  |  Conviction: {a.conviction_score or 'N/A'}/100"]
+        if a.reasoning:       lines.append(f"Reasoning: {a.reasoning}")
+        if a.bull_case:       lines.append(f"Bull: {a.bull_case}")
+        if a.bear_case:       lines.append(f"Bear: {a.bear_case}")
+        if a.entry_target:    lines.append(f"Entry target: ${a.entry_target}  Exit: ${a.exit_target}  Stop: ${a.stop_loss}")
+        if a.scenario_bull_prob is not None:
+            lines.append(f"Scenarios: bull {a.scenario_bull_prob}% / base {a.scenario_base_prob}% / bear {a.scenario_bear_prob}%")
+        return "\n".join(lines)
+
+    analyses_text = "\n\n---\n\n".join(_fmt_analysis(a) for a in analyses)
+    prompt = _REPORT_PROMPT.format(ticker=ticker, n=len(analyses), analyses=analyses_text)
+
+    api_key = os.getenv("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        raise HTTPException(status_code=503, detail="AI not configured.")
+
+    client = anthropic.Anthropic(api_key=api_key)
+    resp = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=1500,
+        system=_REPORT_SYSTEM,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    content = resp.content[0].text.strip()
+
+    report = StockReport(
+        ticker=ticker,
+        report_date=today,
+        content=content,
+        analyses_count=len(analyses),
+    )
+    db.add(report)
+    db.commit()
+    db.refresh(report)
+    return report

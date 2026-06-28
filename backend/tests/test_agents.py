@@ -88,7 +88,7 @@ class TestYFDataSerialization:
 
         df = pd.DataFrame(
             {"Close": [100.0, 101.0], "Volume": [1_000_000, 1_100_000]},
-            index=pd.date_range("2024-01-01", periods=2, freq="D"),
+            index=pd.DatetimeIndex(["2024-01-01", "2024-01-02"]),
         )
         data = YFData(
             info={"symbol": "TEST", "marketCap": 500_000_000},

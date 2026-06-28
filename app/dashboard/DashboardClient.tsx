@@ -79,6 +79,15 @@ interface Analysis {
   split_reason: string | null;
 }
 
+interface StockReport {
+  id: string;
+  ticker: string;
+  report_date: string;
+  content: string;
+  analyses_count: number | null;
+  created_at: string;
+}
+
 interface DigestItem {
   ticker: string;
   company_name: string | null;
@@ -548,7 +557,145 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: 
             )}
           </div>
         )}
+
+      {/* ── History + Report ── */}
+      <HistoryPanel ticker={a.ticker} idToken={idToken} currentAnalysis={a} isMobile={isMobile} />
+
       </div>
+    </div>
+  );
+}
+
+function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile }: {
+  ticker: string; idToken: string; currentAnalysis: Analysis; isMobile: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [history, setHistory] = useState<Analysis[] | null>(null);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [expandedDate, setExpandedDate] = useState<string | null>(null);
+  const [report, setReport] = useState<StockReport | null>(null);
+  const [loadingReport, setLoadingReport] = useState(false);
+  const [reportChecked, setReportChecked] = useState(false);
+
+  async function loadHistory() {
+    if (history) { setOpen(o => !o); return; }
+    setOpen(true);
+    setLoadingHistory(true);
+    try {
+      const r = await fetch(`${API}/analysis/${ticker}/history?id_token=${encodeURIComponent(idToken)}&days=60`);
+      if (r.ok) {
+        const data: Analysis[] = await r.json();
+        // exclude today's analysis (already showing above)
+        setHistory(data.filter(h => h.id !== currentAnalysis.id));
+        // also check if today's report already exists
+        checkReport();
+      }
+    } finally { setLoadingHistory(false); }
+  }
+
+  async function checkReport() {
+    if (reportChecked) return;
+    setReportChecked(true);
+    try {
+      const r = await fetch(`${API}/analysis/${ticker}/report?id_token=${encodeURIComponent(idToken)}`);
+      if (r.ok) { const d = await r.json(); if (d) setReport(d); }
+    } catch {}
+  }
+
+  async function generateReport() {
+    setLoadingReport(true);
+    try {
+      const r = await fetch(`${API}/analysis/${ticker}/report?id_token=${encodeURIComponent(idToken)}`, { method: "POST" });
+      if (r.ok) setReport(await r.json());
+    } finally { setLoadingReport(false); }
+  }
+
+  const VERDICT_META: Record<string, { color: string; bg: string }> = {
+    BUY:   { color: "var(--t-green)", bg: "var(--t-green-bg)" },
+    HOLD:  { color: "var(--t-yellow)", bg: "var(--t-yellow-bg)" },
+    WATCH: { color: "var(--t-text-muted)", bg: "var(--t-surface-3)" },
+    SELL:  { color: "var(--t-red)", bg: "var(--t-red-bg)" },
+  };
+
+  return (
+    <div style={{ borderTop: "1px solid var(--t-border-light)", marginTop: 0 }}>
+      <button
+        onClick={loadHistory}
+        style={{ width: "100%", background: "none", border: "none", cursor: "pointer", padding: "12px 20px", display: "flex", alignItems: "center", gap: "0.5rem", color: "var(--t-text-muted)", fontSize: "0.72rem", fontFamily: MONO, fontWeight: 600, letterSpacing: "0.06em", textAlign: "left" }}
+      >
+        <span style={{ transition: "transform 0.2s", transform: open ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block", fontSize: "0.6rem" }}>▶</span>
+        {loadingHistory ? "Loading history..." : `PAST ANALYSES${history ? ` (${history.length})` : ""}`}
+      </button>
+
+      {open && history && (
+        <div style={{ padding: "0 20px 20px" }}>
+          {/* Report section */}
+          <div style={{ marginBottom: "1rem", padding: "12px 14px", background: "var(--t-surface-3)", borderRadius: 8, border: "1px solid var(--t-border)" }}>
+            {report ? (
+              <div>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
+                  <span style={{ fontSize: "0.65rem", fontFamily: MONO, fontWeight: 700, color: "var(--t-text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                    AI Report · {report.analyses_count} analyses · {report.report_date}
+                  </span>
+                </div>
+                <div style={{ fontSize: "0.82rem", color: "var(--t-text)", lineHeight: 1.65, fontFamily: SANS, whiteSpace: "pre-wrap" }}>
+                  {report.content}
+                </div>
+              </div>
+            ) : (
+              <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", flexWrap: "wrap" }}>
+                <span style={{ fontSize: "0.72rem", color: "var(--t-text-muted)", fontFamily: SANS, flex: 1 }}>
+                  Generate an AI-written debrief of the past {history.length} analyses — verdict trends, what it got right, what to watch.
+                </span>
+                <button
+                  onClick={generateReport}
+                  disabled={loadingReport}
+                  style={{ fontSize: "0.7rem", fontFamily: MONO, fontWeight: 700, padding: "6px 14px", borderRadius: 6, border: "1px solid var(--t-accent)", background: loadingReport ? "var(--t-surface-2)" : "var(--t-accent)", color: loadingReport ? "var(--t-text-muted)" : "#fff", cursor: loadingReport ? "default" : "pointer", whiteSpace: "nowrap", flexShrink: 0 }}
+                >
+                  {loadingReport ? "Generating…" : "Generate Report"}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Date list */}
+          {history.length === 0 ? (
+            <div style={{ fontSize: "0.78rem", color: "var(--t-text-muted)", fontFamily: MONO }}>No past analyses found.</div>
+          ) : history.map(h => {
+            const vm = h.verdict ? VERDICT_META[h.verdict] ?? VERDICT_META.WATCH : null;
+            const isExp = expandedDate === h.id;
+            return (
+              <div key={h.id} style={{ borderRadius: 8, border: `1px solid ${isExp ? "var(--t-accent)" : "var(--t-border-light)"}`, marginBottom: "0.5rem", overflow: "hidden" }}>
+                {/* Compact header row */}
+                <button
+                  onClick={() => setExpandedDate(isExp ? null : h.id)}
+                  style={{ width: "100%", background: isExp ? "var(--t-surface)" : "none", border: "none", cursor: "pointer", padding: "10px 14px", display: "flex", alignItems: "center", gap: "0.75rem", textAlign: "left" }}
+                >
+                  <span style={{ fontSize: "0.7rem", fontFamily: MONO, color: "var(--t-text-muted)", flexShrink: 0, width: 52 }}>{h.analysis_date}</span>
+                  {vm && (
+                    <span style={{ fontSize: "0.62rem", fontFamily: MONO, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: vm.bg, color: vm.color, flexShrink: 0 }}>{h.verdict}</span>
+                  )}
+                  {h.current_price != null && (
+                    <span style={{ fontSize: "0.72rem", fontFamily: MONO, color: "var(--t-text)", fontWeight: 600, flexShrink: 0 }}>${h.current_price.toFixed(2)}</span>
+                  )}
+                  {h.conviction_score != null && (
+                    <span style={{ fontSize: "0.65rem", fontFamily: MONO, color: "var(--t-text-muted)" }}>{h.conviction_score}/100</span>
+                  )}
+                  {h.is_important_day && <span style={{ fontSize: "0.7rem", flexShrink: 0 }} title={h.importance_reason ?? ""}>⭐</span>}
+                  <span style={{ marginLeft: "auto", fontSize: "0.6rem", color: "var(--t-text-dim)", transition: "transform 0.15s", transform: isExp ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block" }}>▼</span>
+                </button>
+
+                {/* Full analysis inline */}
+                {isExp && (
+                  <div style={{ borderTop: "1px solid var(--t-border-light)" }}>
+                    <ExpandedDetail a={h} isMobile={isMobile} idToken={idToken} />
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

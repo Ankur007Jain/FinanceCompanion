@@ -130,6 +130,18 @@ class StockAnalysisOut(BaseModel):
         from_attributes = True
 
 
+class StockReportOut(BaseModel):
+    id: str
+    ticker: str
+    report_date: date
+    content: str
+    analyses_count: Optional[int] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
 class DigestItem(BaseModel):
     ticker: str
     company_name: Optional[str]
