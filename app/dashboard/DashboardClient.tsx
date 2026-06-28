@@ -32,6 +32,10 @@ interface Analysis {
   beta: number | null;
   short_float_pct: number | null;
   inst_ownership_pct: number | null;
+  sp500_day_chg: number | null;
+  sector_etf: string | null;
+  sector_day_chg: number | null;
+  relative_strength_1d: number | null;
   sp500_52w_change: number | null;
   stock_52w_change: number | null;
   dividend_yield: number | null;
@@ -141,12 +145,17 @@ function RangeBar({ lo, hi, pct }: { lo: number; hi: number; pct: number }) {
 function RsiPill({ rsi }: { rsi: number }) {
   const isOB = rsi >= 70;
   const isOS = rsi <= 30;
-  const color    = isOB ? "var(--t-red)"   : isOS ? "var(--t-green)"   : "var(--t-text-secondary)";
-  const bg       = isOB ? "var(--t-red-bg)" : isOS ? "var(--t-green-bg)" : "var(--t-surface-3)";
-  const border   = isOB ? "var(--t-red-border)" : isOS ? "var(--t-green-border)" : "var(--t-border)";
-  const tag      = isOB ? "OB" : isOS ? "OS" : null;
+  const color  = isOB ? "var(--t-red)"        : isOS ? "var(--t-green)"        : "var(--t-text-secondary)";
+  const bg     = isOB ? "var(--t-red-bg)"     : isOS ? "var(--t-green-bg)"     : "var(--t-surface-3)";
+  const border = isOB ? "var(--t-red-border)" : isOS ? "var(--t-green-border)" : "var(--t-border)";
+  const tag    = isOB ? "OB" : isOS ? "OS" : null;
+  const tip    = isOB
+    ? `RSI ${rsi.toFixed(0)} — Overbought. The stock has run up fast and may be due for a pullback.`
+    : isOS
+    ? `RSI ${rsi.toFixed(0)} — Oversold. The stock has sold off heavily and may be due for a bounce.`
+    : `RSI ${rsi.toFixed(0)} — Neutral momentum (14-day). Above 70 = overbought, below 30 = oversold.`;
   return (
-    <div style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 20, background: bg, border: `1px solid ${border}` }}>
+    <div title={tip} style={{ display: "inline-flex", alignItems: "center", gap: 4, padding: "3px 8px", borderRadius: 20, background: bg, border: `1px solid ${border}`, cursor: "default" }}>
       <span style={{ fontWeight: 700, fontSize: "0.75rem", color, fontFamily: MONO, letterSpacing: "0.02em" }}>RSI {rsi.toFixed(0)}</span>
       {tag && <span style={{ fontSize: "0.6rem", color, fontWeight: 700, fontFamily: MONO, letterSpacing: "0.06em" }}>{tag}</span>}
     </div>
@@ -670,7 +679,9 @@ function StockRow({
                 </>
               )}
               {a.rsi != null && (
-                <span style={{ fontSize: "0.72rem", fontFamily: MONO, color: a.rsi >= 70 ? "var(--t-red)" : a.rsi <= 30 ? "var(--t-green)" : "var(--t-text-muted)" }}>
+                <span
+                  title={a.rsi >= 70 ? `RSI ${a.rsi.toFixed(0)} — Overbought. The stock has run up fast and may be due for a pullback.` : a.rsi <= 30 ? `RSI ${a.rsi.toFixed(0)} — Oversold. Sold off heavily, may be due for a bounce.` : `RSI ${a.rsi.toFixed(0)} — Neutral 14-day momentum. Above 70 = overbought, below 30 = oversold.`}
+                  style={{ fontSize: "0.72rem", fontFamily: MONO, color: a.rsi >= 70 ? "var(--t-red)" : a.rsi <= 30 ? "var(--t-green)" : "var(--t-text-muted)", cursor: "default" }}>
                   RSI {a.rsi.toFixed(0)}{a.rsi >= 70 ? " OB" : a.rsi <= 30 ? " OS" : ""}
                 </span>
               )}
@@ -689,6 +700,23 @@ function StockRow({
             </div>
           )}
 
+          {/* Row 3.5: S&P + Sector context */}
+          {a && (a.sp500_day_chg != null || a.sector_day_chg != null) && (
+            <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.3rem", flexWrap: "wrap" }}
+              title="Today's performance vs the broader market and your stock's sector">
+              {a.sp500_day_chg != null && (
+                <span style={{ fontSize: "0.65rem", fontFamily: MONO, color: "var(--t-text-dim)" }}>
+                  S&P {a.sp500_day_chg >= 0 ? "+" : ""}{a.sp500_day_chg.toFixed(1)}%
+                </span>
+              )}
+              {a.sector_day_chg != null && a.sector_etf && (
+                <span style={{ fontSize: "0.65rem", fontFamily: MONO, color: "var(--t-text-dim)" }}>
+                  · {a.sector_etf} {a.sector_day_chg >= 0 ? "+" : ""}{a.sector_day_chg.toFixed(1)}%
+                </span>
+              )}
+            </div>
+          )}
+
           {/* Row 4: 52w mini bar (if available) */}
           {a?.range_position_pct != null && (
             <div style={{ marginTop: "0.35rem" }}>
@@ -699,7 +727,12 @@ function StockRow({
           {/* Row 5: Sparkline + Ask AI (always visible) */}
           {a && (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: "0.5rem" }}>
-              {item.close_5d ? <Sparkline prices={item.close_5d} width={120} height={28} /> : <span />}
+              {item.close_5d ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  <Sparkline prices={item.close_5d} width={120} height={28} />
+                  <span style={{ fontSize: "0.57rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.04em" }}>7d price</span>
+                </div>
+              ) : <span />}
               <button
                 onClick={e => { e.stopPropagation(); onChat(item.ticker); }}
                 style={{ fontSize: "0.7rem", fontFamily: MONO, fontWeight: 600, padding: "4px 12px", borderRadius: 6, border: "1px solid var(--t-accent)", background: "transparent", color: "var(--t-accent)", cursor: "pointer" }}
@@ -767,7 +800,7 @@ function StockRow({
                 {vm ? <VerdictBadge vm={vm} /> : null}
               </div>
 
-              {/* Price + change + 52w mini bar + MA */}
+              {/* Price + change + vs S&P + 52w mini bar + MA */}
               <div>
                 {a.current_price != null ? (
                   <>
@@ -775,6 +808,21 @@ function StockRow({
                     {a.day_change_pct != null && (
                       <div style={{ fontSize: "0.72rem", color: chgColor, fontWeight: 600, fontFamily: MONO }}>
                         {a.day_change_pct >= 0 ? "▲" : "▼"} {Math.abs(a.day_change_pct).toFixed(2)}%
+                      </div>
+                    )}
+                    {(a.sp500_day_chg != null || a.sector_day_chg != null) && (
+                      <div style={{ display: "flex", gap: "0.35rem", marginTop: "0.2rem", flexWrap: "wrap" }}
+                        title="Today's performance vs the broader market and your stock's sector">
+                        {a.sp500_day_chg != null && (
+                          <span style={{ fontSize: "0.6rem", fontFamily: MONO, color: "var(--t-text-dim)" }}>
+                            S&P {a.sp500_day_chg >= 0 ? "+" : ""}{a.sp500_day_chg.toFixed(1)}%
+                          </span>
+                        )}
+                        {a.sector_day_chg != null && a.sector_etf && (
+                          <span style={{ fontSize: "0.6rem", fontFamily: MONO, color: "var(--t-text-dim)" }}>
+                            · {a.sector_etf} {a.sector_day_chg >= 0 ? "+" : ""}{a.sector_day_chg.toFixed(1)}%
+                          </span>
+                        )}
                       </div>
                     )}
                     {a.range_position_pct != null && <MiniRangeBar lo={a.week_52_low} hi={a.week_52_high} pct={a.range_position_pct} />}
@@ -797,14 +845,20 @@ function StockRow({
                 ) : <span style={{ color: "var(--t-text-muted)", fontSize: "0.82rem" }}>—</span>}
               </div>
 
-              {/* Trend — sparkline */}
-              <div style={{ display: "flex", alignItems: "center" }}>
-                {item.close_5d ? <Sparkline prices={item.close_5d} width={88} height={30} /> : (
+              {/* Trend — sparkline + "7d price" label + RSI pill */}
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 3 }}>
+                {item.close_5d ? (
+                  <>
+                    <Sparkline prices={item.close_5d} width={88} height={30} />
+                    <span style={{ fontSize: "0.58rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.04em" }}>7d price</span>
+                  </>
+                ) : (
                   a.rsi != null ? <RsiPill rsi={a.rsi} /> : <span style={{ color: "var(--t-text-muted)", fontSize: "0.78rem" }}>—</span>
                 )}
+                {item.close_5d && a.rsi != null && <RsiPill rsi={a.rsi} />}
               </div>
 
-              {/* Signals — convergence score + analyst + event (NOT RSI — that's in RSI/Trend) */}
+              {/* Signals — convergence score + analyst + event */}
               <div style={{ display: "flex", flexDirection: "column", gap: "0.25rem" }}>
                 {a.signal_convergence_score != null ? (
                   <div style={{ display: "flex", alignItems: "baseline", gap: 2 }}>
@@ -1557,10 +1611,13 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 SELL:  { label: "Sell",  color: "var(--t-red)", bg: "var(--t-red-bg)", bd: "var(--t-red-border)" },
               };
 
+              const COL_TIPS: Record<string, string> = {
+                "RSI / Trend": "RSI (Relative Strength Index) is a 14-day momentum indicator. Above 70 = overbought (may pull back). Below 30 = oversold (may bounce). The chart shows the last 7 days of closing prices.",
+              };
               const colHeaders = !isMobile && (
                 <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 185px 80px 100px 130px 100px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
                   {["Stock", "Verdict", "Price", "Conviction", "RSI / Trend", "Signals", ""].map(h => (
-                    <div key={h} style={{ fontSize: "0.63rem", color: "var(--t-text-dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
+                    <div key={h} title={COL_TIPS[h]} style={{ fontSize: "0.63rem", color: "var(--t-text-dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO, cursor: COL_TIPS[h] ? "help" : "default" }}>{h}</div>
                   ))}
                 </div>
               );
