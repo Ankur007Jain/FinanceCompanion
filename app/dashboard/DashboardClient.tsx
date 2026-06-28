@@ -664,20 +664,39 @@ function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile }: {
                 {/* Compact header row */}
                 <button
                   onClick={() => setExpandedDate(isExp ? null : h.id)}
-                  style={{ width: "100%", background: isExp ? "var(--t-surface)" : "none", border: "none", cursor: "pointer", padding: "10px 14px", display: "flex", alignItems: "center", gap: "0.75rem", textAlign: "left" }}
+                  style={{ width: "100%", background: isExp ? "var(--t-surface)" : "none", border: "none", cursor: "pointer", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "0.35rem", textAlign: "left" }}
                 >
-                  <span style={{ fontSize: "0.7rem", fontFamily: MONO, color: "var(--t-text-muted)", flexShrink: 0, width: 52 }}>{h.analysis_date}</span>
-                  {vm && (
-                    <span style={{ fontSize: "0.62rem", fontFamily: MONO, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: vm.bg, color: vm.color, flexShrink: 0 }}>{h.verdict}</span>
+                  {/* Row 1: date · verdict · price · change · RSI · conviction · star */}
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", width: "100%" }}>
+                    <span style={{ fontSize: "0.7rem", fontFamily: MONO, color: "var(--t-text-muted)", flexShrink: 0, width: 52 }}>{h.analysis_date}</span>
+                    {vm && (
+                      <span style={{ fontSize: "0.62rem", fontFamily: MONO, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: vm.bg, color: vm.color, flexShrink: 0 }}>{h.verdict}</span>
+                    )}
+                    {h.current_price != null && (
+                      <span style={{ fontSize: "0.72rem", fontFamily: MONO, color: "var(--t-text)", fontWeight: 600, flexShrink: 0 }}>${h.current_price.toFixed(2)}</span>
+                    )}
+                    {h.day_change_pct != null && (
+                      <span style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 600, color: h.day_change_pct >= 0 ? "var(--t-green)" : "var(--t-red)", flexShrink: 0 }}>
+                        {h.day_change_pct >= 0 ? "+" : ""}{h.day_change_pct.toFixed(2)}%
+                      </span>
+                    )}
+                    {h.rsi != null && (
+                      <span style={{ fontSize: "0.6rem", fontFamily: MONO, padding: "1px 6px", borderRadius: 3, background: "var(--t-surface-3)", color: h.rsi >= 70 ? "var(--t-red)" : h.rsi <= 30 ? "var(--t-green)" : "var(--t-text-muted)", flexShrink: 0 }}>
+                        RSI {h.rsi.toFixed(0)}
+                      </span>
+                    )}
+                    {h.conviction_score != null && (
+                      <span style={{ fontSize: "0.65rem", fontFamily: MONO, color: "var(--t-text-muted)" }}>{h.conviction_score}/100</span>
+                    )}
+                    {h.is_important_day && <span style={{ fontSize: "0.7rem", flexShrink: 0 }} title={h.importance_reason ?? ""}>⭐</span>}
+                    <span style={{ marginLeft: "auto", fontSize: "0.6rem", color: "var(--t-text-dim)", transition: "transform 0.15s", transform: isExp ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block", flexShrink: 0 }}>▼</span>
+                  </div>
+                  {/* Row 2: reasoning snippet */}
+                  {h.reasoning && (
+                    <div style={{ fontSize: "0.7rem", color: "var(--t-text-muted)", fontFamily: SANS, lineHeight: 1.4, paddingLeft: 60, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical" }}>
+                      {h.reasoning}
+                    </div>
                   )}
-                  {h.current_price != null && (
-                    <span style={{ fontSize: "0.72rem", fontFamily: MONO, color: "var(--t-text)", fontWeight: 600, flexShrink: 0 }}>${h.current_price.toFixed(2)}</span>
-                  )}
-                  {h.conviction_score != null && (
-                    <span style={{ fontSize: "0.65rem", fontFamily: MONO, color: "var(--t-text-muted)" }}>{h.conviction_score}/100</span>
-                  )}
-                  {h.is_important_day && <span style={{ fontSize: "0.7rem", flexShrink: 0 }} title={h.importance_reason ?? ""}>⭐</span>}
-                  <span style={{ marginLeft: "auto", fontSize: "0.6rem", color: "var(--t-text-dim)", transition: "transform 0.15s", transform: isExp ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block" }}>▼</span>
                 </button>
 
                 {/* Full analysis inline */}
