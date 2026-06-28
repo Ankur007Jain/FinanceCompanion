@@ -628,10 +628,22 @@ function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile }: {
           <div style={{ marginBottom: "1rem", padding: "12px 14px", background: "var(--t-surface-3)", borderRadius: 8, border: "1px solid var(--t-border)" }}>
             {report ? (
               <div>
-                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem" }}>
-                  <span style={{ fontSize: "0.65rem", fontFamily: MONO, fontWeight: 700, color: "var(--t-text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
-                    AI Report · {report.analyses_count} analyses · {report.report_date}
-                  </span>
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.75rem", gap: "0.75rem", flexWrap: "wrap" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+                    <span style={{ fontSize: "0.65rem", fontFamily: MONO, fontWeight: 700, color: "var(--t-text-muted)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
+                      AI Report · {report.analyses_count} analyses · {report.report_date}
+                    </span>
+                    {report.report_date !== new Date().toISOString().slice(0, 10) && (
+                      <span style={{ fontSize: "0.6rem", fontFamily: MONO, padding: "1px 6px", borderRadius: 3, background: "var(--t-yellow-bg)", color: "var(--t-yellow)", fontWeight: 700 }}>STALE</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={generateReport}
+                    disabled={loadingReport}
+                    style={{ fontSize: "0.65rem", fontFamily: MONO, fontWeight: 700, padding: "4px 10px", borderRadius: 5, border: "1px solid var(--t-border-mid)", background: "none", color: "var(--t-text-muted)", cursor: loadingReport ? "default" : "pointer", whiteSpace: "nowrap", flexShrink: 0 }}
+                  >
+                    {loadingReport ? "Regenerating…" : "↻ Regenerate"}
+                  </button>
                 </div>
                 <div style={{ fontSize: "0.82rem", color: "var(--t-text)", lineHeight: 1.65, fontFamily: SANS }} className="report-markdown">
                   <ReactMarkdown remarkPlugins={[remarkGfm]}>{report.content}</ReactMarkdown>

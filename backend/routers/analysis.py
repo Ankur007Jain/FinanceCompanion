@@ -223,7 +223,8 @@ def get_report(ticker: str, id_token: str, db: Session = Depends(get_db)):
     get_current_user(id_token, db)
     report = (
         db.query(StockReport)
-        .filter(StockReport.ticker == ticker.upper(), StockReport.report_date == date.today())
+        .filter(StockReport.ticker == ticker.upper())
+        .order_by(StockReport.report_date.desc())
         .first()
     )
     return report
