@@ -191,6 +191,12 @@ jobs:
             except Exception:
                 sector_day_chg = relative_strength_1d = None
 
+            # 52-week return vs S&P — stored as percentage (e.g. 18.4 not 0.184)
+            _sp500_52w_raw = info.get("SandP52WeekChange")
+            sp500_52w_change = round(_sp500_52w_raw * 100, 1) if _sp500_52w_raw else None
+            _stock_52w_raw = info.get("52WeekChange")
+            stock_52w_change = round(_stock_52w_raw * 100, 1) if _stock_52w_raw else None
+
             # Finnhub cross-validation — price & analyst (secondary source)
             import os as _os, requests as _req
             fh_price = fh_analyst = data_conflicts_str = None
@@ -234,6 +240,8 @@ jobs:
                 "sp500_day_chg": sp500_day_chg,
                 "sector_day_chg": sector_day_chg,
                 "relative_strength_1d": relative_strength_1d,
+                "sp500_52w_change": sp500_52w_change,
+                "stock_52w_change": stock_52w_change,
                 "fh_price": fh_price, "fh_analyst": fh_analyst,
                 "data_conflicts": data_conflicts_str,
             }
@@ -519,6 +527,7 @@ jobs:
             sector→sector, industry→industry,
             sp500_day_chg→sp500_day_chg, sector_etf→sector_etf,
             sector_day_chg→sector_day_chg, relative_strength_1d→relative_strength_1d,
+            sp500_52w_change→sp500_52w_change, stock_52w_change→stock_52w_change,
             fh_price→fh_price, fh_analyst→fh_analyst_consensus,
             data_conflicts→data_conflicts (include if not null, else omit).
 
