@@ -75,6 +75,25 @@ def _run_analysis_for_ticker(ticker: str, is_leveraged: bool, sector: str, compa
         session.close()
 
 
+def _update_leveraged_flag(ticker: str, user_email: str):
+    """Detect leveraged ETF in background and update the watchlist row — never blocks the POST."""
+    session = SessionLocal()
+    try:
+        is_lev = _detect_leveraged(ticker)
+        if is_lev:
+            item = session.query(WatchlistItem).filter(
+                WatchlistItem.user_email == user_email,
+                WatchlistItem.ticker == ticker,
+            ).first()
+            if item:
+                item.is_leveraged = True
+                session.commit()
+    except Exception as e:
+        logger.warning(f"[{ticker}] Leveraged flag update failed: {e}")
+    finally:
+        session.close()
+
+
 @router.post("", response_model=WatchlistItemOut)
 def add_to_watchlist(
     id_token: str,
@@ -92,17 +111,19 @@ def add_to_watchlist(
     ).first()
     if existing:
         raise HTTPException(status_code=409, detail=f"{ticker} already in watchlist.")
-    is_leveraged = _detect_leveraged(ticker)
     item = WatchlistItem(
         user_email=user.email,
         ticker=ticker,
         company_name=body.company_name,
         sector=body.sector,
-        is_leveraged=is_leveraged,
+        is_leveraged=False,  # updated in background below
     )
     db.add(item)
     db.commit()
     db.refresh(item)
+
+    # Detect leveraged ETF in background — avoids blocking the POST with a yfinance call
+    background_tasks.add_task(_update_leveraged_flag, ticker, user.email)
 
     # Auto-analyze on add — controlled by AUTO_ANALYZE_ON_ADD env var (default: off)
     import os
