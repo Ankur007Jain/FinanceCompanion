@@ -198,12 +198,15 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: 
   idToken: string;
 }) {
   const [lang, setLang] = useState<"en" | "hi">("en");
-  const [mode, setMode] = useState<"technical" | "simple">("technical");
+  const [mode, setMode] = useState<"technical" | "simple">("simple");
   const [translating, setTranslating] = useState(false);
   const [txCache, setTxCache] = useState<Record<string, Record<string, string | null>>>({});
 
   const txKey = `${lang}:${mode}`;
   const tx = txCache[txKey] ?? {};
+
+  // Auto-fetch simple mode on mount so the default is already plain English
+  useEffect(() => { applyTranslation("en", "simple"); }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function applyTranslation(nextLang: "en" | "hi", nextMode: "technical" | "simple") {
     const key = `${nextLang}:${nextMode}`;
