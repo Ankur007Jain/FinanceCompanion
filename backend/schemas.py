@@ -124,6 +124,11 @@ class StockAnalysisOut(BaseModel):
     tokens_cache_read: Optional[int] = None
     tokens_cache_write: Optional[int] = None
     cost_usd: Optional[float] = None
+    reasoning_simple: Optional[str] = None
+    bull_case_simple: Optional[str] = None
+    bear_case_simple: Optional[str] = None
+    thesis_invalidation_simple: Optional[str] = None
+    news_summary_simple: Optional[str] = None
     created_at: datetime
 
     class Config:

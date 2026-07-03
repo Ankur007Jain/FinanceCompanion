@@ -189,6 +189,19 @@ def analyzed_today(x_admin_secret: str = "", db: Session = Depends(get_db)):
     return {"date": str(today), "analyzed": [r[0] for r in rows]}
 
 
+@router.post("/admin/backfill-simple")
+async def backfill_simple_fields(x_admin_secret: str = "", db: Session = Depends(get_db)):
+    """One-time backfill: generate simple fields for all analyses that are missing them."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    from services.simple_fields import generate_simple_fields
+    rows = db.query(StockAnalysis).filter(StockAnalysis.reasoning_simple.is_(None)).all()
+    count = len(rows)
+    for row in rows:
+        await generate_simple_fields(row, db)
+    return {"backfilled": count}
+
+
 @router.get("/health")
 def health():
     return {"status": "ok"}

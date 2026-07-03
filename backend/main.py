@@ -140,11 +140,16 @@ def _migrate_db():
         if "stock_analyses" in tables:
             sa_cols2 = {c["name"] for c in inspector.get_columns("stock_analyses")}
             for col, typ in [
-                ("tokens_input",       "INTEGER"),
-                ("tokens_output",      "INTEGER"),
-                ("tokens_cache_read",  "INTEGER"),
-                ("tokens_cache_write", "INTEGER"),
-                ("cost_usd",           "FLOAT"),
+                ("tokens_input",               "INTEGER"),
+                ("tokens_output",              "INTEGER"),
+                ("tokens_cache_read",          "INTEGER"),
+                ("tokens_cache_write",         "INTEGER"),
+                ("cost_usd",                   "FLOAT"),
+                ("reasoning_simple",           "TEXT"),
+                ("bull_case_simple",           "TEXT"),
+                ("bear_case_simple",           "TEXT"),
+                ("thesis_invalidation_simple", "TEXT"),
+                ("news_summary_simple",        "TEXT"),
             ]:
                 if col not in sa_cols2:
                     conn.execute(text(f"ALTER TABLE stock_analyses ADD COLUMN {col} {typ}"))  # nosemgrep
