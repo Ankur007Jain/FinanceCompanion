@@ -448,7 +448,7 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: 
       )}
 
       {/* ── Main content — 3-col on desktop, stacked on mobile ── */}
-      <div style={{ padding: "1.25rem 1.5rem", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? "1.25rem" : "1.5rem" }}>
+      <div style={{ padding: isMobile ? "0.75rem 0.75rem" : "1.25rem 1.5rem", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? "1rem" : "1.5rem" }}>
 
         {/* Bull / bear / thesis — conviction lives in the hero strip above */}
         {(bull_case || bear_case || thesis_invalidation) && (
@@ -625,14 +625,14 @@ function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile }: {
     <div style={{ borderTop: "1px solid var(--t-border-light)", marginTop: 0 }}>
       <button
         onClick={loadHistory}
-        style={{ width: "100%", background: "none", border: "none", cursor: "pointer", padding: "12px 20px", display: "flex", alignItems: "center", gap: "0.5rem", color: "var(--t-text-muted)", fontSize: "0.72rem", fontFamily: MONO, fontWeight: 600, letterSpacing: "0.06em", textAlign: "left" }}
+        style={{ width: "100%", background: "none", border: "none", cursor: "pointer", padding: isMobile ? "10px 12px" : "12px 20px", display: "flex", alignItems: "center", gap: "0.5rem", color: "var(--t-text-muted)", fontSize: "0.72rem", fontFamily: MONO, fontWeight: 600, letterSpacing: "0.06em", textAlign: "left" }}
       >
         <span style={{ transition: "transform 0.2s", transform: open ? "rotate(90deg)" : "rotate(0deg)", display: "inline-block", fontSize: "0.6rem" }}>▶</span>
         {loadingHistory ? "Loading history..." : `PAST ANALYSES${history ? ` (${history.length})` : ""}`}
       </button>
 
       {open && history && (
-        <div style={{ padding: "0 20px 20px" }}>
+        <div style={{ padding: isMobile ? "0 8px 16px" : "0 20px 20px" }}>
           {/* Report section */}
           <div style={{ marginBottom: "1rem", padding: "12px 14px", background: "var(--t-surface-3)", borderRadius: 8, border: "1px solid var(--t-border)" }}>
             {report ? (
@@ -688,8 +688,8 @@ function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile }: {
                   style={{ width: "100%", background: isExp ? "var(--t-surface)" : "none", border: "none", cursor: "pointer", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "0.35rem", textAlign: "left" }}
                 >
                   {/* Row 1: date · verdict · price · change · RSI · conviction · star */}
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.75rem", width: "100%" }}>
-                    <span style={{ fontSize: "0.7rem", fontFamily: MONO, color: "var(--t-text-muted)", flexShrink: 0, width: 52 }}>{h.analysis_date}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: isMobile ? "0.4rem" : "0.75rem", width: "100%", flexWrap: isMobile ? "wrap" : "nowrap" }}>
+                    <span style={{ fontSize: "0.7rem", fontFamily: MONO, color: "var(--t-text-muted)", flexShrink: 0 }}>{h.analysis_date}</span>
                     {vm && (
                       <span style={{ fontSize: "0.62rem", fontFamily: MONO, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: vm.bg, color: vm.color, flexShrink: 0 }}>{h.verdict}</span>
                     )}
@@ -707,14 +707,16 @@ function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile }: {
                       </span>
                     )}
                     {h.conviction_score != null && (
-                      <span style={{ fontSize: "0.65rem", fontFamily: MONO, color: "var(--t-text-muted)" }}>CONVICTION {h.conviction_score}</span>
+                      <span style={{ fontSize: "0.65rem", fontFamily: MONO, color: "var(--t-text-muted)" }}>
+                        {isMobile ? h.conviction_score : `CONVICTION ${h.conviction_score}`}
+                      </span>
                     )}
                     {h.is_important_day && <span style={{ fontSize: "0.7rem", flexShrink: 0 }} title={h.importance_reason ?? ""}>⭐</span>}
                     <span style={{ marginLeft: "auto", fontSize: "0.6rem", color: "var(--t-text-dim)", transition: "transform 0.15s", transform: isExp ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block", flexShrink: 0 }}>▼</span>
                   </div>
                   {/* Row 2: reasoning snippet */}
                   {h.reasoning && (
-                    <div style={{ fontSize: "0.7rem", color: "var(--t-text-muted)", fontFamily: SANS, lineHeight: 1.4, paddingLeft: 60, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical" }}>
+                    <div style={{ fontSize: "0.7rem", color: "var(--t-text-muted)", fontFamily: SANS, lineHeight: 1.4, paddingLeft: isMobile ? 0 : 60, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical" }}>
                       {h.reasoning}
                     </div>
                   )}
@@ -1456,7 +1458,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
         </>
       )}
 
-      <main style={{ maxWidth: 1180, margin: "0 auto", padding: "30px 32px 56px" }}>
+      <main style={{ maxWidth: 1180, margin: "0 auto", padding: isMobile ? "16px 16px 56px" : "30px 32px 56px" }}>
 
         {/* ── Dashboard tab ── */}
         {activeTab === "Dashboard" && (() => {
