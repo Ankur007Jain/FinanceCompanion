@@ -157,6 +157,15 @@ def build_system_prompt(
     # Deep dossier for the ticker in focus (most prominent context)
     if conversation_ticker:
         focus = conversation_ticker.upper()
+        # With a large watchlist, the focus ticker's dossier can get buried among dozens of
+        # others below — spell out unambiguously which one "this stock" refers to, since
+        # nothing else in the prompt marks it as the active topic vs. just more data.
+        lines.append(
+            f"📌 ACTIVE CONVERSATION TOPIC: {focus}. The user is chatting specifically about "
+            f"{focus} right now. When they say \"this stock\", \"this share\", \"it\", or similar, "
+            f"they mean {focus} — not any other ticker listed below. Lead your answer with {focus}; "
+            f"only bring in other tickers if the user explicitly asks about them.\n"
+        )
         focus_analysis = (
             db.query(StockAnalysis)
             .filter(StockAnalysis.ticker == focus)
