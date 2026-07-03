@@ -192,15 +192,24 @@ function MaBadge({ price, ma50, ma200 }: { price: number; ma50: number | null; m
   );
 }
 
-function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: {
+function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken, txCacheRef }: {
   a: Analysis; isMobile: boolean;
   changeSummary?: string | null; daysSinceRead?: number | null;
   idToken: string;
+  txCacheRef: React.MutableRefObject<Record<string, Record<string, string | null>>>;
 }) {
   const [lang, setLang] = useState<"en" | "hi">("en");
   const [mode, setMode] = useState<"technical" | "simple">("simple");
   const [translating, setTranslating] = useState(false);
-  const [txCache, setTxCache] = useState<Record<string, Record<string, string | null>>>({});
+
+  // Seed local cache from the shared ref so re-expanding a card is free
+  const [txCache, setTxCache] = useState<Record<string, Record<string, string | null>>>(() => {
+    const seed: Record<string, Record<string, string | null>> = {};
+    for (const [k, v] of Object.entries(txCacheRef.current)) {
+      if (k.startsWith(`${a.id}:`)) seed[k.slice(a.id.length + 1)] = v;
+    }
+    return seed;
+  });
 
   const txKey = `${lang}:${mode}`;
   const tx = txCache[txKey] ?? {};
@@ -233,6 +242,7 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: 
       if (r.ok) {
         const { fields } = await r.json();
         setTxCache(prev => ({ ...prev, [key]: fields }));
+        txCacheRef.current[`${a.id}:${key}`] = fields; // persist across collapse/re-expand
       }
     } finally {
       setTranslating(false);
@@ -565,7 +575,7 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: 
 
       {/* ── History + Report ── */}
       <div style={{ gridColumn: "1 / -1" }}>
-        <HistoryPanel ticker={a.ticker} idToken={idToken} currentAnalysis={a} isMobile={isMobile} />
+        <HistoryPanel ticker={a.ticker} idToken={idToken} currentAnalysis={a} isMobile={isMobile} txCacheRef={txCacheRef} />
       </div>
 
       </div>
@@ -573,8 +583,9 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken }: 
   );
 }
 
-function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile }: {
+function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile, txCacheRef }: {
   ticker: string; idToken: string; currentAnalysis: Analysis; isMobile: boolean;
+  txCacheRef: React.MutableRefObject<Record<string, Record<string, string | null>>>;
 }) {
   const [open, setOpen] = useState(false);
   const [history, setHistory] = useState<Analysis[] | null>(null);
@@ -728,7 +739,7 @@ function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile }: {
                 {/* Full analysis inline */}
                 {isExp && (
                   <div style={{ borderTop: "1px solid var(--t-border-light)" }}>
-                    <ExpandedDetail a={h} isMobile={isMobile} idToken={idToken} />
+                    <ExpandedDetail a={h} isMobile={isMobile} idToken={idToken} txCacheRef={txCacheRef} />
                   </div>
                 )}
               </div>
@@ -802,10 +813,11 @@ function Sparkline({ prices, width = 88, height = 30 }: { prices: number[]; widt
 }
 
 function StockRow({
-  item, expanded, onToggle, onChat, onRemove, isMobile, idToken,
+  item, expanded, onToggle, onChat, onRemove, isMobile, idToken, txCacheRef,
 }: {
   item: DigestItem; expanded: boolean; isMobile: boolean; idToken: string;
   onToggle: () => void; onChat: (ticker: string) => void; onRemove: (ticker: string) => void;
+  txCacheRef: React.MutableRefObject<Record<string, Record<string, string | null>>>;
 }) {
   const showUnreadDot = item.has_unread && !!item.analysis;
   const a = item.analysis;
@@ -1089,7 +1101,7 @@ function StockRow({
         </div>
       )}
 
-      {expanded && a && <ExpandedDetail a={a} isMobile={isMobile} changeSummary={item.change_summary} daysSinceRead={item.days_since_read} idToken={idToken} />}
+      {expanded && a && <ExpandedDetail a={a} isMobile={isMobile} changeSummary={item.change_summary} daysSinceRead={item.days_since_read} idToken={idToken} txCacheRef={txCacheRef} />}
     </div>
   );
 }
@@ -1117,6 +1129,8 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [sortMode, setSortMode] = useState<"relevance" | "verdict" | "az" | "movers">("relevance");
+  // Translation cache lifted here so it survives card collapse/re-expand
+  const txCacheRef = useRef<Record<string, Record<string, string | null>>>({});
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
@@ -1829,7 +1843,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
 
               const renderRow = (item: DigestItem) => (
                 <StockRow
-                  key={item.ticker} item={item} idToken={idToken}
+                  key={item.ticker} item={item} idToken={idToken} txCacheRef={txCacheRef}
                   expanded={expanded === item.ticker}
                   onToggle={() => {
                     const isExpanding = expanded !== item.ticker;
