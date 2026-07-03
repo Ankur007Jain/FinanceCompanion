@@ -1265,7 +1265,7 @@ function StockRow({
   );
 }
 
-const TABS = ["Dashboard", "My Stocks", "Watchlist", "Discover"] as const;
+const TABS = ["Dashboard", "Stocks", "Discover"] as const;
 type Tab = typeof TABS[number];
 
 export default function DashboardClient({ userName, idToken }: { userName: string; idToken: string }) {
@@ -1280,7 +1280,8 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [suggestions, setSuggestions] = useState<{ ticker: string; name: string; exchange: string }[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
   const [highlightedIdx, setHighlightedIdx] = useState(-1);
-  const [activeTab, setActiveTab] = useState<Tab>("My Stocks");
+  const [activeTab, setActiveTab] = useState<Tab>("Stocks");
+  const watchlistSectionRef = useRef<HTMLDivElement>(null);
   const [portfolioSize, setPortfolioSize] = useState<number | null>(null);
   const [showPortfolioPrompt, setShowPortfolioPrompt] = useState(false);
   const [portfolioInput, setPortfolioInput] = useState("");
@@ -1478,6 +1479,11 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   }
 
   async function handleChat(t: string) {
+    const existing = await fetch(`${API}/conversations/by-ticker/${t}?id_token=${encodeURIComponent(idToken)}`);
+    if (existing.ok) {
+      const convs = await existing.json();
+      if (convs.length > 0) { router.push(`/chat?conv=${convs[0].id}`); return; }
+    }
     const r = await fetch(`${API}/conversations?id_token=${encodeURIComponent(idToken)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1495,7 +1501,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     setAddToPortfolioTicker(null);
     setPortfolioShares("");
     setPortfolioAvgCost("");
-    showToast(isEditing ? `${ticker} position updated` : `${ticker} added to My Stocks`);
+    showToast(isEditing ? `${ticker} position updated` : `${ticker} added to My Positions`);
     try {
       const r = await fetch(`${API}/watchlist/${encodeURIComponent(ticker)}/portfolio?id_token=${encodeURIComponent(idToken)}`, {
         method: "PATCH",
@@ -1549,7 +1555,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
         setImportStep("upload");
         setImportPositions([]);
         fetchDigest(true);
-        showToast(`${importPositions.length} position${importPositions.length !== 1 ? "s" : ""} imported to My Stocks`);
+        showToast(`${importPositions.length} position${importPositions.length !== 1 ? "s" : ""} imported to My Positions`);
       } else {
         setImportError("Failed to save positions.");
       }
@@ -1562,8 +1568,6 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const sellCount     = digest.filter(d => d.analysis?.verdict === "SELL").length;
   const importantItems = digest.filter(d => d.analysis?.is_important_day);
   const unreadCount      = digest.filter(d => d.has_unread).length;
-  const portfolioCount   = digest.filter(d => d.shares != null).length;
-  const watchlistUnread  = digest.filter(d => d.shares == null && d.has_unread).length;
   const initials = userName.split(" ").map(n => n[0]).join("").toUpperCase().slice(0, 2);
 
   return (
@@ -1594,14 +1598,9 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 }}>
                   <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
                     {tab}
-                    {tab === "My Stocks" && portfolioCount > 0 && (
+                    {tab === "Stocks" && unreadCount > 0 && (
                       <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 5px", borderRadius: 9, background: "var(--t-accent)", color: "var(--t-surface)", lineHeight: 1.4 }}>
-                        {portfolioCount}
-                      </span>
-                    )}
-                    {tab === "Watchlist" && watchlistUnread > 0 && (
-                      <span style={{ fontSize: 10, fontWeight: 700, fontFamily: "monospace", padding: "1px 5px", borderRadius: 9, background: "var(--t-accent)", color: "var(--t-surface)", lineHeight: 1.4 }}>
-                        {watchlistUnread}
+                        {unreadCount}
                       </span>
                     )}
                   </span>
@@ -1895,11 +1894,11 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
 
                   {/* Footer */}
                   <div style={{ padding: "0 20px 16px", display: "flex", gap: 10 }}>
-                    <button onClick={() => { setActiveTab("My Stocks"); setExpanded(spotlight.ticker); }}
+                    <button onClick={() => { setActiveTab("Stocks"); setExpanded(spotlight.ticker); }}
                       style={{ flex: 1, padding: "10px 0", background: "var(--t-accent)", color: "var(--t-surface)", border: "none", borderRadius: 8, cursor: "pointer", fontWeight: 600, fontSize: 14, fontFamily: SANS }}>
                       View Full Analysis →
                     </button>
-                    <button onClick={() => { setActiveTab("My Stocks"); }}
+                    <button onClick={() => { setActiveTab("Stocks"); }}
                       style={{ padding: "10px 18px", background: "none", color: "var(--t-text-muted)", border: "1px solid var(--t-border)", borderRadius: 8, cursor: "pointer", fontSize: 13, fontFamily: SANS }}>
                       Skip
                     </button>
@@ -1929,7 +1928,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                   {importantItems.map(item => {
                     const ivm = item.analysis?.verdict ? VERDICT_META[item.analysis.verdict] ?? VERDICT_META.WATCH : null;
                     return (
-                      <div key={item.ticker} onClick={() => { setActiveTab("My Stocks"); setExpanded(item.ticker); }}
+                      <div key={item.ticker} onClick={() => { setActiveTab("Stocks"); setExpanded(item.ticker); }}
                         style={{ display: "flex", alignItems: "center", gap: 13, padding: "12px 18px", borderTop: "1px solid var(--t-border-light)", cursor: "pointer" }}>
                         <span style={{ fontFamily: MONO, fontWeight: 600, fontSize: 13, width: 60, color: "var(--t-text)" }}>{item.ticker}</span>
                         {ivm && <span style={{ fontSize: 10, padding: "3px 9px", background: ivm.bg, color: ivm.color, border: `1px solid ${ivm.bd}`, borderRadius: 20, fontFamily: MONO, fontWeight: 700 }}>{ivm.label}</span>}
@@ -1942,7 +1941,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               )}
 
               {/* My Stocks teaser */}
-              <button onClick={() => setActiveTab("My Stocks")} style={{
+              <button onClick={() => setActiveTab("Stocks")} style={{
                 width: "100%", textAlign: "left", background: "var(--t-surface)",
                 border: "1px solid var(--t-border)", borderRadius: 11, padding: "15px 20px",
                 display: "flex", alignItems: "center", gap: 14, cursor: "pointer", fontFamily: SANS,
@@ -1957,12 +1956,62 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
           );
         })()}
 
-        {/* ── My Stocks tab (portfolio — items with shares set) ── */}
-        {activeTab === "My Stocks" && (() => {
-          const portfolioItems = digest.filter(d => d.shares != null);
-          const totalPortfolioValue = portfolioItems
+        {/* ── Stocks tab: My Positions section (portfolio — items with shares set) ── */}
+        {activeTab === "Stocks" && (() => {
+          const allPortfolioItems = digest.filter(d => d.shares != null);
+          const allWatchlistItems = digest.filter(d => d.shares == null);
+
+          const filterQ = ticker ? ticker.toLowerCase() : query.trim().toLowerCase();
+          const matchesQuery = (d: DigestItem) => !filterQ || (ticker ? d.ticker.toLowerCase() === filterQ : d.ticker.toLowerCase().includes(filterQ) || (d.company_name || "").toLowerCase().includes(filterQ));
+          const portfolioItems = allPortfolioItems.filter(matchesQuery);
+          const watchlistItems = allWatchlistItems.filter(matchesQuery);
+
+          const totalPortfolioValue = allPortfolioItems
             .filter(d => d.shares != null && d.analysis?.current_price != null)
             .reduce((s, d) => s + d.shares! * d.analysis!.current_price!, 0);
+
+          const VERDICT_ORDER = ["BUY", "HOLD", "WATCH", "SELL"];
+          const VERDICT_META_GROUP: Record<string, { label: string; color: string; bg: string; bd: string }> = {
+            BUY:   { label: "Buy",   color: "var(--t-green)",       bg: "var(--t-green-bg)",    bd: "var(--t-green-mid)"      },
+            HOLD:  { label: "Hold",  color: "var(--t-yellow)",      bg: "var(--t-yellow-bg)",   bd: "var(--t-yellow-border)"  },
+            WATCH: { label: "Watch", color: "var(--t-text-muted)",  bg: "var(--t-surface-warm)", bd: "var(--t-border)"        },
+            SELL:  { label: "Sell",  color: "var(--t-red)",         bg: "var(--t-red-bg)",      bd: "var(--t-red-border)"     },
+          };
+          const COL_TIPS: Record<string, string> = { "RSI / Trend": "RSI 14-day momentum. Above 70 = overbought. Below 30 = oversold." };
+          const colHeaders = !isMobile && (
+            <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 185px 80px 100px 130px 100px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
+              {["Stock", "Verdict", "Price", "Conviction", "RSI / Trend", "Signals", ""].map(h => (
+                <div key={h} title={COL_TIPS[h]} style={{ fontSize: "0.63rem", color: "var(--t-text-dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO, cursor: COL_TIPS[h] ? "help" : "default" }}>{h}</div>
+              ))}
+            </div>
+          );
+          const sectionHeader = (label: string, count: number, color: string, bg: string, bd: string) => (
+            <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
+              <span style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, padding: "2px 10px", borderRadius: 20, color, background: bg, border: `1px solid ${bd}`, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
+              <span style={{ fontSize: "0.68rem", color: "var(--t-text-muted)", fontFamily: MONO }}>{count} stock{count > 1 ? "s" : ""}</span>
+              <div style={{ flex: 1, height: 1, background: "var(--t-border)" }} />
+            </div>
+          );
+          const sortFlat = (items: DigestItem[]) => {
+            if (sortMode === "az") return [...items].sort((a, b) => a.ticker.localeCompare(b.ticker));
+            if (sortMode === "movers") return [...items].sort((a, b) => Math.abs(b.analysis?.day_change_pct ?? 0) - Math.abs(a.analysis?.day_change_pct ?? 0));
+            return [...items].sort((a, b) => ((b.analysis?.signal_convergence_score ?? -1) * 100 + (b.analysis?.conviction_score ?? 0)) - ((a.analysis?.signal_convergence_score ?? -1) * 100 + (a.analysis?.conviction_score ?? 0)));
+          };
+          // Renders a sorted/grouped list shared by both sections — same sort modes apply to positions and watchlist alike.
+          const renderSortedList = (items: DigestItem[], renderRow: (item: DigestItem) => React.ReactNode) => {
+            if (sortMode === "verdict") {
+              const grouped = VERDICT_ORDER.map(v => ({ verdict: v, ...VERDICT_META_GROUP[v], items: items.filter(d => d.analysis?.verdict === v) })).filter(g => g.items.length > 0);
+              const pending = items.filter(d => !d.analysis);
+              return (
+                <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+                  {grouped.map((g, gi) => <div key={g.verdict}>{sectionHeader(g.label, g.items.length, g.color, g.bg, g.bd)}{gi === 0 && colHeaders}<div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{g.items.map(renderRow)}</div></div>)}
+                  {pending.length > 0 && <div>{sectionHeader("Pending", pending.length, "var(--t-text-muted)", "var(--t-surface-3)", "var(--t-border)")}<div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{pending.map(renderRow)}</div></div>}
+                </div>
+              );
+            }
+            const sorted = sortFlat(items);
+            return <div>{colHeaders}<div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{sorted.map(renderRow)}</div></div>;
+          };
 
           const renderPortfolioRow = (item: DigestItem) => (
             <StockRow
@@ -1985,228 +2034,165 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
             />
           );
 
-          return (
-            <div>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: "0.75rem" }}>
-                <div>
-                  <h1 style={{ margin: 0, fontFamily: SERIF, fontWeight: 600, fontSize: 25, color: "var(--t-text)" }}>My Stocks</h1>
-                  <div style={{ marginTop: 5, fontSize: 13, color: "var(--t-text-muted)" }}>
-                    {portfolioItems.length} position{portfolioItems.length !== 1 ? "s" : ""} · Real holdings with P&L tracking
-                  </div>
-                </div>
-                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  <button
-                    onClick={() => { setShowImportModal(true); setImportStep("upload"); setImportError(""); }}
-                    style={{ fontSize: "0.8rem", fontFamily: SANS, fontWeight: 600, padding: "7px 14px", borderRadius: 7, border: "1px solid var(--t-accent)", background: "var(--t-accent-bg)", color: "var(--t-accent)", cursor: "pointer" }}
-                  >↑ Import PDF / CSV</button>
-                  <button
-                    onClick={() => setActiveTab("Watchlist")}
-                    style={{ fontSize: "0.8rem", fontFamily: SANS, padding: "7px 14px", borderRadius: 7, border: "1px solid var(--t-border)", background: "transparent", color: "var(--t-text-muted)", cursor: "pointer" }}
-                  >+ Add from Watchlist</button>
-                </div>
-              </div>
-
-              {loading ? (
-                <div style={{ textAlign: "center", padding: "3rem", color: "var(--t-text-muted)" }}>Loading…</div>
-              ) : portfolioItems.length === 0 ? (
-                <div style={{ textAlign: "center", padding: "3rem", background: "var(--t-surface)", borderRadius: 11, border: "1px solid var(--t-border)", color: "var(--t-text-muted)" }}>
-                  <div style={{ fontSize: "1.8rem", marginBottom: "0.75rem" }}>📂</div>
-                  <div style={{ fontWeight: 600, marginBottom: "0.5rem", color: "var(--t-text)", fontSize: 16 }}>No positions yet</div>
-                  <div style={{ fontSize: "0.82rem", marginBottom: "1.25rem" }}>Import your Robinhood statement or add shares from your Watchlist</div>
-                  <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-                    <button onClick={() => { setShowImportModal(true); setImportStep("upload"); setImportError(""); }}
-                      style={{ padding: "8px 18px", background: "var(--t-accent)", color: "var(--t-surface)", border: "none", borderRadius: 7, cursor: "pointer", fontWeight: 600, fontSize: 13, fontFamily: SANS }}>
-                      ↑ Import PDF / CSV
-                    </button>
-                    <button onClick={() => setActiveTab("Watchlist")}
-                      style={{ padding: "8px 18px", background: "none", color: "var(--t-text-muted)", border: "1px solid var(--t-border)", borderRadius: 7, cursor: "pointer", fontSize: 13, fontFamily: SANS }}>
-                      Go to Watchlist
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <PortfolioSummary items={portfolioItems} />
-                  {!isMobile && (
-                    <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 185px 80px 100px 130px 100px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
-                      {["Stock", "Verdict", "Price", "Conviction", "RSI / Trend", "Signals", ""].map(h => (
-                        <div key={h} style={{ fontSize: "0.63rem", color: "var(--t-text-dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO }}>{h}</div>
-                      ))}
-                    </div>
-                  )}
-                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-                    {portfolioItems.map(renderPortfolioRow)}
-                  </div>
-                </>
-              )}
-            </div>
+          const renderWatchRow = (item: DigestItem) => (
+            <StockRow
+              key={item.ticker} item={item} idToken={idToken} txCacheRef={txCacheRef}
+              expanded={expanded === item.ticker}
+              isPortfolio={false}
+              onToggle={() => {
+                const isExpanding = expanded !== item.ticker;
+                if (!isExpanding && item.change_summary) setDigest(prev => prev.map(d => d.ticker === item.ticker ? { ...d, change_summary: null } : d));
+                setExpanded(isExpanding ? item.ticker : null);
+                if (isExpanding && item.has_unread) handleMarkRead(item.ticker);
+              }}
+              onChat={handleChat} onRemove={handleRemove} isMobile={isMobile}
+              onAddToPortfolio={() => { setAddToPortfolioTicker(item.ticker); setPortfolioShares(""); setPortfolioAvgCost(item.analysis?.current_price?.toFixed(2) ?? ""); }}
+            />
           );
-        })()}
 
-        {/* ── Watchlist tab (tracking only — items without shares) ── */}
-        {activeTab === "Watchlist" && (
+          return (
           <div>
+          <h1 style={{ margin: "0 0 16px", fontFamily: SERIF, fontWeight: 600, fontSize: 25, color: "var(--t-text)" }}>Stocks</h1>
+
+          {/* ── Unified search + sort toolbar — filters/sorts both sections below ── */}
+          <div style={{ position: "sticky", top: 60, zIndex: 30, background: "var(--t-bg)", margin: isMobile ? "0 -16px" : "0 -32px", padding: isMobile ? "8px 16px 12px" : "8px 32px 12px" }}>
+            <form onSubmit={handleAdd} style={{ display: "flex", gap: "0.5rem", padding: "0.75rem 1rem", background: "var(--t-surface)", border: "1px solid var(--t-border)", borderRadius: 11, alignItems: "center", flexWrap: "wrap", boxShadow: "0 2px 8px rgba(32,33,28,0.07)" }}>
+              <div ref={searchContainerRef} style={{ position: "relative", flex: "1 1 260px" }}>
+                <input
+                  ref={searchInputRef} value={query}
+                  onChange={e => handleSearchInput(e.target.value)}
+                  onKeyDown={handleSearchKeyDown}
+                  placeholder="Search your positions & watchlist, or add a new stock (e.g. NFLX)…"
+                  autoComplete="off"
+                  style={{ width: "100%", padding: "0.5rem 2rem 0.5rem 0.75rem", background: "var(--t-surface-2)", border: "1px solid var(--t-border)", borderRadius: 7, color: "var(--t-text)", fontSize: "0.88rem", fontFamily: SANS, outline: "none", boxSizing: "border-box" }}
+                />
+                {query && (
+                  <button type="button" onClick={() => { setQuery(""); setTicker(""); setCompanyName(""); setSuggestions([]); setShowSuggestions(false); setError(""); }}
+                    style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--t-text-muted)", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>×</button>
+                )}
+                {showSuggestions && suggestions.length > 0 && (
+                  <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50, background: "var(--t-surface)", border: "1px solid var(--t-border)", borderRadius: 9, overflow: "hidden", boxShadow: "0 8px 24px rgba(32,33,28,0.1)" }}>
+                    {suggestions.map((s, idx) => (
+                      <div key={s.ticker} onMouseDown={() => handleSelect(s)}
+                        style={{ padding: "0.6rem 0.85rem", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", borderBottom: "1px solid var(--t-border-light)", background: idx === highlightedIdx ? "var(--t-surface-alt)" : "transparent" }}
+                        onMouseEnter={() => setHighlightedIdx(idx)} onMouseLeave={() => setHighlightedIdx(-1)}>
+                        <div>
+                          <span style={{ fontWeight: 600, fontSize: "0.88rem", color: "var(--t-text)", fontFamily: MONO }}>{s.ticker}</span>
+                          <span style={{ marginLeft: "0.5rem", fontSize: "0.82rem", color: "var(--t-text-secondary)" }}>{s.name}</span>
+                        </div>
+                        <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)", flexShrink: 0 }}>{s.exchange}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+              <button type="submit" disabled={!ticker && !query.trim()} style={{ padding: "0.5rem 1.1rem", background: (ticker || query.trim()) ? "var(--t-accent)" : "var(--t-border)", color: (ticker || query.trim()) ? "var(--t-surface)" : "var(--t-text-muted)", border: "none", borderRadius: 7, cursor: (ticker || query.trim()) ? "pointer" : "not-allowed", fontWeight: 600, fontSize: "0.88rem", fontFamily: SANS, transition: "background 0.15s", whiteSpace: "nowrap" }}>
+                + Add
+              </button>
+              <div style={{ display: "flex", gap: 4, background: "var(--t-surface-3)", borderRadius: 9, padding: 3 }}>
+                {([
+                  { key: "relevance", label: "Relevance" },
+                  { key: "verdict",   label: "Verdict"   },
+                  { key: "az",        label: "A–Z"       },
+                  { key: "movers",    label: "Movers"    },
+                ] as const).map(opt => (
+                  <button key={opt.key} type="button" onClick={() => setSortMode(opt.key)} style={{
+                    padding: "4px 12px", borderRadius: 6, border: "none",
+                    background: sortMode === opt.key ? "var(--t-surface)" : "transparent",
+                    boxShadow: sortMode === opt.key ? "0 1px 3px rgba(32,33,28,0.1)" : "none",
+                    color: sortMode === opt.key ? "var(--t-text)" : "var(--t-text-muted)",
+                    fontWeight: sortMode === opt.key ? 600 : 400,
+                    fontSize: "0.75rem", cursor: "pointer", fontFamily: MONO,
+                    transition: "all 0.15s", whiteSpace: "nowrap",
+                  }}>{opt.label}</button>
+                ))}
+              </div>
+              {error && <span style={{ color: "var(--t-red)", fontSize: "0.8rem", width: "100%" }}>{error}</span>}
+            </form>
+          </div>
+
+          {/* ── My Positions section ── */}
+          <div style={{ marginTop: 16 }}>
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: "0.75rem" }}>
               <div>
-                <h1 style={{ margin: 0, fontFamily: SERIF, fontWeight: 600, fontSize: 25, color: "var(--t-text)" }}>Watchlist</h1>
-                <div style={{ marginTop: 5, fontSize: 13, color: "var(--t-text-muted)" }}>
-                  {digest.filter(d => d.shares == null).length} stock{digest.filter(d => d.shares == null).length !== 1 ? "s" : ""} · Tracking only · Updated nightly after market close
+                <span style={{ fontSize: 11, fontFamily: MONO, fontWeight: 700, letterSpacing: "0.09em", color: "var(--t-text-muted)", textTransform: "uppercase" }}>My Positions</span>
+                <div style={{ marginTop: 3, fontSize: 13, color: "var(--t-text-muted)" }}>
+                  {filterQ ? `${portfolioItems.length} of ${allPortfolioItems.length}` : allPortfolioItems.length} position{allPortfolioItems.length !== 1 ? "s" : ""} · Real holdings with P&L tracking
                 </div>
               </div>
-              {digest.filter(d => d.shares == null).length > 0 && (
-                <div style={{ display: "flex", gap: 4, background: "var(--t-surface-3)", borderRadius: 9, padding: 3 }}>
-                  {([
-                    { key: "relevance", label: "Relevance" },
-                    { key: "verdict",   label: "Verdict"   },
-                    { key: "az",        label: "A–Z"       },
-                    { key: "movers",    label: "Movers"    },
-                  ] as const).map(opt => (
-                    <button key={opt.key} onClick={() => setSortMode(opt.key)} style={{
-                      padding: "4px 12px", borderRadius: 6, border: "none",
-                      background: sortMode === opt.key ? "var(--t-surface)" : "transparent",
-                      boxShadow: sortMode === opt.key ? "0 1px 3px rgba(32,33,28,0.1)" : "none",
-                      color: sortMode === opt.key ? "var(--t-text)" : "var(--t-text-muted)",
-                      fontWeight: sortMode === opt.key ? 600 : 400,
-                      fontSize: "0.75rem", cursor: "pointer", fontFamily: MONO,
-                      transition: "all 0.15s", whiteSpace: "nowrap",
-                    }}>{opt.label}</button>
-                  ))}
-                </div>
-              )}
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <button
+                  onClick={() => { setShowImportModal(true); setImportStep("upload"); setImportError(""); }}
+                  style={{ fontSize: "0.8rem", fontFamily: SANS, fontWeight: 600, padding: "7px 14px", borderRadius: 7, border: "1px solid var(--t-accent)", background: "var(--t-accent-bg)", color: "var(--t-accent)", cursor: "pointer" }}
+                >↑ Import PDF / CSV</button>
+                <button
+                  onClick={() => watchlistSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                  style={{ fontSize: "0.8rem", fontFamily: SANS, padding: "7px 14px", borderRadius: 7, border: "1px solid var(--t-border)", background: "transparent", color: "var(--t-text-muted)", cursor: "pointer" }}
+                >+ Add from Watchlist</button>
+              </div>
             </div>
 
-            {/* ── Sticky add/search bar ── */}
-            <div style={{ position: "sticky", top: 60, zIndex: 30, background: "var(--t-bg)", margin: isMobile ? "0 -16px" : "0 -32px", padding: isMobile ? "8px 16px 12px" : "8px 32px 12px", marginBottom: 0 }}>
-              <form onSubmit={handleAdd} style={{ display: "flex", gap: "0.5rem", padding: "0.75rem 1rem", background: "var(--t-surface)", border: "1px solid var(--t-border)", borderRadius: 11, alignItems: "center", flexWrap: "wrap", boxShadow: "0 2px 8px rgba(32,33,28,0.07)" }}>
-                <div ref={searchContainerRef} style={{ position: "relative", flex: "1 1 260px" }}>
-                  <input
-                    ref={searchInputRef} value={query}
-                    onChange={e => handleSearchInput(e.target.value)}
-                    onKeyDown={handleSearchKeyDown}
-                    placeholder="Search or add stock (e.g. NFLX)…"
-                    autoComplete="off"
-                    style={{ width: "100%", padding: "0.5rem 2rem 0.5rem 0.75rem", background: "var(--t-surface-2)", border: "1px solid var(--t-border)", borderRadius: 7, color: "var(--t-text)", fontSize: "0.88rem", fontFamily: SANS, outline: "none", boxSizing: "border-box" }}
-                  />
-                  {query && (
-                    <button type="button" onClick={() => { setQuery(""); setTicker(""); setCompanyName(""); setSuggestions([]); setShowSuggestions(false); setError(""); }}
-                      style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--t-text-muted)", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>×</button>
-                  )}
-                  {showSuggestions && suggestions.length > 0 && (
-                    <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 50, background: "var(--t-surface)", border: "1px solid var(--t-border)", borderRadius: 9, overflow: "hidden", boxShadow: "0 8px 24px rgba(32,33,28,0.1)" }}>
-                      {suggestions.map((s, idx) => (
-                        <div key={s.ticker} onMouseDown={() => handleSelect(s)}
-                          style={{ padding: "0.6rem 0.85rem", cursor: "pointer", display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.5rem", borderBottom: "1px solid var(--t-border-light)", background: idx === highlightedIdx ? "var(--t-surface-alt)" : "transparent" }}
-                          onMouseEnter={() => setHighlightedIdx(idx)} onMouseLeave={() => setHighlightedIdx(-1)}>
-                          <div>
-                            <span style={{ fontWeight: 600, fontSize: "0.88rem", color: "var(--t-text)", fontFamily: MONO }}>{s.ticker}</span>
-                            <span style={{ marginLeft: "0.5rem", fontSize: "0.82rem", color: "var(--t-text-secondary)" }}>{s.name}</span>
-                          </div>
-                          <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)", flexShrink: 0 }}>{s.exchange}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-                <button type="submit" disabled={!ticker && !query.trim()} style={{ padding: "0.5rem 1.1rem", background: (ticker || query.trim()) ? "var(--t-accent)" : "var(--t-border)", color: (ticker || query.trim()) ? "var(--t-surface)" : "var(--t-text-muted)", border: "none", borderRadius: 7, cursor: (ticker || query.trim()) ? "pointer" : "not-allowed", fontWeight: 600, fontSize: "0.88rem", fontFamily: SANS, transition: "background 0.15s", whiteSpace: "nowrap" }}>
-                  + Add
-                </button>
-                {error && <span style={{ color: "var(--t-red)", fontSize: "0.8rem", width: "100%" }}>{error}</span>}
-              </form>
-            </div>
-
-            <div style={{ marginTop: 16 }}>
             {loading ? (
               <div style={{ textAlign: "center", padding: "3rem", color: "var(--t-text-muted)" }}>Loading…</div>
-            ) : (() => {
-              const watchlistItems = digest.filter(d => d.shares == null);
-              const filterQ = ticker ? ticker.toLowerCase() : query.trim().toLowerCase();
-              const filtered = filterQ
-                ? watchlistItems.filter(d => ticker ? d.ticker.toLowerCase() === filterQ : d.ticker.toLowerCase().includes(filterQ) || (d.company_name || "").toLowerCase().includes(filterQ))
-                : watchlistItems;
-
-              const VERDICT_ORDER = ["BUY", "HOLD", "WATCH", "SELL"];
-              const VERDICT_META_GROUP: Record<string, { label: string; color: string; bg: string; bd: string }> = {
-                BUY:   { label: "Buy",   color: "var(--t-green)",       bg: "var(--t-green-bg)",    bd: "var(--t-green-mid)"      },
-                HOLD:  { label: "Hold",  color: "var(--t-yellow)",      bg: "var(--t-yellow-bg)",   bd: "var(--t-yellow-border)"  },
-                WATCH: { label: "Watch", color: "var(--t-text-muted)",  bg: "var(--t-surface-warm)", bd: "var(--t-border)"        },
-                SELL:  { label: "Sell",  color: "var(--t-red)",         bg: "var(--t-red-bg)",      bd: "var(--t-red-border)"     },
-              };
-
-              const COL_TIPS: Record<string, string> = { "RSI / Trend": "RSI 14-day momentum. Above 70 = overbought. Below 30 = oversold." };
-              const colHeaders = !isMobile && (
-                <div style={{ display: "grid", gridTemplateColumns: "1fr 110px 185px 80px 100px 130px 100px", padding: "0 1.25rem", marginBottom: "0.4rem", gap: "1rem" }}>
-                  {["Stock", "Verdict", "Price", "Conviction", "RSI / Trend", "Signals", ""].map(h => (
-                    <div key={h} title={COL_TIPS[h]} style={{ fontSize: "0.63rem", color: "var(--t-text-dim)", fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", fontFamily: MONO, cursor: COL_TIPS[h] ? "help" : "default" }}>{h}</div>
-                  ))}
+            ) : allPortfolioItems.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "3rem", background: "var(--t-surface)", borderRadius: 11, border: "1px solid var(--t-border)", color: "var(--t-text-muted)" }}>
+                <div style={{ fontSize: "1.8rem", marginBottom: "0.75rem" }}>📂</div>
+                <div style={{ fontWeight: 600, marginBottom: "0.5rem", color: "var(--t-text)", fontSize: 16 }}>No positions yet</div>
+                <div style={{ fontSize: "0.82rem", marginBottom: "1.25rem" }}>Import your Robinhood statement or add shares from your Watchlist</div>
+                <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+                  <button onClick={() => { setShowImportModal(true); setImportStep("upload"); setImportError(""); }}
+                    style={{ padding: "8px 18px", background: "var(--t-accent)", color: "var(--t-surface)", border: "none", borderRadius: 7, cursor: "pointer", fontWeight: 600, fontSize: 13, fontFamily: SANS }}>
+                    ↑ Import PDF / CSV
+                  </button>
+                  <button onClick={() => watchlistSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                    style={{ padding: "8px 18px", background: "none", color: "var(--t-text-muted)", border: "1px solid var(--t-border)", borderRadius: 7, cursor: "pointer", fontSize: 13, fontFamily: SANS }}>
+                    Go to Watchlist
+                  </button>
                 </div>
-              );
-
-              const renderWatchRow = (item: DigestItem) => (
-                <StockRow
-                  key={item.ticker} item={item} idToken={idToken} txCacheRef={txCacheRef}
-                  expanded={expanded === item.ticker}
-                  isPortfolio={false}
-                  onToggle={() => {
-                    const isExpanding = expanded !== item.ticker;
-                    if (!isExpanding && item.change_summary) setDigest(prev => prev.map(d => d.ticker === item.ticker ? { ...d, change_summary: null } : d));
-                    setExpanded(isExpanding ? item.ticker : null);
-                    if (isExpanding && item.has_unread) handleMarkRead(item.ticker);
-                  }}
-                  onChat={handleChat} onRemove={handleRemove} isMobile={isMobile}
-                  onAddToPortfolio={() => { setAddToPortfolioTicker(item.ticker); setPortfolioShares(""); setPortfolioAvgCost(item.analysis?.current_price?.toFixed(2) ?? ""); }}
-                />
-              );
-
-              const sectionHeader = (label: string, count: number, color: string, bg: string, bd: string) => (
-                <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.5rem" }}>
-                  <span style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, padding: "2px 10px", borderRadius: 20, color, background: bg, border: `1px solid ${bd}`, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</span>
-                  <span style={{ fontSize: "0.68rem", color: "var(--t-text-muted)", fontFamily: MONO }}>{count} stock{count > 1 ? "s" : ""}</span>
-                  <div style={{ flex: 1, height: 1, background: "var(--t-border)" }} />
-                </div>
-              );
-
-              if (watchlistItems.length === 0) {
-                return (
-                  <div style={{ textAlign: "center", padding: "3rem", background: "var(--t-surface)", borderRadius: 11, border: "1px solid var(--t-border)", color: "var(--t-text-muted)" }}>
-                    <div style={{ fontSize: "1.8rem", marginBottom: "0.5rem" }}>—</div>
-                    <div style={{ fontWeight: 600, marginBottom: "0.35rem", color: "var(--t-text)" }}>Add your first stock to get started</div>
-                    <div style={{ fontSize: "0.82rem" }}>Try: NFLX, MRVL, SOXQ, SOXL</div>
-                  </div>
-                );
-              }
-              if (filtered.length === 0) {
-                return (
-                  <div style={{ textAlign: "center", padding: "2.5rem", background: "var(--t-surface)", borderRadius: 11, border: "1px solid var(--t-border)", color: "var(--t-text-muted)" }}>
-                    <div style={{ fontWeight: 600, marginBottom: "0.35rem", color: "var(--t-text)" }}>No stocks match "{query.trim()}"</div>
-                    <div style={{ fontSize: "0.82rem" }}>Hit "+ Add" to add it to your watchlist</div>
-                  </div>
-                );
-              }
-
-              if (sortMode === "relevance") {
-                const sorted = [...filtered].sort((a, b) => ((b.analysis?.signal_convergence_score ?? -1) * 100 + (b.analysis?.conviction_score ?? 0)) - ((a.analysis?.signal_convergence_score ?? -1) * 100 + (a.analysis?.conviction_score ?? 0)));
-                return <div>{colHeaders}<div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{sorted.map(renderWatchRow)}</div></div>;
-              }
-              if (sortMode === "verdict") {
-                const grouped = VERDICT_ORDER.map(v => ({ verdict: v, ...VERDICT_META_GROUP[v], items: filtered.filter(d => d.analysis?.verdict === v) })).filter(g => g.items.length > 0);
-                const pending = filtered.filter(d => !d.analysis);
-                return (
-                  <div style={{ display: "flex", flexDirection: "column", gap: "1.25rem" }}>
-                    {grouped.map((g, gi) => <div key={g.verdict}>{sectionHeader(g.label, g.items.length, g.color, g.bg, g.bd)}{gi === 0 && colHeaders}<div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{g.items.map(renderWatchRow)}</div></div>)}
-                    {pending.length > 0 && <div>{sectionHeader("Pending", pending.length, "var(--t-text-muted)", "var(--t-surface-3)", "var(--t-border)")}<div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{pending.map(renderWatchRow)}</div></div>}
-                  </div>
-                );
-              }
-              if (sortMode === "az") {
-                const sorted = [...filtered].sort((a, b) => a.ticker.localeCompare(b.ticker));
-                return <div>{colHeaders}<div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{sorted.map(renderWatchRow)}</div></div>;
-              }
-              const sorted = [...filtered].sort((a, b) => Math.abs(b.analysis?.day_change_pct ?? 0) - Math.abs(a.analysis?.day_change_pct ?? 0));
-              return <div>{colHeaders}<div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>{sorted.map(renderWatchRow)}</div></div>;
-            })()}
-            </div>
+              </div>
+            ) : portfolioItems.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "2.5rem", background: "var(--t-surface)", borderRadius: 11, border: "1px solid var(--t-border)", color: "var(--t-text-muted)" }}>
+                <div style={{ fontWeight: 600, color: "var(--t-text)" }}>No positions match "{query.trim()}"</div>
+              </div>
+            ) : (
+              <>
+                <PortfolioSummary items={allPortfolioItems} />
+                {renderSortedList(portfolioItems, renderPortfolioRow)}
+              </>
+            )}
           </div>
-        )}
+
+          <div style={{ height: 1, background: "var(--t-border)", margin: "2rem 0" }} />
+
+          {/* ── Watchlist section (tracking only — items without shares) ── */}
+          <div ref={watchlistSectionRef}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, flexWrap: "wrap", gap: "0.75rem" }}>
+              <div>
+                <span style={{ fontSize: 11, fontFamily: MONO, fontWeight: 700, letterSpacing: "0.09em", color: "var(--t-text-muted)", textTransform: "uppercase" }}>Watchlist</span>
+                <div style={{ marginTop: 3, fontSize: 13, color: "var(--t-text-muted)" }}>
+                  {filterQ ? `${watchlistItems.length} of ${allWatchlistItems.length}` : allWatchlistItems.length} stock{allWatchlistItems.length !== 1 ? "s" : ""} · Tracking only · Updated nightly after market close
+                </div>
+              </div>
+            </div>
+
+            {loading ? (
+              <div style={{ textAlign: "center", padding: "3rem", color: "var(--t-text-muted)" }}>Loading…</div>
+            ) : allWatchlistItems.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "3rem", background: "var(--t-surface)", borderRadius: 11, border: "1px solid var(--t-border)", color: "var(--t-text-muted)" }}>
+                <div style={{ fontSize: "1.8rem", marginBottom: "0.5rem" }}>—</div>
+                <div style={{ fontWeight: 600, marginBottom: "0.35rem", color: "var(--t-text)" }}>Add your first stock to get started</div>
+                <div style={{ fontSize: "0.82rem" }}>Try: NFLX, MRVL, SOXQ, SOXL</div>
+              </div>
+            ) : watchlistItems.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "2.5rem", background: "var(--t-surface)", borderRadius: 11, border: "1px solid var(--t-border)", color: "var(--t-text-muted)" }}>
+                <div style={{ fontWeight: 600, marginBottom: "0.35rem", color: "var(--t-text)" }}>No stocks match "{query.trim()}"</div>
+                <div style={{ fontSize: "0.82rem" }}>Hit "+ Add" to add it to your watchlist</div>
+              </div>
+            ) : renderSortedList(watchlistItems, renderWatchRow)}
+          </div>
+          </div>
+          );
+        })()}
 
         {/* ── Discover placeholder ── */}
         {activeTab === "Discover" && (
@@ -2232,7 +2218,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                       {isEditMode ? "Edit Position" : "Add Position"} — {addToPortfolioTicker}
                     </div>
                     <div style={{ fontSize: 13, color: "var(--t-text-muted)", marginBottom: 20 }}>
-                      {isEditMode ? "Update your shares and average cost." : "This moves the stock to your My Stocks tab."}
+                      {isEditMode ? "Update your shares and average cost." : "This moves the stock into My Positions above."}
                     </div>
                   </>
                 );

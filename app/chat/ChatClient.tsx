@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import Logo from "../components/Logo";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 
@@ -10,6 +11,18 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   searching?: string;
+  createdAt?: string;
+}
+
+function formatMessageTime(iso?: string): string {
+  if (!iso) return "";
+  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : iso + "Z");
+  if (isNaN(d.getTime())) return "";
+  const now = new Date();
+  const sameDay = d.toDateString() === now.toDateString();
+  const time = d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
+  if (sameDay) return time;
+  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${time}`;
 }
 
 interface Conversation {
@@ -31,17 +44,34 @@ export default function ChatClient({
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [searchingLabel, setSearchingLabel] = useState("");
+  const [isMobile, setIsMobile] = useState(false);
+  const [showSidebar, setShowSidebar] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const readerRef = useRef<ReadableStreamDefaultReader | null>(null);
-  const throttleRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const revealIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const pendingRef = useRef("");
+  const shownRef = useRef(0);
+  // Only scroll-to-bottom on explicit triggers (new message sent, conversation loaded) —
+  // not on every streamed chunk, which would yank the view while the user is reading.
+  const scrollOnNextRenderRef = useRef(false);
 
   useEffect(() => { loadConversations(); }, []);
   useEffect(() => {
     if (activeConvId) loadMessages(activeConvId);
     else setMessages([]);
   }, [activeConvId]);
-  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+  useEffect(() => {
+    if (scrollOnNextRenderRef.current) {
+      scrollOnNextRenderRef.current = false;
+      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [messages]);
+  useEffect(() => {
+    const check = () => setIsMobile(window.innerWidth < 640);
+    check();
+    window.addEventListener("resize", check);
+    return () => window.removeEventListener("resize", check);
+  }, []);
 
   async function loadConversations() {
     const r = await fetch(`${API}/conversations?id_token=${encodeURIComponent(idToken)}`);
@@ -53,7 +83,8 @@ export default function ChatClient({
     const r = await fetch(`${API}/conversations/${convId}/messages?id_token=${encodeURIComponent(idToken)}`);
     if (r.ok) {
       const msgs = await r.json();
-      setMessages(msgs.map((m: { role: string; content: string }) => ({ role: m.role, content: m.content })));
+      scrollOnNextRenderRef.current = true;
+      setMessages(msgs.map((m: { role: string; content: string; created_at?: string }) => ({ role: m.role, content: m.content, createdAt: m.created_at })));
     }
   }
 
@@ -70,8 +101,27 @@ export default function ChatClient({
     });
   }
 
+  // Reveals text at a steady pace, independent of network chunk timing/bursts,
+  // so the response feels like a smooth type-out instead of jumping in lumps.
+  function startReveal() {
+    if (revealIntervalRef.current) return;
+    revealIntervalRef.current = setInterval(() => {
+      const target = pendingRef.current;
+      if (shownRef.current >= target.length) return;
+      const remaining = target.length - shownRef.current;
+      const step = Math.max(2, Math.ceil(remaining / 10));
+      shownRef.current = Math.min(target.length, shownRef.current + step);
+      applyChunk(target.slice(0, shownRef.current));
+    }, 20);
+  }
+
+  function stopReveal() {
+    if (revealIntervalRef.current) { clearInterval(revealIntervalRef.current); revealIntervalRef.current = null; }
+  }
+
   function flushChunk() {
-    if (throttleRef.current) { clearTimeout(throttleRef.current); throttleRef.current = null; }
+    stopReveal();
+    shownRef.current = pendingRef.current.length;
     applyChunk(pendingRef.current);
   }
 
@@ -97,16 +147,18 @@ export default function ChatClient({
     if (!convId) convId = await newConversation();
     if (!convId) return;
 
-    const userMsg: Message = { role: "user", content: input };
+    const userMsg: Message = { role: "user", content: input, createdAt: new Date().toISOString() };
+    scrollOnNextRenderRef.current = true;
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setStreaming(true);
     setSearchingLabel("");
 
-    setMessages(prev => [...prev, { role: "assistant", content: "" }]);
+    setMessages(prev => [...prev, { role: "assistant", content: "", createdAt: new Date().toISOString() }]);
 
     let fullText = "";
     pendingRef.current = "";
+    shownRef.current = 0;
 
     try {
       const res = await fetch(`${API}/conversations/${convId}/messages/stream`, {
@@ -135,12 +187,7 @@ export default function ChatClient({
             if (event.type === "chunk") {
               fullText += event.text;
               pendingRef.current = fullText;
-              if (!throttleRef.current) {
-                throttleRef.current = setTimeout(() => {
-                  throttleRef.current = null;
-                  applyChunk(pendingRef.current);
-                }, 250);
-              }
+              startReveal();
             } else if (event.type === "tool_start") {
               setSearchingLabel("Searching the web…");
             } else if (event.type === "tool_result") {
@@ -162,7 +209,19 @@ export default function ChatClient({
           } catch {}
         }
       }
+    } catch (err) {
+      stopReveal();
+      const message = err instanceof Error ? err.message : "Connection lost";
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant") {
+          updated[updated.length - 1] = { ...last, content: last.content || `Error: ${message}. Please try again.` };
+        }
+        return updated;
+      });
     } finally {
+      stopReveal();
       setStreaming(false);
       setSearchingLabel("");
       readerRef.current = null;
@@ -171,6 +230,7 @@ export default function ChatClient({
 
   function stopStream() {
     readerRef.current?.cancel();
+    stopReveal();
     setStreaming(false);
     setSearchingLabel("");
   }
@@ -188,33 +248,49 @@ export default function ChatClient({
         justifyContent: "space-between",
         flexShrink: 0,
       }}>
-        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center" }}>
+        <div style={{ display: "flex", gap: "0.75rem", alignItems: "center", minWidth: 0 }}>
+          {isMobile && (
+            <button
+              onClick={() => setShowSidebar(true)}
+              style={{ background: "none", border: "none", color: "var(--t-text-secondary)", cursor: "pointer", padding: "4px 2px", display: "flex", flexShrink: 0 }}
+              aria-label="Conversations"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="4" y1="7" x2="20" y2="7"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="17" x2="20" y2="17"/></svg>
+            </button>
+          )}
           <button
             onClick={() => router.push("/dashboard")}
-            style={{ background: "none", border: "none", color: "var(--t-text-muted)", cursor: "pointer", fontSize: "0.9rem" }}
+            style={{ background: "none", border: "none", color: "var(--t-text-muted)", cursor: "pointer", fontSize: "0.9rem", flexShrink: 0 }}
           >
-            ← Dashboard
+            ←{isMobile ? "" : " Dashboard"}
           </button>
-          <span style={{ fontWeight: 700 }}>💬 Finance Chat</span>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <Logo size={20} />
+            {!isMobile && <span style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Finance Companion</span>}
+          </div>
         </div>
         <button
           onClick={newConversation}
           style={{
-            padding: "0.4rem 0.9rem",
-            background: "var(--t-primary)",
-            color: "#fff",
+            padding: isMobile ? "0.4rem 0.7rem" : "0.4rem 0.9rem",
+            background: "var(--t-accent)",
+            color: "var(--t-surface)",
             border: "none",
             borderRadius: "0.4rem",
             cursor: "pointer",
             fontSize: "0.85rem",
+            flexShrink: 0,
           }}
         >
-          + New Chat
+          + New{isMobile ? "" : " Chat"}
         </button>
       </nav>
 
-      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-        {/* Sidebar — conversation list */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
+        {/* Sidebar — conversation list. Fixed panel on desktop, slide-over drawer on mobile. */}
+        {isMobile && showSidebar && (
+          <div onClick={() => setShowSidebar(false)} style={{ position: "fixed", inset: 0, zIndex: 60, background: "rgba(32,33,28,0.35)" }} />
+        )}
         <aside style={{
           width: "220px",
           flexShrink: 0,
@@ -224,16 +300,29 @@ export default function ChatClient({
           display: "flex",
           flexDirection: "column",
           gap: "0.25rem",
+          background: "var(--t-surface)",
+          ...(isMobile ? {
+            position: "fixed" as const, top: 0, bottom: 0, left: 0, zIndex: 61,
+            transform: showSidebar ? "translateX(0)" : "translateX(-100%)",
+            transition: "transform 0.2s ease", boxShadow: showSidebar ? "4px 0 24px rgba(32,33,28,0.14)" : "none",
+            paddingTop: "0.75rem",
+          } : {}),
         }}>
+          {isMobile && (
+            <div style={{ padding: "0 1rem 0.75rem", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: "1px solid var(--t-border-light)", marginBottom: "0.5rem" }}>
+              <span style={{ fontWeight: 600, fontSize: 13, color: "var(--t-text)" }}>Conversations</span>
+              <button onClick={() => setShowSidebar(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "var(--t-text-muted)", lineHeight: 1 }}>✕</button>
+            </div>
+          )}
           {conversations.map((c) => (
             <button
               key={c.id}
-              onClick={() => setActiveConvId(c.id)}
+              onClick={() => { setActiveConvId(c.id); setShowSidebar(false); }}
               style={{
                 textAlign: "left",
                 padding: "0.6rem 1rem",
-                background: c.id === activeConvId ? "var(--t-primary-light)" : "transparent",
-                color: c.id === activeConvId ? "var(--t-primary)" : "var(--t-text-muted)",
+                background: c.id === activeConvId ? "var(--t-accent-light)" : "transparent",
+                color: c.id === activeConvId ? "var(--t-accent)" : "var(--t-text-muted)",
                 border: "none",
                 cursor: "pointer",
                 fontSize: "0.82rem",
@@ -250,11 +339,11 @@ export default function ChatClient({
         </aside>
 
         {/* Chat area */}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <div style={{ flex: 1, overflowY: "auto", padding: "1.5rem" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+          <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? "1rem" : "1.5rem" }}>
             {messages.length === 0 && (
               <div style={{ textAlign: "center", color: "var(--t-text-muted)", paddingTop: "4rem" }}>
-                <div style={{ fontSize: "2rem", marginBottom: "0.5rem" }}>🤖</div>
+                <div style={{ display: "flex", justifyContent: "center", marginBottom: "0.75rem" }}><Logo size={40} /></div>
                 <div style={{ fontWeight: 600, marginBottom: "0.5rem" }}>Ask anything about your stocks</div>
                 <div style={{ fontSize: "0.85rem" }}>
                   I already know tonight&apos;s analysis, your positions, and upcoming events.
@@ -274,22 +363,18 @@ export default function ChatClient({
                 }}
               >
                 {msg.role === "assistant" && (
-                  <div style={{
-                    width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
-                    background: "var(--t-primary)", display: "flex", alignItems: "center",
-                    justifyContent: "center", marginBottom: 2,
-                  }}>
-                    <span style={{ fontSize: "1rem" }}>📈</span>
+                  <div style={{ marginBottom: 2, flexShrink: 0 }}>
+                    <Logo size={32} />
                   </div>
                 )}
+                <div style={{ display: "flex", flexDirection: "column", maxWidth: isMobile ? "88%" : "78%", alignItems: msg.role === "user" ? "flex-end" : "flex-start" }}>
                 <div
                   style={{
-                    maxWidth: "78%",
                     padding: "0.75rem 1rem",
                     borderRadius: msg.role === "user" ? "1.25rem 1.25rem 0.25rem 1.25rem" : "1.25rem 1.25rem 1.25rem 0.25rem",
-                    background: msg.role === "user" ? "var(--t-primary)" : "var(--t-surface)",
+                    background: msg.role === "user" ? "var(--t-accent)" : "var(--t-surface)",
                     border: msg.role === "assistant" ? "1px solid var(--t-border)" : "none",
-                    color: msg.role === "user" ? "#fff" : "var(--t-text)",
+                    color: msg.role === "user" ? "var(--t-surface)" : "var(--t-text)",
                     fontSize: "0.875rem",
                     lineHeight: 1.65,
                     boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
@@ -303,13 +388,13 @@ export default function ChatClient({
                       components={{
                         h1: ({ children }) => (
                           <h1 style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "1rem", fontWeight: 700, margin: "1rem 0 0.5rem", color: "var(--t-text)" }}>
-                            <span style={{ width: 3, height: 20, borderRadius: 2, background: "var(--t-primary)", flexShrink: 0, display: "inline-block" }} />
+                            <span style={{ width: 3, height: 20, borderRadius: 2, background: "var(--t-accent)", flexShrink: 0, display: "inline-block" }} />
                             {children}
                           </h1>
                         ),
                         h2: ({ children }) => (
                           <h2 style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.9rem", fontWeight: 700, margin: "0.85rem 0 0.4rem", color: "var(--t-text)" }}>
-                            <span style={{ width: 3, height: 16, borderRadius: 2, background: "var(--t-primary)", opacity: 0.65, flexShrink: 0, display: "inline-block" }} />
+                            <span style={{ width: 3, height: 16, borderRadius: 2, background: "var(--t-accent)", opacity: 0.65, flexShrink: 0, display: "inline-block" }} />
                             {children}
                           </h2>
                         ),
@@ -328,18 +413,18 @@ export default function ChatClient({
                         li: ({ children, ...props }) => {
                           const ordered = (props as { ordered?: boolean }).ordered;
                           return ordered ? (
-                            <li style={{ lineHeight: 1.65, paddingLeft: "0.25rem", color: "var(--t-primary)", marginBottom: "0.3rem" }}>
+                            <li style={{ lineHeight: 1.65, paddingLeft: "0.25rem", color: "var(--t-accent)", marginBottom: "0.3rem" }}>
                               <span style={{ color: "var(--t-text)" }}>{children}</span>
                             </li>
                           ) : (
                             <li style={{ display: "flex", alignItems: "flex-start", gap: "0.5rem", lineHeight: 1.65, marginBottom: "0.3rem" }}>
-                              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--t-primary)", flexShrink: 0, marginTop: "0.55em" }} />
+                              <span style={{ width: 6, height: 6, borderRadius: "50%", background: "var(--t-accent)", flexShrink: 0, marginTop: "0.55em" }} />
                               <span style={{ flex: 1, color: "var(--t-text)" }}>{children}</span>
                             </li>
                           );
                         },
                         blockquote: ({ children }) => (
-                          <blockquote style={{ margin: "0.6rem 0", padding: "0.6rem 0.9rem", borderLeft: "3px solid var(--t-primary)", background: "var(--t-primary-light)", borderRadius: "0 0.5rem 0.5rem 0", fontSize: "0.85rem", lineHeight: 1.6 }}>
+                          <blockquote style={{ margin: "0.6rem 0", padding: "0.6rem 0.9rem", borderLeft: "3px solid var(--t-accent)", background: "var(--t-accent-light)", borderRadius: "0 0.5rem 0.5rem 0", fontSize: "0.85rem", lineHeight: 1.6 }}>
                             {children}
                           </blockquote>
                         ),
@@ -348,10 +433,10 @@ export default function ChatClient({
                             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.8rem" }}>{children}</table>
                           </div>
                         ),
-                        thead: ({ children }) => <thead style={{ background: "var(--t-primary-light)" }}>{children}</thead>,
+                        thead: ({ children }) => <thead style={{ background: "var(--t-accent-light)" }}>{children}</thead>,
                         tr: ({ children }) => <tr style={{ borderBottom: "1px solid var(--t-border)" }}>{children}</tr>,
                         th: ({ children }) => (
-                          <th style={{ padding: "0.45rem 0.75rem", textAlign: "left", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--t-primary)" }}>{children}</th>
+                          <th style={{ padding: "0.45rem 0.75rem", textAlign: "left", fontWeight: 600, fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.04em", color: "var(--t-accent)" }}>{children}</th>
                         ),
                         td: ({ children }) => (
                           <td style={{ padding: "0.45rem 0.75rem", color: "var(--t-text)", opacity: 0.9 }}>{children}</td>
@@ -368,7 +453,7 @@ export default function ChatClient({
                               <code style={{ fontSize: "0.78rem", fontFamily: "monospace", color: "#e2e8f0", lineHeight: 1.6 }}>{children}</code>
                             </pre>
                           ) : (
-                            <code style={{ padding: "0.15rem 0.4rem", borderRadius: "0.3rem", background: "var(--t-primary-light)", color: "var(--t-primary)", fontSize: "0.8rem", fontFamily: "monospace" }}>{children}</code>
+                            <code style={{ padding: "0.15rem 0.4rem", borderRadius: "0.3rem", background: "var(--t-accent-light)", color: "var(--t-accent)", fontSize: "0.8rem", fontFamily: "monospace" }}>{children}</code>
                           );
                         },
                       }}
@@ -382,11 +467,17 @@ export default function ChatClient({
                     </span>
                   )}
                 </div>
+                {msg.createdAt && (msg.content || msg.role === "user") && (
+                  <span style={{ fontSize: "0.68rem", color: "var(--t-text-muted)", marginTop: 4, padding: "0 2px" }}>
+                    {formatMessageTime(msg.createdAt)}
+                  </span>
+                )}
+                </div>
                 {msg.role === "user" && (
                   <div style={{
                     width: 32, height: 32, borderRadius: "50%", flexShrink: 0,
-                    background: "var(--t-primary)", display: "flex", alignItems: "center",
-                    justifyContent: "center", color: "#fff", fontWeight: 700, fontSize: "0.8rem", marginBottom: 2,
+                    background: "var(--t-accent)", display: "flex", alignItems: "center",
+                    justifyContent: "center", color: "var(--t-surface)", fontWeight: 700, fontSize: "0.8rem", marginBottom: 2,
                   }}>
                     {userName?.[0]?.toUpperCase() ?? "U"}
                   </div>
@@ -415,11 +506,13 @@ export default function ChatClient({
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } }}
-              placeholder="Ask about your stocks… (Enter to send, Shift+Enter for newline)"
+              placeholder={isMobile ? "Ask about your stocks…" : "Ask about your stocks… (Enter to send, Shift+Enter for newline)"}
               disabled={streaming}
               rows={2}
               style={{
                 flex: 1,
+                minWidth: 0,
+                boxSizing: "border-box",
                 padding: "0.6rem 0.75rem",
                 background: "var(--t-surface-2)",
                 border: "1px solid var(--t-border)",
@@ -451,8 +544,8 @@ export default function ChatClient({
                 disabled={!input.trim()}
                 style={{
                   padding: "0 1.2rem",
-                  background: input.trim() ? "var(--t-primary)" : "var(--t-border)",
-                  color: "#fff",
+                  background: input.trim() ? "var(--t-accent)" : "var(--t-border)",
+                  color: input.trim() ? "var(--t-surface)" : "var(--t-text-muted)",
                   border: "none",
                   borderRadius: "0.5rem",
                   cursor: input.trim() ? "pointer" : "default",
