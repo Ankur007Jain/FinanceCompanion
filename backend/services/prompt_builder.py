@@ -36,6 +36,18 @@ Your data:
 """
 
 
+def _pct(v):
+    return f"{v*100:.1f}%" if v is not None else "N/A"
+
+
+def _fmt(v, decimals=2):
+    """Formats a possibly-missing numeric field — nightly data collection can leave
+    fields like ma_50/ma_200 null (e.g. a rate-limited fetch), and this data flows
+    into an f-string on every chat turn, so a raw `:.2f` there takes down the whole
+    conversation for the user, not just the one incomplete ticker."""
+    return f"{v:.{decimals}f}" if v is not None else "N/A"
+
+
 def _format_analysis(a: StockAnalysis, position_line: str) -> str:
     direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
     conv = f"  Conviction:   {a.conviction_score}/100  ({a.risk_level or 'N/A'} risk, {a.confidence or 'N/A'} confidence)\n" if a.conviction_score is not None else ""
@@ -43,17 +55,13 @@ def _format_analysis(a: StockAnalysis, position_line: str) -> str:
         f"  Verdict:      {a.verdict}  (entry ${a.entry_target or 'N/A'}, exit ${a.exit_target or 'N/A'})\n"
         f"  {position_line.rstrip(chr(10))}\n"
         f"{conv}"
-        f"  Price:        ${a.current_price:.2f}  {direction}{abs(a.day_change_pct or 0):.1f}%\n"
-        f"  52-Wk Range:  ${a.week_52_low:.2f} – ${a.week_52_high:.2f}  ({a.range_position_pct:.0f}% position)\n"
-        f"  MA50/MA200:   ${a.ma_50:.2f} / ${a.ma_200:.2f}\n"
+        f"  Price:        ${_fmt(a.current_price)}  {direction}{abs(a.day_change_pct or 0):.1f}%\n"
+        f"  52-Wk Range:  ${_fmt(a.week_52_low)} – ${_fmt(a.week_52_high)}  ({_fmt(a.range_position_pct, 0)}% position)\n"
+        f"  MA50/MA200:   ${_fmt(a.ma_50)} / ${_fmt(a.ma_200)}\n"
         f"  RSI:          {a.rsi or 'N/A'}\n"
         f"  Analysts:     {a.analyst_consensus} ({a.analyst_count})  target ${a.target_price_mean or 'N/A'}\n"
         f"  Reasoning:    {a.reasoning or ''}\n"
     )
-
-
-def _pct(v):
-    return f"{v*100:.1f}%" if v is not None else "N/A"
 
 
 def _format_position(w: WatchlistItem, current_price: Optional[float]) -> str:
@@ -85,8 +93,8 @@ def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnal
         lines.append(f"Conviction:     {a.conviction_score}/100  |  Risk: {a.risk_level or 'N/A'}  |  Confidence: {a.confidence or 'N/A'}")
     lines += [
         f"Targets:        entry ${a.entry_target or 'N/A'}  exit ${a.exit_target or 'N/A'}  stop ${a.stop_loss or 'N/A'}  hold {a.hold_period or 'N/A'}",
-        f"Price:          ${a.current_price:.2f}  {direction}{abs(a.day_change_pct or 0):.1f}%   52wk ${a.week_52_low:.2f}–${a.week_52_high:.2f} ({a.range_position_pct:.0f}% of range)",
-        f"Technicals:     MA50 ${a.ma_50:.2f}  MA200 ${a.ma_200:.2f}  RSI {a.rsi or 'N/A'}",
+        f"Price:          ${_fmt(a.current_price)}  {direction}{abs(a.day_change_pct or 0):.1f}%   52wk ${_fmt(a.week_52_low)}–${_fmt(a.week_52_high)} ({_fmt(a.range_position_pct, 0)}% of range)",
+        f"Technicals:     MA50 ${_fmt(a.ma_50)}  MA200 ${_fmt(a.ma_200)}  RSI {a.rsi or 'N/A'}",
         f"Valuation:      P/E {a.pe_trailing or 'N/A'} (fwd {a.pe_forward or 'N/A'})  |  analyst {a.analyst_consensus} target ${a.target_price_mean or 'N/A'}",
         f"Fundamentals:   rev growth {_pct(a.revenue_growth)}  net margin {_pct(a.profit_margin)}  ROE {_pct(a.return_on_equity)}  D/E {a.debt_to_equity or 'N/A'}",
     ]
@@ -116,7 +124,7 @@ def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnal
         lines.append("Recent history (newest first):")
         for h in history:
             flag = " ⭐" if h.is_important_day else ""
-            lines.append(f"  {h.analysis_date.isoformat()}:{flag} {h.verdict} ${h.current_price:.2f}" + (f"  [{h.importance_reason}]" if h.importance_reason else ""))
+            lines.append(f"  {h.analysis_date.isoformat()}:{flag} {h.verdict} ${_fmt(h.current_price)}" + (f"  [{h.importance_reason}]" if h.importance_reason else ""))
     return "\n".join(lines)
 
 
