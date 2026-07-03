@@ -46,6 +46,9 @@ export default function ChatClient({
   const [searchingLabel, setSearchingLabel] = useState("");
   const [isMobile, setIsMobile] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
+  const [lastSystemPrompt, setLastSystemPrompt] = useState("");
+  const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  const canViewPrompt = userEmail === "ankur07jain@gmail.com";
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   // Auto-follow new content only while the user is already at (or near) the bottom —
   // if they've scrolled up to read something earlier, stop yanking them back down.
@@ -109,6 +112,7 @@ export default function ChatClient({
 
   async function loadMessages(convId: string) {
     setMessages([]);
+    setLastSystemPrompt("");
     const r = await fetch(`${API}/conversations/${convId}/messages?id_token=${encodeURIComponent(idToken)}`);
     if (r.ok) {
       const msgs = await r.json();
@@ -205,6 +209,17 @@ export default function ChatClient({
     return null;
   }
 
+  async function deleteConversation(convId: string) {
+    const r = await fetch(`${API}/conversations/${convId}?id_token=${encodeURIComponent(idToken)}`, { method: "DELETE" });
+    if (!r.ok) return;
+    if (convId === activeConvId) {
+      setActiveConvId(null);
+      setMessages([]);
+      router.replace("/chat");
+    }
+    setConversations(prev => prev.filter(c => c.id !== convId));
+  }
+
   async function send() {
     if (!input.trim() || streaming) return;
     let convId = activeConvId;
@@ -265,6 +280,8 @@ export default function ChatClient({
               fullText += event.text;
               pendingRef.current = fullText;
               onChunkReceived();
+            } else if (event.type === "system_prompt") {
+              setLastSystemPrompt(event.text);
             } else if (event.type === "tool_start") {
               setSearchingLabel("Searching the web…");
             } else if (event.type === "tool_result") {
@@ -349,22 +366,58 @@ export default function ChatClient({
             {!isMobile && <span style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>Finance Companion</span>}
           </div>
         </div>
-        <button
-          onClick={newConversation}
-          style={{
-            padding: isMobile ? "0.4rem 0.7rem" : "0.4rem 0.9rem",
-            background: "var(--t-accent)",
-            color: "var(--t-surface)",
-            border: "none",
-            borderRadius: "0.4rem",
-            cursor: "pointer",
-            fontSize: "0.85rem",
-            flexShrink: 0,
-          }}
-        >
-          + New{isMobile ? "" : " Chat"}
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+          {canViewPrompt && (
+            <button
+              onClick={() => setShowSystemPrompt(true)}
+              disabled={!lastSystemPrompt}
+              title={lastSystemPrompt ? "View the system prompt sent to Claude" : "Send a message first"}
+              style={{
+                padding: isMobile ? "0.4rem 0.6rem" : "0.4rem 0.8rem",
+                background: "none",
+                color: lastSystemPrompt ? "var(--t-text-secondary)" : "var(--t-text-dim)",
+                border: "1px solid var(--t-border)",
+                borderRadius: "0.4rem",
+                cursor: lastSystemPrompt ? "pointer" : "default",
+                fontSize: "0.8rem",
+              }}
+            >
+              🔍{isMobile ? "" : " Prompt"}
+            </button>
+          )}
+          <button
+            onClick={newConversation}
+            style={{
+              padding: isMobile ? "0.4rem 0.7rem" : "0.4rem 0.9rem",
+              background: "var(--t-accent)",
+              color: "var(--t-surface)",
+              border: "none",
+              borderRadius: "0.4rem",
+              cursor: "pointer",
+              fontSize: "0.85rem",
+            }}
+          >
+            + New{isMobile ? "" : " Chat"}
+          </button>
+        </div>
       </nav>
+
+      {showSystemPrompt && (
+        <div
+          onClick={(e) => { if (e.target === e.currentTarget) setShowSystemPrompt(false); }}
+          style={{ position: "fixed", inset: 0, zIndex: 200, background: "rgba(0,0,0,0.45)", display: "flex", alignItems: "center", justifyContent: "center", padding: "2rem" }}
+        >
+          <div style={{ background: "var(--t-surface)", border: "1px solid var(--t-border)", borderRadius: 12, width: "min(720px, 100%)", maxHeight: "85vh", display: "flex", flexDirection: "column", boxShadow: "0 20px 60px rgba(0,0,0,0.3)" }}>
+            <div style={{ padding: "1rem 1.25rem", borderBottom: "1px solid var(--t-border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--t-text)" }}>System prompt sent to Claude</span>
+              <button onClick={() => setShowSystemPrompt(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "var(--t-text-muted)", lineHeight: 1 }}>✕</button>
+            </div>
+            <pre style={{ margin: 0, padding: "1.25rem", overflow: "auto", fontSize: "0.78rem", lineHeight: 1.6, color: "var(--t-text)", whiteSpace: "pre-wrap", fontFamily: "monospace" }}>
+              {lastSystemPrompt}
+            </pre>
+          </div>
+        </div>
+      )}
 
       <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
         {/* Sidebar — conversation list. Fixed panel on desktop, slide-over drawer on mobile. */}
@@ -395,26 +448,43 @@ export default function ChatClient({
             </div>
           )}
           {conversations.map((c) => (
-            <button
+            <div
               key={c.id}
-              onClick={() => { setActiveConvId(c.id); setShowSidebar(false); }}
               style={{
-                textAlign: "left",
-                padding: "0.6rem 1rem",
+                display: "flex", alignItems: "center", gap: 2,
+                margin: "0 0.5rem", borderRadius: "0.25rem",
                 background: c.id === activeConvId ? "var(--t-accent-light)" : "transparent",
-                color: c.id === activeConvId ? "var(--t-accent)" : "var(--t-text-muted)",
-                border: "none",
-                cursor: "pointer",
-                fontSize: "0.82rem",
-                borderRadius: "0.25rem",
-                margin: "0 0.5rem",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
               }}
             >
-              {c.ticker ? `[${c.ticker}] ` : ""}{c.title || "New chat"}
-            </button>
+              <button
+                onClick={() => { setActiveConvId(c.id); setShowSidebar(false); }}
+                style={{
+                  flex: 1, minWidth: 0, textAlign: "left",
+                  padding: "0.6rem 0 0.6rem 1rem",
+                  background: "none",
+                  color: c.id === activeConvId ? "var(--t-accent)" : "var(--t-text-muted)",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: "0.82rem",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {c.ticker ? `[${c.ticker}] ` : ""}{c.title || "New chat"}
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); deleteConversation(c.id); }}
+                title="Delete conversation"
+                style={{
+                  flexShrink: 0, background: "none", border: "none", cursor: "pointer",
+                  color: "var(--t-text-muted)", fontSize: "0.9rem", lineHeight: 1,
+                  padding: "0.4rem 0.7rem",
+                }}
+              >
+                ✕
+              </button>
+            </div>
           ))}
         </aside>
 

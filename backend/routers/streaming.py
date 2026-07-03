@@ -147,6 +147,12 @@ async def stream_message(
                 session.rollback()
 
         try:
+            # Debug visibility into the actual system prompt sent to Claude — restricted
+            # to a single account, not a general feature.
+            if user.email == "ankur07jain@gmail.com":
+                full_system_text = "\n\n".join(block["text"] for block in api_system)
+                yield f"data: {json.dumps({'type': 'system_prompt', 'text': full_system_text})}\n\n"
+
             api_key = os.getenv("ANTHROPIC_API_KEY", "")
             if not api_key:
                 yield f"data: {json.dumps({'type': 'error', 'message': 'ANTHROPIC_API_KEY not configured'})}\n\n"
