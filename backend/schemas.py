@@ -160,6 +160,7 @@ class DigestItem(BaseModel):
     change_summary: Optional[str] = None
     days_since_read: Optional[int] = None
     close_5d: Optional[list[float]] = None
+    analysis_disabled: bool = False
 
 
 class PortfolioPositionRequest(BaseModel):
@@ -342,3 +343,66 @@ class IngestAnalysisRequest(BaseModel):
     verdict_b: Optional[str] = None
     verdict_agreement: Optional[bool] = None
     split_reason: Optional[str] = None
+    # Gemini Verdict B's own usage_metadata — the only step in the nightly pipeline that's a
+    # scripted API call rather than the orchestrating agent's own reasoning, so it's the only
+    # one with a real usage object to report. Cost is computed server-side from these raw
+    # counts (routers/jobs.py) rather than trusting the agent to also do that arithmetic.
+    gemini_tokens_input: Optional[int] = None
+    gemini_tokens_output: Optional[int] = None
+
+
+class FeedbackCreate(BaseModel):
+    message: str
+
+
+class FeedbackOut(BaseModel):
+    id: str
+    user_email: str
+    message: str
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class TickerControlOut(BaseModel):
+    ticker: str
+    analysis_enabled: bool
+    disabled_by: Optional[str] = None
+    disabled_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class TickerControlUpdate(BaseModel):
+    analysis_enabled: bool
+
+
+class AdminUserOut(BaseModel):
+    email: str
+    name: Optional[str]
+    tier: str
+    is_admin: bool
+    tokens_used: int
+    created_at: Optional[datetime] = None
+    tickers: list[str]
+
+    class Config:
+        from_attributes = True
+
+
+class AdminUserUpdate(BaseModel):
+    is_admin: Optional[bool] = None
+    tier: Optional[str] = None
+
+
+class AdminNightlyCostOut(BaseModel):
+    ticker: str
+    analysis_date: date
+    gemini_tokens_input: Optional[int] = None
+    gemini_tokens_output: Optional[int] = None
+    gemini_cost_usd: Optional[float] = None
+    simple_fields_tokens_input: Optional[int] = None
+    simple_fields_tokens_output: Optional[int] = None
+    simple_fields_cost_usd: Optional[float] = None

@@ -128,7 +128,7 @@ Before calling Claude, the system runs a quick checklist of seven independent si
 | Institutional backing | Big money managers own >40% — strong vote of confidence |
 | Price above 200-day MA | Stock is above its long-term average — trend is upward |
 
-**If 5 or more signals confirm, BUY is eligible. If fewer than 5, the verdict must be WATCH.** This prevents the AI from issuing BUY signals on weak setups just because one or two things look good.
+**All 7 signals are checked. If 5 or more confirm, BUY is eligible. If fewer than 5, the verdict must be WATCH.** This prevents the AI from issuing BUY signals on weak setups just because one or two things look good.
 
 ---
 

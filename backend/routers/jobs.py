@@ -13,6 +13,11 @@ from services.stock_memory import maybe_update_stock_memory
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
+# Gemini 2.5 Flash, thinking disabled (thinking_budget=0) — verify against
+# https://ai.google.dev/gemini-api/docs/pricing before relying on this for real budgeting.
+_GEMINI_FLASH_PRICE_IN = 0.30   # per 1M input tokens
+_GEMINI_FLASH_PRICE_OUT = 2.50  # per 1M output tokens
+
 
 @router.post("/nightly")
 async def trigger_nightly(body: NightlyJobRequest, background_tasks: BackgroundTasks):
@@ -124,6 +129,14 @@ def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTas
         "verdict_b": body.verdict_b,
         "verdict_agreement": body.verdict_agreement,
         "split_reason": body.split_reason,
+        # Gemini Verdict B is the only nightly step that's a scripted API call with a real
+        # usage object — Claude's steps run as the orchestrating agent's own reasoning.
+        "tokens_input": body.gemini_tokens_input,
+        "tokens_output": body.gemini_tokens_output,
+        "cost_usd": (
+            (body.gemini_tokens_input / 1_000_000) * _GEMINI_FLASH_PRICE_IN
+            + (body.gemini_tokens_output / 1_000_000) * _GEMINI_FLASH_PRICE_OUT
+        ) if body.gemini_tokens_input is not None and body.gemini_tokens_output is not None else None,
     }
 
     # Synthesize events_json from earnings_date when the agent sends it but not events_json
@@ -171,12 +184,14 @@ def ingest_snapshot(body: IngestSnapshotRequest, x_job_secret: str = "", db: Ses
 
 @router.get("/admin/tickers")
 def list_all_tickers(x_admin_secret: str = "", db: Session = Depends(get_db)):
-    """Returns all unique tickers across all watchlists — used by the nightly agent."""
+    """Returns all unique tickers across all watchlists — used by the nightly agent.
+    Excludes tickers an admin has disabled analysis for."""
     if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
         raise HTTPException(status_code=401, detail="Invalid admin secret.")
-    from models import WatchlistItem
-    tickers = db.query(WatchlistItem.ticker).distinct().all()
-    return {"tickers": [t[0] for t in tickers]}
+    from models import TickerControl, WatchlistItem
+    tickers = {t[0] for t in db.query(WatchlistItem.ticker).distinct().all()}
+    disabled = {c.ticker for c in db.query(TickerControl).filter(TickerControl.analysis_enabled.is_(False)).all()}
+    return {"tickers": sorted(tickers - disabled)}
 
 
 @router.get("/admin/analyzed-today")

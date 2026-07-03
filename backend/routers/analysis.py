@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 import anthropic
 
 from database import get_db
-from models import StockAnalysis, WatchlistItem, MarketDataCache, StockReport
+from models import StockAnalysis, TickerControl, WatchlistItem, MarketDataCache, StockReport
 from routers.auth import get_current_user
 from schemas import DigestItem, StockAnalysisOut, ImportantFlag, ReportDayOut, StockReportOut
 from services.stock_memory import update_memory_from_report
@@ -55,6 +55,9 @@ def get_digest(id_token: str, db: Session = Depends(get_db)):
     user = get_current_user(id_token, db)
     watchlist = db.query(WatchlistItem).filter(WatchlistItem.user_email == user.email).all()
     cutoff = date.today() - timedelta(days=7)
+    disabled_tickers = {
+        c.ticker for c in db.query(TickerControl).filter(TickerControl.analysis_enabled.is_(False)).all()
+    }
     result = []
     for item in watchlist:
         analysis = (
@@ -119,6 +122,7 @@ def get_digest(id_token: str, db: Session = Depends(get_db)):
             change_summary=change_summary,
             days_since_read=days_since_read,
             close_5d=close_5d,
+            analysis_disabled=item.ticker in disabled_tickers,
         ))
     return result
 
