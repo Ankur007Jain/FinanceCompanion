@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { signOut } from "next-auth/react";
 import ThemeToggle from "@/app/components/ThemeToggle";
+import Logo from "@/app/components/Logo";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
@@ -1573,8 +1575,8 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
 
           {/* Logo */}
           <div onClick={() => setActiveTab("Dashboard")} style={{ display: "flex", alignItems: "center", gap: 9, cursor: "pointer", flexShrink: 0 }}>
-            <span style={{ width: 22, height: 22, borderRadius: 5, background: "var(--t-accent)", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--t-surface)", fontSize: 12, fontWeight: 600, fontFamily: MONO }}>✦</span>
-            <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.01em", color: "var(--t-text)", fontFamily: SANS }}>Stock Copilot</span>
+            <Logo size={22} />
+            <span style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.01em", color: "var(--t-text)", fontFamily: SANS }}>Finance Companion</span>
           </div>
 
           {/* Nav tabs — desktop only */}
@@ -2358,6 +2360,21 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
         )}
 
       </main>
+
+      {/* ── Footer / legal ── */}
+      <footer style={{ borderTop: "1px solid var(--t-border)", padding: "20px 32px 28px" }}>
+        <div style={{ maxWidth: 1180, margin: "0 auto", fontSize: 11.5, lineHeight: 1.6, color: "var(--t-text-muted)", fontFamily: SANS }}>
+          <p style={{ margin: "0 0 8px" }}>
+            Finance Companion provides AI-generated market commentary for informational and educational purposes only. Nothing on this site is financial, investment, tax, or legal advice, or a recommendation to buy, hold, or sell any security. Market data and AI-generated analysis may be delayed, incomplete, or inaccurate, and involve inherent uncertainty. Past performance does not guarantee future results. You are solely responsible for your own investment decisions — consult a licensed financial advisor before acting on anything shown here.{" "}
+            <Link href="/terms" target="_blank" style={{ color: "var(--t-text-muted)", textDecoration: "underline" }}>
+              Full Terms &amp; Disclaimer
+            </Link>
+          </p>
+          <p style={{ margin: 0 }}>
+            © {new Date().getFullYear()} Finance Companion. All rights reserved.
+          </p>
+        </div>
+      </footer>
 
       {/* ── Toast notification ── */}
       {toast && (

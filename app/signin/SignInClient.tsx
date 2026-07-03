@@ -1,6 +1,8 @@
 "use client";
 import { signIn } from "next-auth/react";
 import { useState } from "react";
+import Link from "next/link";
+import Logo from "../components/Logo";
 
 const MONO = "'IBM Plex Mono', monospace";
 const SANS = "'IBM Plex Sans', sans-serif";
@@ -18,7 +20,7 @@ export default function SignInClient({
   const [testLoading, setTestLoading] = useState(false);
   return (
     <div style={{
-      minHeight: "100vh", display: "flex", alignItems: "center",
+      minHeight: "100vh", display: "flex", flexDirection: "column", alignItems: "center",
       justifyContent: "center", background: "var(--t-bg)", padding: "1rem",
       fontFamily: SANS,
     }}>
@@ -29,12 +31,8 @@ export default function SignInClient({
       }}>
         {/* Logo */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 9, marginBottom: 28 }}>
-          <span style={{
-            width: 28, height: 28, borderRadius: 6, background: "var(--t-accent)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-            color: "var(--t-surface)", fontSize: 14, fontWeight: 600, fontFamily: MONO,
-          }}>✦</span>
-          <span style={{ fontWeight: 600, fontSize: 18, letterSpacing: "-0.01em", color: "var(--t-text)", fontFamily: SANS }}>Stock Copilot</span>
+          <Logo size={28} />
+          <span style={{ fontWeight: 600, fontSize: 18, letterSpacing: "-0.01em", color: "var(--t-text)", fontFamily: SANS }}>Finance Companion</span>
         </div>
 
         <h1 style={{ margin: "0 0 0.5rem", fontFamily: SERIF, fontWeight: 600, fontSize: "1.3rem", color: "var(--t-text)" }}>
@@ -86,6 +84,16 @@ export default function SignInClient({
           </button>
         )}
       </div>
+
+      <p style={{ maxWidth: 400, marginTop: "1.25rem", fontSize: "0.72rem", lineHeight: 1.6, color: "var(--t-text-muted)", textAlign: "center" }}>
+        For informational and educational purposes only — not financial, investment, tax, or legal advice.
+        Consult a licensed financial advisor before making investment decisions.{" "}
+        <Link href="/terms" style={{ color: "var(--t-text-muted)", textDecoration: "underline" }}>
+          Terms &amp; Disclaimer
+        </Link>
+        <br />
+        © {new Date().getFullYear()} Finance Companion. All rights reserved.
+      </p>
     </div>
   );
 }

@@ -9,6 +9,7 @@ export default auth((req) => {
     pathname.startsWith("/signin") ||
     pathname.startsWith("/api/auth") ||
     pathname.startsWith("/preview") ||
+    pathname.startsWith("/terms") ||
     pathname === "/";
 
   if (!isLoggedIn && !isPublic) {
