@@ -42,7 +42,7 @@ async def generate_simple_fields(analysis: StockAnalysis, db: Session) -> None:
         client = anthropic.AsyncAnthropic(api_key=api_key)
         resp = await client.messages.create(
             model=_HAIKU,
-            max_tokens=600,
+            max_tokens=1500,
             system=_SYSTEM,
             messages=[{"role": "user", "content": prompt}],
         )
