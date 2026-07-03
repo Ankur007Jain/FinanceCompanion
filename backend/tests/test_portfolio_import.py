@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from routers.portfolio import _parse_csv
+from routers.portfolio import _parse_csv, _parse_robinhood_transactions, _try_parse_csv
 from schemas import ImportPreviewItem
 
 
@@ -489,3 +489,157 @@ class TestImportApply:
             r = client.get("/watchlist", params={"id_token": "tok"})
         tickers = [i["ticker"] for i in r.json()]
         assert "SCPA" not in tickers
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Unit — _parse_robinhood_transactions
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _rh_csv(*rows: str) -> bytes:
+    """Build a Robinhood activity CSV with the standard header."""
+    header = "Activity Date,Process Date,Settle Date,Instrument,Description,Trans Code,Quantity,Price,Amount"
+    return "\n".join([header] + list(rows)).encode()
+
+
+def _rh_norm() -> dict[str, str]:
+    """Return norm dict matching the Robinhood activity CSV header."""
+    keys = ["Activity Date", "Process Date", "Settle Date", "Instrument",
+            "Description", "Trans Code", "Quantity", "Price", "Amount"]
+    return {k.lower().strip(): k for k in keys}
+
+
+def _rh_rows(*rows: str) -> list[dict]:
+    import csv, io
+    text = _rh_csv(*rows).decode()
+    reader = csv.DictReader(io.StringIO(text))
+    return list(reader)
+
+
+class TestParseRobinhoodTransactions:
+    def test_single_buy_creates_position(self):
+        rows = _rh_rows('7/1/2026,7/1/2026,7/2/2026,VOO,Vanguard S&P 500,Buy,1.0,$500.00,"($500.00)"')
+        result = _parse_robinhood_transactions(rows, _rh_norm())
+        assert len(result) == 1
+        assert result[0].ticker == "VOO"
+        assert result[0].shares == pytest.approx(1.0)
+
+    def test_weighted_avg_cost_computed(self):
+        # Two buys: 2 shares @ $100 and 2 shares @ $200 → avg = $150
+        rows = _rh_rows(
+            '1/1/2026,1/1/2026,1/2/2026,AAPL,Apple,Buy,2.0,$100.00,"($200.00)"',
+            '2/1/2026,2/1/2026,2/2/2026,AAPL,Apple,Buy,2.0,$200.00,"($400.00)"',
+        )
+        result = _parse_robinhood_transactions(rows, _rh_norm())
+        assert result[0].ticker == "AAPL"
+        assert result[0].shares == pytest.approx(4.0)
+        assert result[0].avg_cost == pytest.approx(150.0)
+
+    def test_sell_reduces_net_shares(self):
+        rows = _rh_rows(
+            '1/1/2026,1/1/2026,1/2/2026,MSFT,Microsoft,Buy,5.0,$300.00,"($1500.00)"',
+            '2/1/2026,2/1/2026,2/2/2026,MSFT,Microsoft,Sell,2.0,$350.00,$700.00',
+        )
+        result = _parse_robinhood_transactions(rows, _rh_norm())
+        assert result[0].ticker == "MSFT"
+        assert result[0].shares == pytest.approx(3.0)
+
+    def test_fully_sold_ticker_excluded(self):
+        rows = _rh_rows(
+            '1/1/2026,1/1/2026,1/2/2026,BRKB,Berkshire,Buy,2.0,$480.00,"($960.00)"',
+            '2/1/2026,2/1/2026,2/2/2026,BRKB,Berkshire,Sell,2.0,$500.00,$1000.00',
+        )
+        result = _parse_robinhood_transactions(rows, _rh_norm())
+        assert result == []
+
+    def test_cash_transactions_skipped(self):
+        # ACH row has empty Instrument — must be skipped
+        rows = _rh_rows(
+            '7/1/2026,7/1/2026,7/2/2026,,ACH Deposit,ACH,,,,$600.00',
+            '7/1/2026,7/1/2026,7/2/2026,VOO,Vanguard,Buy,1.0,$500.00,"($500.00)"',
+        )
+        result = _parse_robinhood_transactions(rows, _rh_norm())
+        assert len(result) == 1
+        assert result[0].ticker == "VOO"
+
+    def test_dividend_reinvestment_buy_included(self):
+        rows = _rh_rows(
+            '4/1/2026,4/1/2026,4/2/2026,VOO,Dividend Reinvestment,Buy,0.046273,$687.00,"($31.80)"',
+        )
+        result = _parse_robinhood_transactions(rows, _rh_norm())
+        assert result[0].ticker == "VOO"
+        assert result[0].shares == pytest.approx(0.046273)
+
+    def test_dot_ticker_handled(self):
+        rows = _rh_rows(
+            '1/1/2026,1/1/2026,1/2/2026,BRK.B,Berkshire B,Buy,1.0,$480.00,"($480.00)"',
+        )
+        result = _parse_robinhood_transactions(rows, _rh_norm())
+        assert result[0].ticker == "BRK.B"
+
+    def test_multiple_tickers_all_returned(self):
+        rows = _rh_rows(
+            '1/1/2026,1/1/2026,1/2/2026,AAPL,Apple,Buy,1.0,$150.00,"($150.00)"',
+            '1/2/2026,1/2/2026,1/3/2026,MSFT,Microsoft,Buy,2.0,$380.00,"($760.00)"',
+            '1/3/2026,1/3/2026,1/4/2026,NVDA,Nvidia,Buy,5.0,$100.00,"($500.00)"',
+        )
+        result = _parse_robinhood_transactions(rows, _rh_norm())
+        assert {r.ticker for r in result} == {"AAPL", "MSFT", "NVDA"}
+
+    def test_avg_cost_none_when_price_missing(self):
+        rows = _rh_rows(
+            '1/1/2026,1/1/2026,1/2/2026,VOO,Vanguard,Buy,1.0,,"($500.00)"',
+        )
+        result = _parse_robinhood_transactions(rows, _rh_norm())
+        assert result[0].avg_cost is None
+
+    def test_results_sorted_alphabetically(self):
+        rows = _rh_rows(
+            '1/1/2026,1/1/2026,1/2/2026,NVDA,Nvidia,Buy,1.0,$100.00,"($100.00)"',
+            '1/2/2026,1/2/2026,1/3/2026,AAPL,Apple,Buy,1.0,$150.00,"($150.00)"',
+        )
+        result = _parse_robinhood_transactions(rows, _rh_norm())
+        assert [r.ticker for r in result] == ["AAPL", "NVDA"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Unit — _try_parse_csv (format dispatcher)
+# ══════════════════════════════════════════════════════════════════════════════
+
+class TestTryParseCsv:
+    def test_detects_robinhood_transaction_format(self):
+        content = _rh_csv(
+            '7/1/2026,7/1/2026,7/2/2026,VOO,Vanguard,Buy,1.0,$500.00,"($500.00)"',
+        )
+        result = _try_parse_csv(content)
+        assert result is not None
+        assert result[0].ticker == "VOO"
+
+    def test_detects_standard_holdings_format(self):
+        content = _csv_bytes("Symbol,Quantity,Average Cost", "AAPL,5.0,185.0")
+        result = _try_parse_csv(content)
+        assert result is not None
+        assert result[0].ticker == "AAPL"
+
+    def test_returns_none_for_unknown_format(self):
+        # Valid CSV with 3 columns but no recognizable column names
+        content = _csv_bytes("Date,Company,Price", "2026-01-01,Apple Inc,150.00")
+        result = _try_parse_csv(content)
+        assert result is None
+
+    def test_raises_on_malformed_single_column_csv(self):
+        content = b"junk;no;headers\n1;2;3\n"
+        with pytest.raises(ValueError, match="malformed"):
+            _try_parse_csv(content)
+
+    def test_robinhood_format_aggregates_buys_and_sells(self):
+        content = _rh_csv(
+            '1/1/2026,1/1/2026,1/2/2026,AAPL,Apple,Buy,10.0,$150.00,"($1500.00)"',
+            '2/1/2026,2/1/2026,2/2/2026,AAPL,Apple,Sell,3.0,$180.00,$540.00',
+        )
+        result = _try_parse_csv(content)
+        assert result[0].shares == pytest.approx(7.0)
+
+    def test_empty_csv_returns_empty_list(self):
+        content = _rh_csv()  # header only
+        result = _try_parse_csv(content)
+        assert result == []

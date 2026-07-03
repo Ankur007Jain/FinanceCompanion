@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from database import get_db, SessionLocal
 from models import WatchlistItem
 from routers.auth import get_current_user
-from schemas import WatchlistAddRequest, WatchlistItemOut
+from schemas import WatchlistAddRequest, WatchlistItemOut, PortfolioPositionRequest
 
 logger = logging.getLogger(__name__)
 
@@ -159,6 +159,45 @@ def mark_analysis_read(ticker: str, id_token: str, db: Session = Depends(get_db)
         item.last_read_at = datetime.utcnow()
         db.commit()
     return {"ok": True, "ticker": ticker.upper()}
+
+
+@router.patch("/{ticker}/portfolio", response_model=WatchlistItemOut)
+def set_portfolio_position(
+    ticker: str,
+    id_token: str,
+    body: PortfolioPositionRequest,
+    db: Session = Depends(get_db),
+):
+    """Set shares + avg_cost on a watchlist item — moves it to the portfolio view."""
+    user = get_current_user(id_token, db)
+    item = db.query(WatchlistItem).filter(
+        WatchlistItem.user_email == user.email,
+        WatchlistItem.ticker == ticker.upper(),
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Ticker not in watchlist.")
+    item.shares = body.shares
+    item.avg_cost = body.avg_cost
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@router.patch("/{ticker}/sell", response_model=WatchlistItemOut)
+def clear_portfolio_position(ticker: str, id_token: str, db: Session = Depends(get_db)):
+    """Clear shares/avg_cost — moves item back to watchlist view."""
+    user = get_current_user(id_token, db)
+    item = db.query(WatchlistItem).filter(
+        WatchlistItem.user_email == user.email,
+        WatchlistItem.ticker == ticker.upper(),
+    ).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Ticker not in watchlist.")
+    item.shares = None
+    item.avg_cost = None
+    db.commit()
+    db.refresh(item)
+    return item
 
 
 @router.delete("/{ticker}")

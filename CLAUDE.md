@@ -77,6 +77,38 @@ curl -X POST http://localhost:8001/jobs/nightly \
 
 ---
 
+## Local Dev Auth Bypass — ALWAYS USE THIS
+
+`backend/.env` has `TEST_MODE=true`. This enables a token bypass so you **never need a real Google token** when testing locally.
+
+**Token format:** `test-token-{email}`
+
+```bash
+# Authenticate as any user — no Google needed
+TOK="test-token-ankur@test.com"
+
+# Verify it works
+curl http://localhost:8001/auth/verify \
+  -H "Content-Type: application/json" \
+  -d "{\"id_token\": \"$TOK\"}"
+
+# Use in any endpoint
+curl "http://localhost:8001/analysis/digest?id_token=$TOK"
+curl "http://localhost:8001/watchlist?id_token=$TOK"
+curl -X POST "http://localhost:8001/watchlist?id_token=$TOK" \
+  -H "Content-Type: application/json" \
+  -d '{"ticker":"AAPL","company_name":"Apple Inc."}'
+curl -X PATCH "http://localhost:8001/watchlist/AAPL/portfolio?id_token=$TOK" \
+  -H "Content-Type: application/json" \
+  -d '{"shares":13.29,"avg_cost":185.50}'
+curl -X POST "http://localhost:8001/portfolio/import/preview?id_token=$TOK" \
+  -F "file=@holdings.csv"
+```
+
+> **Never commit `TEST_MODE=true` to production.** Railway env vars do not have this — it's `.env` local only.
+
+---
+
 ## Environment Variables
 
 **Backend (`backend/.env`):**
