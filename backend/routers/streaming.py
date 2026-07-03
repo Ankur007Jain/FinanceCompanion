@@ -118,6 +118,37 @@ async def stream_message(
 
     async def generate():
         session = SessionLocal()
+        full_text = ""
+        total_in = total_out = total_cr = total_cw = 0
+        persisted = False
+
+        def persist():
+            # Saves whatever was generated so far. Called both on the happy path and
+            # from `finally`, so a client disconnect / dropped connection mid-stream
+            # doesn't silently lose an assistant reply that Claude already generated
+            # (and that already cost tokens).
+            nonlocal persisted
+            if persisted or not full_text:
+                return
+            persisted = True
+            try:
+                session.add(Message(
+                    conversation_id=conversation_id,
+                    role="assistant",
+                    content=full_text,
+                    model_used=model,
+                    input_tokens=total_in,
+                    output_tokens=total_out,
+                    cache_read_tokens=total_cr,
+                    cache_write_tokens=total_cw,
+                ))
+                db_user = session.get(User, user.email)
+                if db_user and db_user.tier != "premium" and not db_user.is_admin:
+                    db_user.tokens_used = (db_user.tokens_used or 0) + total_in + total_out
+                session.commit()
+            except Exception:
+                session.rollback()
+
         try:
             api_key = os.getenv("ANTHROPIC_API_KEY", "")
             if not api_key:
@@ -126,8 +157,6 @@ async def stream_message(
 
             client = anthropic.AsyncAnthropic(api_key=api_key)
             messages = list(history)
-            full_text = ""
-            total_in = total_out = total_cr = total_cw = 0
 
             while True:
                 current_tool_id = current_tool_name = current_tool_input = ""
@@ -215,27 +244,14 @@ async def stream_message(
                 except Exception:
                     pass
 
-            # Persist AI response
-            session.add(Message(
-                conversation_id=conversation_id,
-                role="assistant",
-                content=full_text,
-                model_used=model,
-                input_tokens=total_in,
-                output_tokens=total_out,
-                cache_read_tokens=total_cr,
-                cache_write_tokens=total_cw,
-            ))
-            db_user = session.get(User, user.email)
-            if db_user and db_user.tier != "premium" and not db_user.is_admin:
-                db_user.tokens_used = (db_user.tokens_used or 0) + total_in + total_out
-            session.commit()
-
+            persist()
             yield f"data: {json.dumps({'type': 'done', 'input_tokens': total_in, 'output_tokens': total_out})}\n\n"
 
         except Exception as e:
+            persist()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:
+            persist()
             session.close()
 
     return StreamingResponse(generate(), media_type="text/event-stream")

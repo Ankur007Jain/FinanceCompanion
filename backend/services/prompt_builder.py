@@ -36,11 +36,12 @@ Your data:
 """
 
 
-def _format_analysis(a: StockAnalysis) -> str:
+def _format_analysis(a: StockAnalysis, position_line: str) -> str:
     direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
     conv = f"  Conviction:   {a.conviction_score}/100  ({a.risk_level or 'N/A'} risk, {a.confidence or 'N/A'} confidence)\n" if a.conviction_score is not None else ""
     return (
         f"  Verdict:      {a.verdict}  (entry ${a.entry_target or 'N/A'}, exit ${a.exit_target or 'N/A'})\n"
+        f"  {position_line.rstrip(chr(10))}\n"
         f"{conv}"
         f"  Price:        ${a.current_price:.2f}  {direction}{abs(a.day_change_pct or 0):.1f}%\n"
         f"  52-Wk Range:  ${a.week_52_low:.2f} – ${a.week_52_high:.2f}  ({a.range_position_pct:.0f}% position)\n"
@@ -55,12 +56,30 @@ def _pct(v):
     return f"{v*100:.1f}%" if v is not None else "N/A"
 
 
-def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnalysis]) -> str:
+def _format_position(w: WatchlistItem, current_price: Optional[float]) -> str:
+    """User's actual holding in this ticker — shares, cost basis, live P&L."""
+    if not w.shares:
+        return "Position:       Watchlist only — user does not own this stock.\n"
+    cost_basis = w.shares * w.avg_cost if w.avg_cost else None
+    market_value = w.shares * current_price if current_price else None
+    pnl = market_value - cost_basis if (market_value is not None and cost_basis is not None) else None
+    pnl_pct = (pnl / cost_basis) if (pnl is not None and cost_basis) else None
+    parts = [f"Position:       {w.shares:g} shares"]
+    if w.avg_cost:
+        parts.append(f"@ avg cost ${w.avg_cost:.2f} (cost basis ${cost_basis:,.2f})")
+    if pnl is not None:
+        sign = "+" if pnl >= 0 else ""
+        parts.append(f"→ market value ${market_value:,.2f}  |  P&L {sign}${pnl:,.2f} ({sign}{pnl_pct*100:.1f}%)")
+    return "  ".join(parts) + "\n"
+
+
+def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnalysis], position_line: str) -> str:
     """Full institutional dossier for the ticker currently in focus."""
     direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
     lines = [
         f"=== {a.ticker} — FULL ANALYSIS (as of {a.analysis_date.isoformat()}) ===",
         f"Verdict:        {a.verdict}",
+        position_line.rstrip("\n"),
     ]
     if a.conviction_score is not None:
         lines.append(f"Conviction:     {a.conviction_score}/100  |  Risk: {a.risk_level or 'N/A'}  |  Confidence: {a.confidence or 'N/A'}")
@@ -110,6 +129,7 @@ def build_system_prompt(
 
     watchlist = db.query(WatchlistItem).filter(WatchlistItem.user_email == user_email).all()
     tickers = [w.ticker for w in watchlist]
+    watchlist_map = {w.ticker: w for w in watchlist}
 
     analyses = db.query(StockAnalysis).filter(
         StockAnalysis.ticker.in_(tickers),
@@ -150,15 +170,22 @@ def build_system_prompt(
             if not focus_mem:
                 m = db.query(StockMemory).filter(StockMemory.ticker == focus).first()
                 focus_mem = m.memory_narrative if m else ""
-            lines.append(_format_analysis_deep(focus_analysis, focus_mem, history))
+            focus_wl = watchlist_map.get(focus)
+            focus_position = (
+                _format_position(focus_wl, focus_analysis.current_price)
+                if focus_wl else "Position:       Not in user's watchlist.\n"
+            )
+            lines.append(_format_analysis_deep(focus_analysis, focus_mem, history, focus_position))
             lines.append("")
 
     if analyses:
         lines.append("=== TONIGHT'S ANALYSIS ===")
         for a in analyses:
             mem = memory_map.get(a.ticker, "")
+            wl = watchlist_map.get(a.ticker)
+            position_line = _format_position(wl, a.current_price) if wl else "Position:       Not in user's watchlist.\n"
             lines.append(f"\n{a.ticker}:")
-            lines.append(_format_analysis(a))
+            lines.append(_format_analysis(a, position_line))
             if mem:
                 lines.append(f"  Memory:       {mem[:300]}")
             if a.events_json:
