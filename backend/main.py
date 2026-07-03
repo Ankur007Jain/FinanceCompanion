@@ -12,9 +12,12 @@ from routers import auth, watchlist, analysis, simulation, conversations, stream
 
 app = FastAPI(title="FinanceCompanion API", version="0.1.0")
 
+_raw_origins = os.getenv("FRONTEND_URL", "http://localhost:3000")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[os.getenv("FRONTEND_URL", "http://localhost:3000")],
+    allow_origins=_allowed_origins,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization", "Accept"],
     allow_credentials=True,
@@ -137,11 +140,16 @@ def _migrate_db():
         if "stock_analyses" in tables:
             sa_cols2 = {c["name"] for c in inspector.get_columns("stock_analyses")}
             for col, typ in [
-                ("tokens_input",       "INTEGER"),
-                ("tokens_output",      "INTEGER"),
-                ("tokens_cache_read",  "INTEGER"),
-                ("tokens_cache_write", "INTEGER"),
-                ("cost_usd",           "FLOAT"),
+                ("tokens_input",               "INTEGER"),
+                ("tokens_output",              "INTEGER"),
+                ("tokens_cache_read",          "INTEGER"),
+                ("tokens_cache_write",         "INTEGER"),
+                ("cost_usd",                   "FLOAT"),
+                ("reasoning_simple",           "TEXT"),
+                ("bull_case_simple",           "TEXT"),
+                ("bear_case_simple",           "TEXT"),
+                ("thesis_invalidation_simple", "TEXT"),
+                ("news_summary_simple",        "TEXT"),
             ]:
                 if col not in sa_cols2:
                     conn.execute(text(f"ALTER TABLE stock_analyses ADD COLUMN {col} {typ}"))  # nosemgrep

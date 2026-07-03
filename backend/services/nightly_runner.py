@@ -20,6 +20,7 @@ from agents.ripple_agent import analyze_ripple
 from agents.verdict_agent import generate_verdict
 from models import StockAnalysis, WatchlistItem
 from services.stock_memory import get_stock_memory, maybe_update_stock_memory
+from services.simple_fields import generate_simple_fields
 
 logger = logging.getLogger(__name__)
 
@@ -362,6 +363,7 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
     logger.info(f"[{ticker}] Analysis saved. Verdict: {verdict.verdict} | tokens in={tokens_in} out={tokens_out} | cost=${cost_usd:.4f}")
 
     await maybe_update_stock_memory(ticker, verdict.verdict, verdict.reasoning, news, json.dumps(events), db)
+    await generate_simple_fields(analysis, db)
 
 
 async def run_nightly_analysis(db: Session, tickers: list[str] | None = None) -> dict:
