@@ -472,6 +472,10 @@ jobs:
                     raw = re.sub(r"^```json\s*", "", raw)
                     raw = re.sub(r"\s*```$", "", raw)
                     verdict_b = json.loads(raw)
+                    usage = getattr(resp, "usage_metadata", None)
+                    if usage:
+                        verdict_b["gemini_tokens_input"] = usage.prompt_token_count
+                        verdict_b["gemini_tokens_output"] = usage.candidates_token_count
                     print(f"[{ticker}] Verdict B (Gemini): {verdict_b.get('verdict')}")
                     break
                 except Exception as e:
@@ -539,6 +543,11 @@ jobs:
             Include dual-agent fields from Step 3c: verdict_a, verdict_b, verdict_agreement,
             split_reason. Use null for verdict_b/verdict_agreement/split_reason if Gemini was unavailable.
             The `verdict` field MUST be final_verdict from Step 3c (judge output), not raw verdict_a.
+
+            Include gemini_tokens_input and gemini_tokens_output from verdict_b's usage metadata
+            (Step 3b — these are Gemini's own real token counts, not an estimate). Omit both if
+            Gemini was unavailable or didn't return usage_metadata. Do not compute or invent a
+            dollar cost — the backend derives that from these raw counts.
 
             Also include earnings_date (the raw string from yfinance, e.g. "2026-07-15") if available, else omit it.
 

@@ -177,12 +177,20 @@ class StockAnalysis(Base):
     verdict_agreement = Column(Boolean)  # True = both agree, False = split
     split_reason = Column(Text)      # populated when verdict_a != verdict_b
 
-    # Token usage + cost tracking (Python agents only — excludes GHA claude-code-action)
+    # Token usage + cost tracking (Python agents only — excludes GHA claude-code-action).
+    # In production this is Gemini Verdict B's usage — Claude's Verdict A + judge steps run
+    # as the orchestrating claude-code-action agent's own reasoning, not a scripted API call,
+    # so there's no usage object to read for those.
     tokens_input = Column(Integer, default=0)
     tokens_output = Column(Integer, default=0)
     tokens_cache_read = Column(Integer, default=0)
     tokens_cache_write = Column(Integer, default=0)
     cost_usd = Column(Float)         # total USD cost for verdict + ripple + news agents
+
+    # Simple-language (Haiku) rewrite job — fully backend-controlled, tracked separately.
+    simple_fields_tokens_input = Column(Integer)
+    simple_fields_tokens_output = Column(Integer)
+    simple_fields_cost_usd = Column(Float)
 
     created_at = Column(DateTime, default=datetime.utcnow)
 
@@ -278,3 +286,21 @@ class AppConfig(Base):
     __tablename__ = "app_config"
     key = Column(String, primary_key=True)
     value = Column(String, nullable=False)
+
+
+class TickerControl(Base):
+    """Admin on/off switch for the nightly analysis job — global per ticker, since
+    StockAnalysis is shared across every user tracking that ticker."""
+    __tablename__ = "ticker_control"
+    ticker = Column(String, primary_key=True)
+    analysis_enabled = Column(Boolean, nullable=False, default=True)
+    disabled_by = Column(String, ForeignKey("users.email"), nullable=True)
+    disabled_at = Column(DateTime, nullable=True)
+
+
+class Feedback(Base):
+    __tablename__ = "feedback"
+    id = Column(String, primary_key=True, default=_uid)
+    user_email = Column(String, ForeignKey("users.email"), nullable=False)
+    message = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)

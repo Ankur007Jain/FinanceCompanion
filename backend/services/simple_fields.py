@@ -11,6 +11,9 @@ from models import StockAnalysis
 logger = logging.getLogger(__name__)
 
 _HAIKU = "claude-haiku-4-5-20251001"
+# Matches services/nightly_runner.py's _PRICING table — per million tokens.
+_HAIKU_PRICE_IN = 0.80
+_HAIKU_PRICE_OUT = 4.0
 
 _SYSTEM = (
     "You rewrite financial analysis text into plain, jargon-free English for a general audience. "
@@ -56,6 +59,15 @@ async def generate_simple_fields(analysis: StockAnalysis, db: Session) -> None:
         for f in _FIELDS:
             if f in fields and fields[f]:
                 setattr(analysis, f"{f}_simple", fields[f])
+
+        usage = resp.usage
+        analysis.simple_fields_tokens_input = usage.input_tokens
+        analysis.simple_fields_tokens_output = usage.output_tokens
+        analysis.simple_fields_cost_usd = (
+            (usage.input_tokens / 1_000_000) * _HAIKU_PRICE_IN
+            + (usage.output_tokens / 1_000_000) * _HAIKU_PRICE_OUT
+        )
+
         db.commit()
         logger.info(f"[{analysis.ticker}] Simple fields saved.")
     except Exception as e:

@@ -108,6 +108,7 @@ interface DigestItem {
   change_summary: string | null;
   days_since_read: number | null;
   close_5d: number[] | null;
+  analysis_disabled: boolean;
 }
 
 interface ImportPosition {
@@ -1075,8 +1076,13 @@ function StockRow({
 
           {!a && (
             <div style={{ marginTop: "0.5rem" }}>
-              <span style={{ fontSize: "0.65rem", fontFamily: MONO, fontWeight: 600, padding: "3px 10px", borderRadius: 20, background: "var(--t-surface-3)", border: "1px solid var(--t-border)", color: "var(--t-text-muted)", letterSpacing: "0.04em" }}>
-                Analysis runs nightly
+              <span style={{
+                fontSize: "0.65rem", fontFamily: MONO, fontWeight: 600, padding: "3px 10px", borderRadius: 20, letterSpacing: "0.04em",
+                background: item.analysis_disabled ? "var(--t-yellow-bg)" : "var(--t-surface-3)",
+                border: `1px solid ${item.analysis_disabled ? "var(--t-yellow-border)" : "var(--t-border)"}`,
+                color: item.analysis_disabled ? "var(--t-yellow)" : "var(--t-text-muted)",
+              }}>
+                {item.analysis_disabled ? "Daily analysis disabled for this stock" : "Analysis runs nightly"}
               </span>
             </div>
           )}
@@ -1123,8 +1129,13 @@ function StockRow({
           {/* Verdict — solid block (or pending spanning message) */}
           {!a ? (
             <div style={{ gridColumn: "2 / 7", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <span style={{ fontSize: "0.65rem", fontFamily: MONO, fontWeight: 600, padding: "3px 10px", borderRadius: 20, background: "var(--t-surface-3)", border: "1px solid var(--t-border)", color: "var(--t-text-muted)", letterSpacing: "0.04em" }}>
-                Analysis runs nightly
+              <span style={{
+                fontSize: "0.65rem", fontFamily: MONO, fontWeight: 600, padding: "3px 10px", borderRadius: 20, letterSpacing: "0.04em",
+                background: item.analysis_disabled ? "var(--t-yellow-bg)" : "var(--t-surface-3)",
+                border: `1px solid ${item.analysis_disabled ? "var(--t-yellow-border)" : "var(--t-border)"}`,
+                color: item.analysis_disabled ? "var(--t-yellow)" : "var(--t-text-muted)",
+              }}>
+                {item.analysis_disabled ? "Daily analysis disabled for this stock" : "Analysis runs nightly"}
               </span>
             </div>
           ) : (
@@ -1272,6 +1283,10 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const router = useRouter();
   const [digest, setDigest] = useState<DigestItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [showFeedbackModal, setShowFeedbackModal] = useState(false);
+  const [feedbackText, setFeedbackText] = useState("");
+  const [feedbackSent, setFeedbackSent] = useState(false);
   const [ticker, setTicker] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [error, setError] = useState("");
@@ -1365,11 +1380,26 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     });
     if (r.ok) {
       const u = await r.json();
+      setIsAdmin(!!u.is_admin);
       if (u.portfolio_size) {
         setPortfolioSize(u.portfolio_size);
       } else {
         setShowPortfolioPrompt(true);
       }
+    }
+  }
+
+  async function submitFeedback() {
+    if (!feedbackText.trim()) return;
+    const r = await fetch(`${API}/feedback?id_token=${encodeURIComponent(idToken)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ message: feedbackText.trim() }),
+    });
+    if (r.ok) {
+      setFeedbackSent(true);
+      setFeedbackText("");
+      setTimeout(() => { setShowFeedbackModal(false); setFeedbackSent(false); }, 1500);
     }
   }
 
@@ -1397,7 +1427,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     setTicker(""); setCompanyName(""); setQuery(""); setSuggestions([]); setShowSuggestions(false); setError("");
     setDigest(prev => {
       if (prev.some(i => i.ticker === effectiveTicker)) return prev; // already in list
-      return [...prev, { ticker: effectiveTicker, company_name: savedCompany || null, is_leveraged: false, shares: null, avg_cost: null, analysis: null, has_unread: false, change_summary: null, days_since_read: null, close_5d: null }];
+      return [...prev, { ticker: effectiveTicker, company_name: savedCompany || null, is_leveraged: false, shares: null, avg_cost: null, analysis: null, has_unread: false, change_summary: null, days_since_read: null, close_5d: null, analysis_disabled: false }];
     });
 
     try {
@@ -1665,6 +1695,31 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                   <div style={{ padding: "12px 16px 10px", borderBottom: "1px solid var(--t-border-light)" }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: "var(--t-text)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{userName}</div>
                   </div>
+                  {isAdmin && (
+                    <button
+                      onClick={() => { setShowProfileMenu(false); router.push("/admin"); }}
+                      style={{
+                        width: "100%", textAlign: "left", padding: "11px 16px",
+                        background: "none", border: "none", cursor: "pointer",
+                        fontSize: 13, color: "var(--t-text)", fontFamily: SANS,
+                        display: "flex", alignItems: "center", gap: 8,
+                        borderBottom: "1px solid var(--t-border-light)",
+                      }}
+                    >
+                      Admin
+                    </button>
+                  )}
+                  <button
+                    onClick={() => { setShowProfileMenu(false); setShowFeedbackModal(true); }}
+                    style={{
+                      width: "100%", textAlign: "left", padding: "11px 16px",
+                      background: "none", border: "none", cursor: "pointer",
+                      fontSize: 13, color: "var(--t-text)", fontFamily: SANS,
+                      display: "flex", alignItems: "center", gap: 8,
+                    }}
+                  >
+                    Send Feedback
+                  </button>
                   <button
                     onClick={() => signOut({ callbackUrl: "/signin" })}
                     style={{
@@ -1672,6 +1727,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                       background: "none", border: "none", cursor: "pointer",
                       fontSize: 13, color: "var(--t-red)", fontFamily: SANS,
                       display: "flex", alignItems: "center", gap: 8,
+                      borderTop: "1px solid var(--t-border-light)",
                     }}
                   >
                     Sign out
@@ -2201,6 +2257,49 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               <div style={{ width: 44, height: 44, borderRadius: 10, background: "var(--t-accent-light)", border: "1px solid var(--t-accent-border)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 22 }}>🔍</div>
               <div style={{ fontFamily: SERIF, fontWeight: 600, fontSize: 20, color: "var(--t-text)" }}>Discover — coming soon</div>
               <div style={{ fontSize: 13, color: "var(--t-text-muted)", maxWidth: "30ch", lineHeight: 1.6, textAlign: "center" }}>AI-ranked picks outside your watchlist, sorted by conviction.</div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Feedback modal ── */}
+        {showFeedbackModal && (
+          <div style={{ position: "fixed", inset: 0, zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(0,0,0,0.45)" }}
+            onClick={e => { if (e.target === e.currentTarget) { setShowFeedbackModal(false); setFeedbackText(""); setFeedbackSent(false); } }}>
+            <div style={{ background: "var(--t-surface)", border: "1px solid var(--t-border)", borderRadius: 14, padding: "28px 28px 24px", width: "min(90vw, 440px)", boxShadow: "0 20px 60px rgba(0,0,0,0.25)" }}>
+              {feedbackSent ? (
+                <div style={{ textAlign: "center", padding: "1rem 0" }}>
+                  <div style={{ fontSize: 28, marginBottom: 10 }}>✓</div>
+                  <div style={{ fontFamily: SERIF, fontWeight: 600, fontSize: 16, color: "var(--t-text)" }}>Thanks for the feedback!</div>
+                </div>
+              ) : (
+                <>
+                  <div style={{ fontFamily: SERIF, fontWeight: 700, fontSize: 18, color: "var(--t-text)", marginBottom: 6 }}>Send Feedback</div>
+                  <div style={{ fontSize: 13, color: "var(--t-text-muted)", marginBottom: 16 }}>Bugs, ideas, anything — goes straight to the admin.</div>
+                  <textarea
+                    value={feedbackText}
+                    onChange={e => setFeedbackText(e.target.value)}
+                    placeholder="What's on your mind?"
+                    rows={5}
+                    autoFocus
+                    style={{ width: "100%", boxSizing: "border-box", padding: "10px 12px", background: "var(--t-surface-2)", border: "1px solid var(--t-border)", borderRadius: 8, color: "var(--t-text)", fontSize: 14, fontFamily: SANS, resize: "none", outline: "none", marginBottom: 14 }}
+                  />
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      onClick={submitFeedback}
+                      disabled={!feedbackText.trim()}
+                      style={{ flex: 1, padding: "10px 0", background: feedbackText.trim() ? "var(--t-accent)" : "var(--t-border)", color: feedbackText.trim() ? "var(--t-surface)" : "var(--t-text-muted)", border: "none", borderRadius: 8, cursor: feedbackText.trim() ? "pointer" : "not-allowed", fontWeight: 600, fontSize: 14, fontFamily: SANS }}
+                    >
+                      Submit
+                    </button>
+                    <button
+                      onClick={() => { setShowFeedbackModal(false); setFeedbackText(""); }}
+                      style={{ padding: "10px 18px", background: "none", color: "var(--t-text-muted)", border: "1px solid var(--t-border)", borderRadius: 8, cursor: "pointer", fontSize: 14, fontFamily: SANS }}
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </>
+              )}
             </div>
           </div>
         )}
