@@ -35,6 +35,8 @@ class WatchlistItem(Base):
     added_at = Column(DateTime, default=datetime.utcnow)
     last_read_analysis_id = Column(String, ForeignKey("stock_analyses.id"), nullable=True)
     last_read_at = Column(DateTime, nullable=True)
+    shares = Column(Float, nullable=True)    # null = watchlist only; set = portfolio position
+    avg_cost = Column(Float, nullable=True)  # average cost per share
 
 
 class MarketDataCache(Base):

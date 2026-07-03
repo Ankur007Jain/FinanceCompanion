@@ -8,7 +8,7 @@ from sqlalchemy import text, inspect
 
 from database import Base, engine, SessionLocal
 from models import AppConfig, StockReport  # noqa: F401 — ensures tables are registered
-from routers import auth, watchlist, analysis, simulation, conversations, streaming, jobs, translate
+from routers import auth, watchlist, analysis, simulation, conversations, streaming, jobs, translate, portfolio
 
 app = FastAPI(title="FinanceCompanion API", version="0.1.0")
 
@@ -31,6 +31,7 @@ app.include_router(conversations.router)
 app.include_router(streaming.router)
 app.include_router(jobs.router)
 app.include_router(translate.router)
+app.include_router(portfolio.router)
 
 
 def _migrate_db():
@@ -44,6 +45,10 @@ def _migrate_db():
                 conn.execute(text("ALTER TABLE watchlist_items ADD COLUMN last_read_analysis_id VARCHAR"))  # nosemgrep
             if "last_read_at" not in wl_cols:
                 conn.execute(text("ALTER TABLE watchlist_items ADD COLUMN last_read_at TIMESTAMP"))  # nosemgrep
+            if "shares" not in wl_cols:
+                conn.execute(text("ALTER TABLE watchlist_items ADD COLUMN shares FLOAT"))  # nosemgrep
+            if "avg_cost" not in wl_cols:
+                conn.execute(text("ALTER TABLE watchlist_items ADD COLUMN avg_cost FLOAT"))  # nosemgrep
             conn.commit()
 
         if "conversations" in tables:

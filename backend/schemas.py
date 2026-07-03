@@ -36,6 +36,8 @@ class WatchlistItemOut(BaseModel):
     company_name: Optional[str]
     sector: Optional[str]
     is_leveraged: bool
+    shares: Optional[float] = None
+    avg_cost: Optional[float] = None
     added_at: datetime
 
     class Config:
@@ -151,11 +153,29 @@ class DigestItem(BaseModel):
     ticker: str
     company_name: Optional[str]
     is_leveraged: bool
+    shares: Optional[float] = None
+    avg_cost: Optional[float] = None
     analysis: Optional[StockAnalysisOut]
     has_unread: bool = False
     change_summary: Optional[str] = None
     days_since_read: Optional[int] = None
     close_5d: Optional[list[float]] = None
+
+
+class PortfolioPositionRequest(BaseModel):
+    shares: float
+    avg_cost: Optional[float] = None
+
+
+class ImportPreviewItem(BaseModel):
+    ticker: str
+    shares: float
+    avg_cost: Optional[float] = None
+    company_name: Optional[str] = None
+
+
+class ImportApplyRequest(BaseModel):
+    positions: list[ImportPreviewItem]
 
 
 class CopilotDecisionRequest(BaseModel):
