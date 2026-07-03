@@ -1114,6 +1114,8 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const [sortMode, setSortMode] = useState<"relevance" | "verdict" | "az" | "movers">("relevance");
   const profileMenuRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const searchContainerRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 640);
@@ -1134,6 +1136,17 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     document.addEventListener("mousedown", handleClick);
     return () => document.removeEventListener("mousedown", handleClick);
   }, [showProfileMenu]);
+
+  useEffect(() => {
+    function handleClickOutside(e: MouseEvent) {
+      if (searchContainerRef.current && !searchContainerRef.current.contains(e.target as Node)) {
+        setShowSuggestions(false);
+        setHighlightedIdx(-1);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   async function fetchDigest(silent = false) {
     if (!silent) setLoading(true);
@@ -1224,6 +1237,14 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   }
 
   function handleSearchKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      setShowSuggestions(false);
+      setSuggestions([]);
+      setHighlightedIdx(-1);
+      searchInputRef.current?.blur();
+      return;
+    }
     if (!showSuggestions || suggestions.length === 0) return;
     if (e.key === "ArrowDown") {
       e.preventDefault();
@@ -1234,8 +1255,6 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     } else if (e.key === "Enter") {
       const idx = highlightedIdx >= 0 ? highlightedIdx : 0;
       if (suggestions[idx]) { e.preventDefault(); handleSelect(suggestions[idx]); }
-    } else if (e.key === "Escape") {
-      setShowSuggestions(false); setHighlightedIdx(-1);
     }
   }
 
@@ -1707,13 +1726,12 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 alignItems: "center", flexWrap: "wrap",
                 boxShadow: "0 2px 8px rgba(32,33,28,0.07)",
               }}>
-                <div style={{ position: "relative", flex: "1 1 260px" }}>
+                <div ref={searchContainerRef} style={{ position: "relative", flex: "1 1 260px" }}>
                   <input
+                    ref={searchInputRef}
                     value={query}
                     onChange={e => handleSearchInput(e.target.value)}
                     onKeyDown={handleSearchKeyDown}
-                    onBlur={() => setTimeout(() => { setShowSuggestions(false); setHighlightedIdx(-1); }, 200)}
-                    onFocus={() => suggestions.length > 0 && setShowSuggestions(true)}
                     placeholder="Search or add stock (e.g. NFLX)…"
                     autoComplete="off"
                     style={{
