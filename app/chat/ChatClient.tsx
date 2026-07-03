@@ -46,13 +46,30 @@ export default function ChatClient({
   const [searchingLabel, setSearchingLabel] = useState("");
   const [isMobile, setIsMobile] = useState(false);
   const [showSidebar, setShowSidebar] = useState(false);
-  const bottomRef = useRef<HTMLDivElement>(null);
+  const messagesContainerRef = useRef<HTMLDivElement>(null);
+  // Auto-follow new content only while the user is already at (or near) the bottom —
+  // if they've scrolled up to read something earlier, stop yanking them back down.
+  // Reset to true whenever they send a message (they clearly want to see the reply).
+  const stickToBottomRef = useRef(true);
   const readerRef = useRef<ReadableStreamDefaultReader | null>(null);
-  const revealIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  // Watchdog — mobile browsers can silently drop or suspend a long-lived streaming
+  // connection (backgrounding, screen lock, WiFi/cellular handoff) without the fetch
+  // ever rejecting, leaving the UI stuck on "Analysing..." forever. Reset on every SSE
+  // event received; if it fires, treat the stream as dead and surface an error.
+  const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef("");
-  const shownRef = useRef(0);
-  // Only scroll-to-bottom on explicit triggers (new message sent, conversation loaded) —
-  // not on every streamed chunk, which would yank the view while the user is reading.
+  // RAF throttle: accumulate chunks between frames, flush once per paint cycle instead of
+  // once per network chunk — this is what actually eliminates jank, not a simulated typing
+  // speed. Matches the pattern from TravelAI's useStreamingChat.
+  const rafPendingRef = useRef(false);
+  // Hold the first 2s of chunks before showing anything, so the response doesn't trickle in
+  // one word at a time right at the start (when there's least text to make streaming feel
+  // natural). If the whole reply finishes inside the buffer window, it just appears at once.
+  const bufferReadyRef = useRef(false);
+  const bufferTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Only scroll-to-bottom on explicit triggers (new message sent, conversation loaded,
+  // response finished) — not on every streamed chunk, which would yank the view while
+  // the user is reading.
   const scrollOnNextRenderRef = useRef(false);
 
   useEffect(() => { loadConversations(); }, []);
@@ -61,11 +78,23 @@ export default function ChatClient({
     else setMessages([]);
   }, [activeConvId]);
   useEffect(() => {
-    if (scrollOnNextRenderRef.current) {
-      scrollOnNextRenderRef.current = false;
-      bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }
+    const forced = scrollOnNextRenderRef.current;
+    scrollOnNextRenderRef.current = false;
+    if (!forced && !stickToBottomRef.current) return;
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    if (forced) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    else el.scrollTop = el.scrollHeight;
   }, [messages]);
+  useEffect(() => {
+    const el = messagesContainerRef.current;
+    if (!el) return;
+    const onScroll = () => {
+      stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, []);
   useEffect(() => {
     const check = () => setIsMobile(window.innerWidth < 640);
     check();
@@ -84,6 +113,7 @@ export default function ChatClient({
     if (r.ok) {
       const msgs = await r.json();
       scrollOnNextRenderRef.current = true;
+      stickToBottomRef.current = true;
       setMessages(msgs.map((m: { role: string; content: string; created_at?: string }) => ({ role: m.role, content: m.content, createdAt: m.created_at })));
     }
   }
@@ -101,28 +131,62 @@ export default function ChatClient({
     });
   }
 
-  // Reveals text at a steady pace, independent of network chunk timing/bursts,
-  // so the response feels like a smooth type-out instead of jumping in lumps.
-  function startReveal() {
-    if (revealIntervalRef.current) return;
-    revealIntervalRef.current = setInterval(() => {
-      const target = pendingRef.current;
-      if (shownRef.current >= target.length) return;
-      const remaining = target.length - shownRef.current;
-      const step = Math.max(2, Math.ceil(remaining / 10));
-      shownRef.current = Math.min(target.length, shownRef.current + step);
-      applyChunk(target.slice(0, shownRef.current));
-    }, 20);
+  // Called on every incoming chunk. Buffers the first BUFFER_MS so the reply doesn't
+  // trickle in one word at a time right when there's least text to make it feel smooth;
+  // after that, applies the real accumulated text at most once per animation frame.
+  const BUFFER_MS = 2000;
+  function onChunkReceived() {
+    if (!bufferTimerRef.current && !bufferReadyRef.current) {
+      bufferTimerRef.current = setTimeout(() => {
+        bufferTimerRef.current = null;
+        bufferReadyRef.current = true;
+        applyChunk(pendingRef.current);
+      }, BUFFER_MS);
+      return;
+    }
+    if (bufferReadyRef.current && !rafPendingRef.current) {
+      rafPendingRef.current = true;
+      requestAnimationFrame(() => {
+        rafPendingRef.current = false;
+        applyChunk(pendingRef.current);
+      });
+    }
   }
 
   function stopReveal() {
-    if (revealIntervalRef.current) { clearInterval(revealIntervalRef.current); revealIntervalRef.current = null; }
+    if (bufferTimerRef.current) { clearTimeout(bufferTimerRef.current); bufferTimerRef.current = null; }
+    rafPendingRef.current = false;
   }
 
+  // Response finished (or errored) before the buffer window closed — show what we have now.
   function flushChunk() {
-    stopReveal();
-    shownRef.current = pendingRef.current.length;
+    if (bufferTimerRef.current) { clearTimeout(bufferTimerRef.current); bufferTimerRef.current = null; }
+    bufferReadyRef.current = true;
+    rafPendingRef.current = false;
     applyChunk(pendingRef.current);
+  }
+
+  function clearWatchdog() {
+    if (watchdogRef.current) { clearTimeout(watchdogRef.current); watchdogRef.current = null; }
+  }
+
+  function armWatchdog() {
+    clearWatchdog();
+    watchdogRef.current = setTimeout(() => {
+      watchdogRef.current = null;
+      readerRef.current?.cancel().catch(() => {});
+      flushChunk();
+      setMessages(prev => {
+        const updated = [...prev];
+        const last = updated[updated.length - 1];
+        if (last?.role === "assistant" && !last.content) {
+          updated[updated.length - 1] = { ...last, content: "Error: No response — the connection may have dropped. Please try again." };
+        }
+        return updated;
+      });
+      setStreaming(false);
+      setSearchingLabel("");
+    }, 30000);
   }
 
   async function newConversation() {
@@ -149,6 +213,7 @@ export default function ChatClient({
 
     const userMsg: Message = { role: "user", content: input, createdAt: new Date().toISOString() };
     scrollOnNextRenderRef.current = true;
+    stickToBottomRef.current = true;
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setStreaming(true);
@@ -158,7 +223,9 @@ export default function ChatClient({
 
     let fullText = "";
     pendingRef.current = "";
-    shownRef.current = 0;
+    bufferReadyRef.current = false;
+    rafPendingRef.current = false;
+    armWatchdog();
 
     try {
       const res = await fetch(`${API}/conversations/${convId}/messages/stream`, {
@@ -167,6 +234,15 @@ export default function ChatClient({
         body: JSON.stringify({ content: userMsg.content, user_email: userEmail, id_token: idToken }),
       });
 
+      if (!res.ok) {
+        // Non-2xx responses (e.g. 402 token limit reached, 401 expired session) are plain
+        // JSON, not an SSE stream — reading them as one would silently discard every line
+        // (nothing starts with "data: ") and leave the UI stuck on "Analysing..." forever
+        // with no error ever shown.
+        let detail = `Request failed (${res.status})`;
+        try { detail = (await res.json())?.detail || detail; } catch {}
+        throw new Error(detail);
+      }
       if (!res.body) throw new Error("No stream body");
       const reader = res.body.getReader();
       readerRef.current = reader;
@@ -184,10 +260,11 @@ export default function ChatClient({
           if (!line.startsWith("data: ")) continue;
           try {
             const event = JSON.parse(line.slice(6).trim());
+            armWatchdog();
             if (event.type === "chunk") {
               fullText += event.text;
               pendingRef.current = fullText;
-              startReveal();
+              onChunkReceived();
             } else if (event.type === "tool_start") {
               setSearchingLabel("Searching the web…");
             } else if (event.type === "tool_result") {
@@ -197,6 +274,7 @@ export default function ChatClient({
               loadConversations();
             } else if (event.type === "done") {
               flushChunk();
+              scrollOnNextRenderRef.current = true;
               setSearchingLabel("");
             } else if (event.type === "error") {
               flushChunk();
@@ -211,7 +289,7 @@ export default function ChatClient({
       }
     } catch (err) {
       stopReveal();
-      const message = err instanceof Error ? err.message : "Connection lost";
+      const message = (err instanceof Error ? err.message : "Connection lost").replace(/\.+$/, "");
       setMessages(prev => {
         const updated = [...prev];
         const last = updated[updated.length - 1];
@@ -221,6 +299,7 @@ export default function ChatClient({
         return updated;
       });
     } finally {
+      clearWatchdog();
       stopReveal();
       setStreaming(false);
       setSearchingLabel("");
@@ -229,6 +308,7 @@ export default function ChatClient({
   }
 
   function stopStream() {
+    clearWatchdog();
     readerRef.current?.cancel();
     stopReveal();
     setStreaming(false);
@@ -236,7 +316,7 @@ export default function ChatClient({
   }
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--t-bg)" }}>
+    <div style={{ height: "100vh", display: "flex", flexDirection: "column", background: "var(--t-bg)", overflow: "hidden" }}>
       {/* Nav */}
       <nav style={{
         background: "var(--t-surface)",
@@ -340,7 +420,7 @@ export default function ChatClient({
 
         {/* Chat area */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
-          <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? "1rem" : "1.5rem" }}>
+          <div ref={messagesContainerRef} style={{ flex: 1, overflowY: "auto", padding: isMobile ? "1rem" : "1.5rem" }}>
             {messages.length === 0 && (
               <div style={{ textAlign: "center", color: "var(--t-text-muted)", paddingTop: "4rem" }}>
                 <div style={{ display: "flex", justifyContent: "center", marginBottom: "0.75rem" }}><Logo size={40} /></div>
@@ -491,7 +571,6 @@ export default function ChatClient({
                 {searchingLabel}
               </div>
             )}
-            <div ref={bottomRef} />
           </div>
 
           {/* Input */}

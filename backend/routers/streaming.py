@@ -14,7 +14,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db
-from models import AppConfig, Conversation, Message, User
+from models import Conversation, Message, User
 from routers.auth import get_current_user
 from schemas import SendMessageRequest
 from services.model_router import _estimate_max_tokens, _select_model
@@ -82,11 +82,8 @@ async def stream_message(
     if not conv or conv.user_email != user.email:
         raise HTTPException(status_code=404, detail="Conversation not found.")
 
-    # Free tier gate
-    config_limit = db.get(AppConfig, "free_tier_token_limit")
-    limit = user.token_limit or int(config_limit.value if config_limit else 100000)
-    if user.tier != "premium" and not user.is_admin and user.tokens_used >= limit:
-        raise HTTPException(status_code=402, detail="Free token limit reached.")
+    # Free-tier token cap disabled until there's an admin page to manage tiers/limits —
+    # tokens_used is still tracked below for when that lands.
 
     # Load history
     history_rows = db.query(Message).filter(

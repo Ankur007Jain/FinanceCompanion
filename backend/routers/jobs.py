@@ -202,6 +202,22 @@ async def backfill_simple_fields(x_admin_secret: str = "", db: Session = Depends
     return {"backfilled": count}
 
 
+@router.post("/admin/set-user-tier")
+def set_user_tier(email: str, is_admin: bool = False, tier: str = "free", x_admin_secret: str = "", db: Session = Depends(get_db)):
+    """Exempts a user from the free-tier chat token cap — this is an internal app-level
+    counter (users.tokens_used), unrelated to Anthropic API billing/credits."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    from models import User
+    user = db.get(User, email)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+    user.is_admin = is_admin
+    user.tier = tier
+    db.commit()
+    return {"email": email, "is_admin": user.is_admin, "tier": user.tier, "tokens_used": user.tokens_used}
+
+
 @router.get("/health")
 def health():
     return {"status": "ok"}
