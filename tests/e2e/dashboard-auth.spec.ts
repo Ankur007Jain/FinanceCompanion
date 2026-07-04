@@ -57,8 +57,8 @@ test.describe("Dashboard — authenticated", () => {
     expect(errors).toHaveLength(0);
   });
 
-  test("dashboard shows Stock Copilot branding", async ({ page }) => {
-    await expect(page.getByText("Stock Copilot")).toBeVisible();
+  test("dashboard shows Finance Companion branding", async ({ page }) => {
+    await expect(page.getByText("Finance Companion", { exact: true })).toBeVisible();
   });
 
   test("empty watchlist shows add-ticker prompt", async ({ page }) => {
@@ -247,7 +247,7 @@ test.describe("Dashboard — mobile viewport", () => {
     await page.waitForLoadState("networkidle");
     // Wait for isMobile useEffect to fire and re-render with mobile layout
     await page.waitForTimeout(300);
-    await expect(page.getByText("Stock Copilot")).toBeVisible();
+    await expect(page.getByText("Finance Companion", { exact: true })).toBeVisible();
     // No horizontal scroll (20px tolerance for scrollbars/padding)
     const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
     const clientWidth = await page.evaluate(() => document.documentElement.clientWidth);
@@ -260,7 +260,7 @@ test.describe("Dashboard — mobile viewport", () => {
     // Hamburger present
     await expect(page.getByTestId("hamburger-btn")).toBeVisible();
     // Desktop nav tabs not directly visible (they're inside the drawer, which is closed)
-    await expect(page.getByRole("button", { name: "My Stocks" })).not.toBeVisible();
+    await expect(page.getByRole("button", { name: "Stocks" })).not.toBeVisible();
   });
 
   test("all tabs accessible via hamburger drawer", async ({ page }) => {
@@ -268,12 +268,12 @@ test.describe("Dashboard — mobile viewport", () => {
     await page.waitForTimeout(300);
     // Open the drawer
     await page.getByTestId("hamburger-btn").click();
-    // All four tabs should be visible in the drawer
-    for (const tab of ["Dashboard", "My Stocks", "Discover", "Compare"]) {
+    // All tabs should be visible in the drawer
+    for (const tab of ["Dashboard", "Stocks", "Discover"]) {
       await expect(page.getByRole("button", { name: tab })).toBeVisible({ timeout: 3_000 });
     }
     // Selecting a tab closes the drawer
-    await page.getByRole("button", { name: "My Stocks" }).click();
+    await page.getByRole("button", { name: "Stocks" }).click();
     await expect(page.getByRole("button", { name: "Dashboard" })).not.toBeVisible();
   });
 
@@ -281,9 +281,9 @@ test.describe("Dashboard — mobile viewport", () => {
     await page.waitForLoadState("networkidle");
     await page.waitForTimeout(300);
     await page.getByTestId("hamburger-btn").click();
-    await expect(page.getByRole("button", { name: "My Stocks" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Stocks" })).toBeVisible();
     // Click the backdrop (left side, outside the 220px drawer)
     await page.mouse.click(80, 300);
-    await expect(page.getByRole("button", { name: "My Stocks" })).not.toBeVisible();
+    await expect(page.getByRole("button", { name: "Stocks" })).not.toBeVisible();
   });
 });
