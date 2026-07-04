@@ -42,6 +42,8 @@ interface Analysis {
   relative_strength_1d: number | null;
   sp500_52w_change: number | null;
   stock_52w_change: number | null;
+  sp500_5y_change: number | null;
+  stock_5y_change: number | null;
   dividend_yield: number | null;
   market_cap: number | null;
   sector: string | null;
@@ -427,6 +429,15 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken, tx
               </div>
             </div>
           )}
+          {(a.stock_5y_change != null || a.sp500_5y_change != null) && (
+            <div>
+              <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 6 }}>vs S&P 500 (5y)</div>
+              <div style={{ display: "flex", gap: "1rem", alignItems: "baseline" }}>
+                {a.stock_5y_change != null && <span style={{ fontWeight: 700, fontSize: "1rem", color: a.stock_5y_change >= 0 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>{a.stock_5y_change >= 0 ? "+" : ""}{a.stock_5y_change.toFixed(1)}%</span>}
+                {a.sp500_5y_change != null && <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)", fontFamily: MONO }}>S&P {a.sp500_5y_change >= 0 ? "+" : ""}{a.sp500_5y_change.toFixed(1)}%</span>}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -581,13 +592,22 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken, tx
                 <div>
                   <div style={{ fontSize: "0.65rem", color: "var(--t-text-muted)", marginBottom: "0.2rem" }}>vs S&P 500 (52w)</div>
                   <div style={{ display: "flex", gap: "0.5rem", alignItems: "baseline" }}>
-                    {a.stock_52w_change != null && <span style={{ fontWeight: 600, fontSize: "0.88rem", color: a.stock_52w_change >= 0 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>{pct(a.stock_52w_change)}</span>}
-                    {a.sp500_52w_change != null && <span style={{ fontSize: "0.72rem", color: "var(--t-text-muted)" }}>/ {pct(a.sp500_52w_change)} S&P</span>}
+                    {a.stock_52w_change != null && <span style={{ fontWeight: 600, fontSize: "0.88rem", color: a.stock_52w_change >= 0 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>{pctRaw(a.stock_52w_change)}</span>}
+                    {a.sp500_52w_change != null && <span style={{ fontSize: "0.72rem", color: "var(--t-text-muted)" }}>/ {pctRaw(a.sp500_52w_change)} S&P</span>}
+                  </div>
+                </div>
+              )}
+              {(a.stock_5y_change != null || a.sp500_5y_change != null) && (
+                <div>
+                  <div style={{ fontSize: "0.65rem", color: "var(--t-text-muted)", marginBottom: "0.2rem" }}>vs S&P 500 (5y)</div>
+                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "baseline" }}>
+                    {a.stock_5y_change != null && <span style={{ fontWeight: 600, fontSize: "0.88rem", color: a.stock_5y_change >= 0 ? "var(--t-green)" : "var(--t-red)", fontFamily: MONO }}>{pctRaw(a.stock_5y_change)}</span>}
+                    {a.sp500_5y_change != null && <span style={{ fontSize: "0.72rem", color: "var(--t-text-muted)" }}>/ {pctRaw(a.sp500_5y_change)} S&P</span>}
                   </div>
                 </div>
               )}
               {a.market_cap     != null && <FundStat label="Market Cap"    value={fmtCap(a.market_cap)} />}
-              {a.dividend_yield != null && a.dividend_yield > 0 && <FundStat label="Dividend Yield" value={pct(a.dividend_yield)} color="var(--t-green)" />}
+              {a.dividend_yield != null && a.dividend_yield > 0 && <FundStat label="Dividend Yield" value={a.dividend_yield.toFixed(1) + "%"} color="var(--t-green)" />}
             </div>
             {(a.sector || a.industry) && (
               <div style={{ marginTop: "0.6rem", fontSize: "0.72rem", color: "var(--t-text-muted)" }}>
@@ -785,6 +805,9 @@ function FundStat({ label, value, color }: { label: string; value: string; color
 }
 
 function pct(v: number) { return (v * 100).toFixed(1) + "%"; }
+// For fields the backend already stores as a percentage (e.g. stock_52w_change = -47.8
+// meaning -47.8%), unlike pct() above which expects a fraction like 0.058.
+function pctRaw(v: number) { return (v >= 0 ? "+" : "") + v.toFixed(1) + "%"; }
 
 function fmtCap(v: number) {
   if (v >= 1e12) return "$" + (v / 1e12).toFixed(1) + "T";
