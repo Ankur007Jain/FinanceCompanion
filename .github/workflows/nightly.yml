@@ -118,7 +118,7 @@ jobs:
             ticker = "TICKER"
             t = yf.Ticker(ticker)
             info = t.info or {}
-            hist = t.history(period="1y")
+            hist = t.history(period="5y")  # 5y so we can compute both 1y and 5y trend context from one fetch
             fi = t.fast_info
             raw_news = t.news or []
             try:
@@ -142,8 +142,28 @@ jobs:
 
             news_titles = [n.get("content", {}).get("title") or n.get("title","") for n in raw_news[:5]]
             rec   = (info.get("recommendationKey") or "hold").upper()
+            rec_count = info.get("numberOfAnalystOpinions")
             tgt   = info.get("targetMeanPrice")
+            tgt_hi = info.get("targetHighPrice")
+            tgt_lo = info.get("targetLowPrice")
             ups   = ((tgt - price) / price * 100) if tgt and price else None
+
+            # Fundamentals — same info dict already fetched above, no extra API call
+            pe_trailing        = info.get("trailingPE")
+            pe_forward         = info.get("forwardPE")
+            revenue_growth     = info.get("revenueGrowth")
+            earnings_growth    = info.get("earningsGrowth")
+            profit_margin      = info.get("profitMargins")
+            debt_to_equity     = info.get("debtToEquity")
+            free_cashflow      = info.get("freeCashflow")
+            return_on_equity   = info.get("returnOnEquity")
+            beta               = info.get("beta")
+            short_float_pct    = info.get("shortPercentOfFloat")
+            short_ratio        = info.get("shortRatio")
+            inst_ownership_pct    = info.get("heldPercentInstitutions")
+            insider_ownership_pct = info.get("heldPercentInsiders")
+            dividend_yield     = info.get("dividendYield")
+            market_cap         = info.get("marketCap")
 
             try:
                 edates = calendar.get("Earnings Date") or []
@@ -180,10 +200,11 @@ jobs:
             sector_etf_ticker = "SOXX" if "semiconductor" in industry.lower() \
                 else SECTOR_ETF_MAP.get(sector, "SPY")
             try:
-                sp5   = yf.Ticker("^GSPC").history(period="25d")
+                sp5   = yf.Ticker("^GSPC").history(period="5y")  # covers both the daily and 5y change below
                 sp500_day_chg = round(((float(sp5["Close"].iloc[-1]) - float(sp5["Close"].iloc[-2])) / float(sp5["Close"].iloc[-2])) * 100, 2)
+                sp500_5y_change = round(((float(sp5["Close"].iloc[-1]) - float(sp5["Close"].iloc[0])) / float(sp5["Close"].iloc[0])) * 100, 1)
             except Exception:
-                sp500_day_chg = None
+                sp500_day_chg = sp500_5y_change = None
             try:
                 sect  = yf.Ticker(sector_etf_ticker).history(period="25d")
                 sector_day_chg       = round(((float(sect["Close"].iloc[-1]) - float(sect["Close"].iloc[-2])) / float(sect["Close"].iloc[-2])) * 100, 2)
@@ -196,6 +217,13 @@ jobs:
             sp500_52w_change = round(_sp500_52w_raw * 100, 1) if _sp500_52w_raw else None
             _stock_52w_raw = info.get("52WeekChange")
             stock_52w_change = round(_stock_52w_raw * 100, 1) if _stock_52w_raw else None
+
+            # 5-year return — computed from the 5y history fetched above (yfinance has no
+            # built-in 5y-change field the way it does for 52-week)
+            try:
+                stock_5y_change = round(((float(hist["Close"].iloc[-1]) - float(hist["Close"].iloc[0])) / float(hist["Close"].iloc[0])) * 100, 1)
+            except Exception:
+                stock_5y_change = None
 
             # Finnhub cross-validation — price & analyst (secondary source)
             import os as _os, requests as _req
@@ -230,8 +258,9 @@ jobs:
                 "hi52": round(hi52,2), "lo52": round(lo52,2), "range_pct": round(rng,1),
                 "ma50": round(ma50,2) if ma50 else None,
                 "ma200": round(ma200,2) if ma200 else None,
-                "rsi": round(rsi,1), "analyst": rec,
+                "rsi": round(rsi,1), "analyst": rec, "analyst_count": rec_count,
                 "upside_pct": round(ups,1) if ups else None,
+                "target_mean": tgt, "target_high": tgt_hi, "target_low": tgt_lo,
                 "news": news_titles, "earnings_date": edate,
                 "support_20d": support_20d, "resistance_20d": resistance_20d,
                 "pivot": pivot, "piv_r1": piv_r1, "piv_s1": piv_s1,
@@ -242,6 +271,15 @@ jobs:
                 "relative_strength_1d": relative_strength_1d,
                 "sp500_52w_change": sp500_52w_change,
                 "stock_52w_change": stock_52w_change,
+                "sp500_5y_change": sp500_5y_change,
+                "stock_5y_change": stock_5y_change,
+                "pe_trailing": pe_trailing, "pe_forward": pe_forward,
+                "revenue_growth": revenue_growth, "earnings_growth": earnings_growth,
+                "profit_margin": profit_margin, "debt_to_equity": debt_to_equity,
+                "free_cashflow": free_cashflow, "return_on_equity": return_on_equity,
+                "beta": beta, "short_float_pct": short_float_pct, "short_ratio": short_ratio,
+                "inst_ownership_pct": inst_ownership_pct, "insider_ownership_pct": insider_ownership_pct,
+                "dividend_yield": dividend_yield, "market_cap": market_cap,
                 "fh_price": fh_price, "fh_analyst": fh_analyst,
                 "data_conflicts": data_conflicts_str,
             }
@@ -328,8 +366,8 @@ jobs:
             - near_52w_low: range_pct < 30
             - analyst_upside_15pct: upside_pct >= 15
             - no_binary_risk: earnings_date is null OR more than 7 days from today
-            - positive_fcf: true if analyst consensus is BUY or STRONG_BUY
-            - institutional_backing: true by default for large-cap names
+            - positive_fcf: true if free_cashflow > 0 (real free cash flow — false if null, never assume positive)
+            - institutional_backing: true if inst_ownership_pct >= 0.50 (real institutional ownership data — false if null, don't default true for large caps)
             - price_stabilizing: price >= ma50 (or ma50 is null)
             - near_support: price <= support_20d * 1.03 (within 3% of 20-day support floor)
             - sector_outperforming: relative_strength_1d > 0 (stock outperforming its sector ETF today)
@@ -354,6 +392,29 @@ jobs:
               · Semiconductors (SOXX): high beta, amplify the sector move, tighten stop_loss
               · Consumer Defensive: lower conviction needed for HOLD; rarely a BUY catalyst
               · Leveraged ETFs (SOXL, MVLL, 3X/2X/L): max hold 1–3 days, never hold through earnings, tight exit_target
+
+            **Long-term trend & fundamentals** (from summary JSON — weigh this, don't mechanically gate on it):
+            - 1yr return: stock_52w_change% vs S&P's sp500_52w_change% — badly lagging the market over
+              a full year is a different story than a recent dip; treat a short-term oversold reading
+              with more skepticism when the 1yr trend is also weak.
+            - 5yr return: stock_5y_change% vs S&P's sp500_5y_change% — a stock flat or negative over
+              5 years while the market compounded is a much stronger signal of structural decline than
+              a 1yr number alone. If both 1yr and 5yr badly lag, say explicitly in your reasoning whether
+              this looks like a temporary dip in a quality business or a structural decliner — don't
+              default to "oversold = reversal" without addressing this.
+            - Valuation: pe_trailing / pe_forward — a low P/E can mean cheap for a reason; sanity-check
+              it against revenue_growth/earnings_growth/profit_margin before treating it as bullish.
+            - Quality: revenue_growth, earnings_growth, profit_margin, return_on_equity — weak or
+              negative values are a structural concern, not noise, especially alongside a technical bounce.
+            - Balance sheet: debt_to_equity, free_cashflow — high debt paired with negative free cash flow
+              means the business may not survive a prolonged downturn; weigh this heavily against any
+              "it's cheap" narrative.
+            - Positioning: short_float_pct/short_ratio (elevated short interest = smart-money skepticism,
+              but also squeeze risk) and inst_ownership_pct/insider_ownership_pct (meaningful ownership =
+              real conviction, not just retail interest).
+            - Any of these fields can be null (small caps, recent IPOs, data gaps) — treat null as
+              "unknown," never as zero or as a green light. Lower conviction_score when long-term trend
+              and fundamentals contradict a purely technical setup; this is a judgment call, not a hard rule.
 
             **Quality rule:** weak or conflicting signals → WATCH. Wrong advice is worse than no advice.
 
@@ -433,6 +494,21 @@ jobs:
             ctx_line = ""
             if d.get("sp500_day_chg") is not None:
                 ctx_line = f"S&P 500 today: {d['sp500_day_chg']:+.2f}%  Sector ETF ({d.get('sector_etf','N/A')}): {d.get('sector_day_chg', 0):+.2f}%  Relative strength vs sector: {d.get('relative_strength_1d', 0):+.2f}%"
+            longterm_line = ""
+            if d.get("stock_52w_change") is not None or d.get("stock_5y_change") is not None:
+                longterm_line = (
+                    f"1yr return: {d.get('stock_52w_change', 'N/A')}% (S&P {d.get('sp500_52w_change', 'N/A')}%)  "
+                    f"5yr return: {d.get('stock_5y_change', 'N/A')}% (S&P {d.get('sp500_5y_change', 'N/A')}%) "
+                    f"— if both badly lag the market, weigh that as a possible structural decline, not just a dip."
+                )
+            fundamentals_line = (
+                f"P/E: {d.get('pe_trailing') or 'N/A'} (fwd {d.get('pe_forward') or 'N/A'})  "
+                f"Rev growth: {d.get('revenue_growth') or 'N/A'}  Earnings growth: {d.get('earnings_growth') or 'N/A'}  "
+                f"Profit margin: {d.get('profit_margin') or 'N/A'}  ROE: {d.get('return_on_equity') or 'N/A'}  "
+                f"D/E: {d.get('debt_to_equity') or 'N/A'}  FCF: {d.get('free_cashflow') or 'N/A'}  "
+                f"Short float: {d.get('short_float_pct') or 'N/A'}  Inst. ownership: {d.get('inst_ownership_pct') or 'N/A'} "
+                f"— weigh weak/negative fundamentals against any technical bounce; null means unknown, not zero."
+            )
             prompt = f"""You are an independent stock analyst. Analyze {ticker} and return ONLY valid JSON with no markdown fences.
 
             Data for {ticker}:
@@ -442,6 +518,8 @@ jobs:
             MA50: {d.get('ma50') or 'N/A'}  MA200: {d.get('ma200') or 'N/A'}
             {sr_line}
             {ctx_line}
+            {longterm_line}
+            {fundamentals_line}
             Analyst consensus: {d.get('analyst', 'HOLD')}  Analyst upside: {d.get('upside_pct') or 'N/A'}%
             Recent news: {news_str}
             Next earnings: {d.get('earnings_date') or 'Unknown'}
@@ -525,15 +603,26 @@ jobs:
 
             Price field mapping: price→current_price, change_pct→price_change_pct,
             hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct,
-            ma50→ma50, ma200→ma200, analyst→analyst_consensus, upside_pct→analyst_upside_pct,
+            ma50→ma50, ma200→ma200, analyst→analyst_consensus, analyst_count→analyst_count,
+            upside_pct→analyst_upside_pct, target_mean→target_price_mean,
+            target_high→target_price_high, target_low→target_price_low,
             support_20d→support_20d, resistance_20d→resistance_20d,
             pivot→pivot_point, piv_r1→pivot_r1, piv_s1→pivot_s1,
             sector→sector, industry→industry,
             sp500_day_chg→sp500_day_chg, sector_etf→sector_etf,
             sector_day_chg→sector_day_chg, relative_strength_1d→relative_strength_1d,
             sp500_52w_change→sp500_52w_change, stock_52w_change→stock_52w_change,
+            sp500_5y_change→sp500_5y_change, stock_5y_change→stock_5y_change,
             fh_price→fh_price, fh_analyst→fh_analyst_consensus,
             data_conflicts→data_conflicts (include if not null, else omit).
+
+            Fundamentals field mapping (from the same summary JSON — pass through as-is, null if missing):
+            pe_trailing→pe_trailing, pe_forward→pe_forward, revenue_growth→revenue_growth,
+            earnings_growth→earnings_growth, profit_margin→profit_margin, debt_to_equity→debt_to_equity,
+            free_cashflow→free_cashflow, return_on_equity→return_on_equity, beta→beta,
+            short_float_pct→short_float_pct, short_ratio→short_ratio,
+            inst_ownership_pct→inst_ownership_pct, insider_ownership_pct→insider_ownership_pct,
+            dividend_yield→dividend_yield, market_cap→market_cap.
 
             Include ALL verdict fields: stop_loss, hold_period, conviction_score, risk_level,
             confidence, bull_case, bear_case, thesis_invalidation, entry_quality,

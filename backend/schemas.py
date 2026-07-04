@@ -62,6 +62,8 @@ class StockAnalysisOut(BaseModel):
     analyst_consensus: Optional[str]
     analyst_count: Optional[int]
     target_price_mean: Optional[float]
+    target_price_high: Optional[float] = None
+    target_price_low: Optional[float] = None
     pe_trailing: Optional[float]
     pe_forward: Optional[float]
     revenue_growth: Optional[float]
@@ -81,6 +83,8 @@ class StockAnalysisOut(BaseModel):
     relative_strength_1d: Optional[float] = None
     sp500_52w_change: Optional[float]
     stock_52w_change: Optional[float]
+    sp500_5y_change: Optional[float] = None
+    stock_5y_change: Optional[float] = None
     dividend_yield: Optional[float]
     market_cap: Optional[float]
     sector: Optional[str]
@@ -287,7 +291,11 @@ class IngestAnalysisRequest(BaseModel):
     fh_analyst_consensus: Optional[str] = None
     data_conflicts: Optional[str] = None
     analyst_consensus: Optional[str] = None
+    analyst_count: Optional[int] = None
     analyst_upside_pct: Optional[float] = None
+    target_price_mean: Optional[float] = None
+    target_price_high: Optional[float] = None
+    target_price_low: Optional[float] = None
     pe_trailing: Optional[float] = None
     pe_forward: Optional[float] = None
     revenue_growth: Optional[float] = None
@@ -303,6 +311,8 @@ class IngestAnalysisRequest(BaseModel):
     insider_ownership_pct: Optional[float] = None
     sp500_52w_change: Optional[float] = None
     stock_52w_change: Optional[float] = None
+    sp500_5y_change: Optional[float] = None
+    stock_5y_change: Optional[float] = None
     dividend_yield: Optional[float] = None
     market_cap: Optional[float] = None
     sector: Optional[str] = None
