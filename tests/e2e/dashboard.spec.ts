@@ -35,9 +35,9 @@ test.describe("Backend API smoke", () => {
 });
 
 test.describe("Sign-in page", () => {
-  test("renders Stock Copilot branding", async ({ page }) => {
+  test("renders Finance Companion branding", async ({ page }) => {
     await page.goto("/signin");
-    await expect(page.getByText("Stock Copilot")).toBeVisible();
+    await expect(page.getByText("Finance Companion", { exact: true })).toBeVisible();
   });
 
   test("shows Sign in with Google button", async ({ page }) => {
@@ -50,9 +50,9 @@ test.describe("Sign-in page", () => {
     await expect(page.getByText(/busy professionals/i)).toBeVisible();
   });
 
-  test("page title contains Stock Copilot", async ({ page }) => {
+  test("page title contains Finance Companion", async ({ page }) => {
     await page.goto("/signin");
-    await expect(page).toHaveTitle(/Stock Copilot/i);
+    await expect(page).toHaveTitle(/Finance Companion/i);
   });
 });
 
@@ -74,7 +74,7 @@ test.describe("Auth redirects", () => {
 
   test("redirect preserves signin page content", async ({ page }) => {
     await page.goto("/dashboard");
-    await expect(page.getByText("Stock Copilot")).toBeVisible();
+    await expect(page.getByText("Finance Companion", { exact: true })).toBeVisible();
   });
 });
 
@@ -88,7 +88,7 @@ test.describe("Signin page interactions", () => {
   test("page is responsive on mobile viewport", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto("/signin");
-    await expect(page.getByText("Stock Copilot")).toBeVisible();
+    await expect(page.getByText("Finance Companion", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: /sign in with google/i })).toBeVisible();
   });
 

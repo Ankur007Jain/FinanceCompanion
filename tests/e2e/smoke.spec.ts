@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test";
 test.describe("FinanceCompanion smoke", () => {
   test("sign-in page loads", async ({ page }) => {
     await page.goto("/signin");
-    await expect(page).toHaveTitle(/Stock Copilot/i);
+    await expect(page).toHaveTitle(/Finance Companion/i);
   });
 
   test("sign-in button is visible", async ({ page }) => {

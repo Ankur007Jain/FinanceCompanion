@@ -143,7 +143,7 @@ test.describe("Dashboard redirects to sign-in (unauthenticated)", () => {
 
   test("sign-in page visible on dashboard redirect", async ({ page }) => {
     await page.goto("/dashboard");
-    await expect(page.getByText("Stock Copilot")).toBeVisible();
+    await expect(page.getByText("Finance Companion", { exact: true })).toBeVisible();
   });
 
   test("sign-in page shows Google button", async ({ page }) => {
@@ -172,7 +172,7 @@ test.describe("Sign-in page — trust signals visible", () => {
   test("mobile viewport renders sign-in correctly", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/signin");
-    await expect(page.getByText("Stock Copilot")).toBeVisible();
+    await expect(page.getByText("Finance Companion", { exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: /sign in with google/i })).toBeVisible();
   });
 });
