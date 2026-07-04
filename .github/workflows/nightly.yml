@@ -91,6 +91,8 @@ jobs:
         uses: anthropics/claude-code-action@beta
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          JOB_SECRET: ${{ secrets.JOB_SECRET }}
         with:
           mode: agent
           model: claude-sonnet-4-6
@@ -108,256 +110,18 @@ jobs:
 
             ## Step 1 — Fetch market data for each ticker
 
-            Run this Python script once per ticker (replace TICKER with the actual symbol).
-            It prints the analysis summary AND saves full raw data to /tmp/raw_TICKER.json:
+            Run these two scripts per ticker (dependencies already installed in the "Install data deps" step):
             ```bash
-            python3 << 'EOF'
-            import yfinance as yf, json
-            from datetime import date
-
-            ticker = "TICKER"
-            t = yf.Ticker(ticker)
-            info = t.info or {}
-            hist = t.history(period="5y")  # 5y so we can compute both 1y and 5y trend context from one fetch
-            fi = t.fast_info
-            raw_news = t.news or []
-            try:
-                calendar = t.calendar or {}
-            except Exception:
-                calendar = {}
-
-            price = fi.last_price or info.get("currentPrice", 0) or 0
-            prev  = fi.previous_close or info.get("previousClose", price) or price
-            chg   = ((price - prev) / prev * 100) if prev else 0
-            hi52  = fi.year_high or info.get("fiftyTwoWeekHigh", 0) or 0
-            lo52  = fi.year_low  or info.get("fiftyTwoWeekLow",  0) or 0
-            rng   = ((price - lo52) / (hi52 - lo52) * 100) if (hi52 - lo52) > 0 else 50
-            ma50  = float(hist["Close"].rolling(50).mean().iloc[-1])  if len(hist) >= 50  else None
-            ma200 = float(hist["Close"].rolling(200).mean().iloc[-1]) if len(hist) >= 200 else None
-
-            delta = hist["Close"].diff()
-            gain  = delta.clip(lower=0).rolling(14).mean()
-            loss  = (-delta.clip(upper=0)).rolling(14).mean()
-            rsi   = float(100 - 100 / (1 + gain.iloc[-1] / loss.iloc[-1])) if loss.iloc[-1] != 0 else 50
-
-            news_titles = [n.get("content", {}).get("title") or n.get("title","") for n in raw_news[:5]]
-            rec   = (info.get("recommendationKey") or "hold").upper()
-            rec_count = info.get("numberOfAnalystOpinions")
-            tgt   = info.get("targetMeanPrice")
-            tgt_hi = info.get("targetHighPrice")
-            tgt_lo = info.get("targetLowPrice")
-            ups   = ((tgt - price) / price * 100) if tgt and price else None
-
-            # Fundamentals — same info dict already fetched above, no extra API call
-            pe_trailing        = info.get("trailingPE")
-            pe_forward         = info.get("forwardPE")
-            revenue_growth     = info.get("revenueGrowth")
-            earnings_growth    = info.get("earningsGrowth")
-            profit_margin      = info.get("profitMargins")
-            debt_to_equity     = info.get("debtToEquity")
-            free_cashflow      = info.get("freeCashflow")
-            return_on_equity   = info.get("returnOnEquity")
-            beta               = info.get("beta")
-            short_float_pct    = info.get("shortPercentOfFloat")
-            short_ratio        = info.get("shortRatio")
-            inst_ownership_pct    = info.get("heldPercentInstitutions")
-            insider_ownership_pct = info.get("heldPercentInsiders")
-            dividend_yield     = info.get("dividendYield")
-            market_cap         = info.get("marketCap")
-
-            try:
-                edates = calendar.get("Earnings Date") or []
-                edate  = str(edates[0]) if edates else None
-            except Exception:
-                edate = None
-
-            # Support / Resistance levels
-            try:
-                recent20 = hist["Close"].tail(20)
-                support_20d    = round(float(recent20.min()), 2)
-                resistance_20d = round(float(recent20.max()), 2)
-                prev_h = float(hist["High"].iloc[-2])
-                prev_l = float(hist["Low"].iloc[-2])
-                prev_c = float(hist["Close"].iloc[-2])
-                pivot  = round((prev_h + prev_l + prev_c) / 3, 2)
-                piv_r1 = round(2 * pivot - prev_l, 2)
-                piv_s1 = round(2 * pivot - prev_h, 2)
-            except Exception:
-                support_20d = resistance_20d = pivot = piv_r1 = piv_s1 = None
-
-            # Sector & S&P 500 context — relative performance
-            sector   = info.get("sector", "") or ""
-            industry = info.get("industry", "") or ""
-            SECTOR_ETF_MAP = {
-                "Technology": "XLK", "Healthcare": "XLV",
-                "Financial Services": "XLF", "Financials": "XLF",
-                "Consumer Cyclical": "XLY", "Consumer Defensive": "XLP",
-                "Energy": "XLE", "Basic Materials": "XLB", "Industrials": "XLI",
-                "Utilities": "XLU", "Real Estate": "XLRE",
-                "Communication Services": "XLC",
-            }
-            # Semiconductor override — SOXX is more precise than XLK
-            sector_etf_ticker = "SOXX" if "semiconductor" in industry.lower() \
-                else SECTOR_ETF_MAP.get(sector, "SPY")
-            try:
-                sp5   = yf.Ticker("^GSPC").history(period="5y")  # covers both the daily and 5y change below
-                sp500_day_chg = round(((float(sp5["Close"].iloc[-1]) - float(sp5["Close"].iloc[-2])) / float(sp5["Close"].iloc[-2])) * 100, 2)
-                sp500_5y_change = round(((float(sp5["Close"].iloc[-1]) - float(sp5["Close"].iloc[0])) / float(sp5["Close"].iloc[0])) * 100, 1)
-            except Exception:
-                sp500_day_chg = sp500_5y_change = None
-            try:
-                sect  = yf.Ticker(sector_etf_ticker).history(period="25d")
-                sector_day_chg       = round(((float(sect["Close"].iloc[-1]) - float(sect["Close"].iloc[-2])) / float(sect["Close"].iloc[-2])) * 100, 2)
-                relative_strength_1d = round(chg - sector_day_chg, 2)
-            except Exception:
-                sector_day_chg = relative_strength_1d = None
-
-            # 52-week return vs S&P — stored as percentage (e.g. 18.4 not 0.184)
-            _sp500_52w_raw = info.get("SandP52WeekChange")
-            sp500_52w_change = round(_sp500_52w_raw * 100, 1) if _sp500_52w_raw else None
-            _stock_52w_raw = info.get("52WeekChange")
-            stock_52w_change = round(_stock_52w_raw * 100, 1) if _stock_52w_raw else None
-
-            # 5-year return — computed from the 5y history fetched above (yfinance has no
-            # built-in 5y-change field the way it does for 52-week)
-            try:
-                stock_5y_change = round(((float(hist["Close"].iloc[-1]) - float(hist["Close"].iloc[0])) / float(hist["Close"].iloc[0])) * 100, 1)
-            except Exception:
-                stock_5y_change = None
-
-            # Finnhub cross-validation — price & analyst (secondary source)
-            import os as _os, requests as _req
-            fh_price = fh_analyst = data_conflicts_str = None
-            fh_key = _os.environ.get("FINNHUB_API_KEY", "")
-            if fh_key and fh_key not in ("placeholder", "test-key", ""):
-                try:
-                    _fhq = _req.get(f"https://finnhub.io/api/v1/quote?symbol={ticker}&token={fh_key}", timeout=5).json()
-                    fh_price = round(float(_fhq.get("c") or 0), 2) or None
-                except Exception:
-                    pass
-                try:
-                    _recs = _req.get(f"https://finnhub.io/api/v1/recommendation?symbol={ticker}&token={fh_key}", timeout=5).json()
-                    if _recs:
-                        _r = _recs[0]
-                        _tot = (_r.get("buy",0) + _r.get("strongBuy",0) + _r.get("hold",0) + _r.get("sell",0) + _r.get("strongSell",0))
-                        if _tot:
-                            _buy_pct = (_r.get("buy",0) + _r.get("strongBuy",0)) / _tot
-                            fh_analyst = "STRONG_BUY" if _buy_pct > 0.6 else "BUY" if _buy_pct > 0.45 else "HOLD" if _buy_pct > 0.3 else "SELL"
-                except Exception:
-                    pass
-                _conflicts = []
-                if fh_price and price and abs(price - fh_price) / price > 0.02:
-                    _conflicts.append(f"Price: yfinance={price} vs Finnhub={fh_price} ({abs(price - fh_price)/price*100:.1f}% diff)")
-                if fh_analyst and rec and fh_analyst.replace("STRONG_","") != rec.replace("STRONG_",""):
-                    _conflicts.append(f"Analyst: yfinance={rec} vs Finnhub={fh_analyst}")
-                data_conflicts_str = "; ".join(_conflicts) if _conflicts else None
-
-            # Print summary dict for analysis steps below
-            _summary = {
-                "ticker": ticker, "price": round(price,2), "change_pct": round(chg,2),
-                "hi52": round(hi52,2), "lo52": round(lo52,2), "range_pct": round(rng,1),
-                "ma50": round(ma50,2) if ma50 else None,
-                "ma200": round(ma200,2) if ma200 else None,
-                "rsi": round(rsi,1), "analyst": rec, "analyst_count": rec_count,
-                "upside_pct": round(ups,1) if ups else None,
-                "target_mean": tgt, "target_high": tgt_hi, "target_low": tgt_lo,
-                "news": news_titles, "earnings_date": edate,
-                "support_20d": support_20d, "resistance_20d": resistance_20d,
-                "pivot": pivot, "piv_r1": piv_r1, "piv_s1": piv_s1,
-                "sector": sector, "industry": industry,
-                "sector_etf": sector_etf_ticker,
-                "sp500_day_chg": sp500_day_chg,
-                "sector_day_chg": sector_day_chg,
-                "relative_strength_1d": relative_strength_1d,
-                "sp500_52w_change": sp500_52w_change,
-                "stock_52w_change": stock_52w_change,
-                "sp500_5y_change": sp500_5y_change,
-                "stock_5y_change": stock_5y_change,
-                "pe_trailing": pe_trailing, "pe_forward": pe_forward,
-                "revenue_growth": revenue_growth, "earnings_growth": earnings_growth,
-                "profit_margin": profit_margin, "debt_to_equity": debt_to_equity,
-                "free_cashflow": free_cashflow, "return_on_equity": return_on_equity,
-                "beta": beta, "short_float_pct": short_float_pct, "short_ratio": short_ratio,
-                "inst_ownership_pct": inst_ownership_pct, "insider_ownership_pct": insider_ownership_pct,
-                "dividend_yield": dividend_yield, "market_cap": market_cap,
-                "fh_price": fh_price, "fh_analyst": fh_analyst,
-                "data_conflicts": data_conflicts_str,
-            }
-            print(json.dumps(_summary))
-            with open(f"/tmp/summary_{ticker}.json", "w") as f:
-                json.dump(_summary, f)
-
-            # Serialize full raw data for the snapshot endpoint
-            try:
-                hist_r = hist.reset_index()
-                hist_r["Date"] = hist_r["Date"].astype(str)
-                history_json = hist_r.to_json(orient="records")
-            except Exception:
-                history_json = "[]"
-
-            try:
-                cal_s = {}
-                for k, v in (calendar or {}).items():
-                    cal_s[k] = [str(x) for x in v] if isinstance(v, list) else str(v)
-                calendar_json = json.dumps(cal_s)
-            except Exception:
-                calendar_json = "{}"
-
-            try:
-                news_json = json.dumps(raw_news)
-            except Exception:
-                news_json = "[]"
-
-            try:
-                info_json = json.dumps(info)
-            except Exception:
-                info_json = "{}"
-
-            with open(f"/tmp/raw_{ticker}.json", "w") as f:
-                json.dump({
-                    "info_json": info_json,
-                    "history_json": history_json,
-                    "news_json": news_json,
-                    "calendar_json": calendar_json,
-                }, f)
-            EOF
+            python3 scripts/nightly_fetch.py TICKER
             ```
+            This prints the analysis summary JSON and writes /tmp/summary_TICKER.json + /tmp/raw_TICKER.json.
 
             ## Step 1b — Save raw snapshot to backend
 
-            After fetching data for each ticker, POST the raw snapshot (replace TICKER and TODAY):
             ```bash
-            python3 << 'EOF'
-            import json, subprocess, os
-            from datetime import date
-
-            ticker = "TICKER"
-            today = str(date.today())
-            backend = os.environ.get("BACKEND_URL", "${{ secrets.BACKEND_URL }}")
-            secret  = os.environ.get("JOB_SECRET", "${{ secrets.JOB_SECRET }}")
-
-            with open(f"/tmp/raw_{ticker}.json") as f:
-                raw = json.load(f)
-
-            payload = json.dumps({
-                "ticker": ticker,
-                "cache_date": today,
-                "info_json": raw["info_json"],
-                "history_json": raw["history_json"],
-                "news_json": raw["news_json"],
-                "calendar_json": raw["calendar_json"],
-            })
-
-            r = subprocess.run(
-                ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
-                 "-X", "POST", f"{backend}/jobs/ingest-snapshot?x_job_secret={secret}",
-                 "-H", "Content-Type: application/json",
-                 "-d", payload],
-                capture_output=True, text=True
-            )
-            print(f"[{ticker}] Snapshot saved — HTTP {r.stdout.strip()}")
-            EOF
+            python3 scripts/nightly_ingest_snapshot.py TICKER
             ```
+            POSTs the raw snapshot from Step 1 to the backend (BACKEND_URL/JOB_SECRET are in the environment).
 
             ## Step 2 — Compute signal convergence score for each ticker
 
@@ -469,106 +233,12 @@ jobs:
 
             ## Step 3b — Gemini verdict (Verdict B)
 
-            Run this Python script per ticker (replace TICKER with the actual symbol):
+            Run this script per ticker (GEMINI_API_KEY is already in the environment):
             ```bash
-            python3 << 'PYEOF'
-            import json, os, re, time
-            from google import genai
-            from google.genai import types
-
-            ticker = "TICKER"
-            api_key = os.environ.get("GEMINI_API_KEY", "")
-            if not api_key:
-                print(f"[{ticker}] GEMINI_API_KEY not set — skipping Verdict B")
-                with open(f"/tmp/verdict_b_{ticker}.json", "w") as f:
-                    json.dump({"verdict": None}, f)
-                raise SystemExit(0)
-
-            with open(f"/tmp/summary_{ticker}.json") as f:
-                d = json.load(f)
-
-            news_str = "; ".join(d.get("news", [])[:3])
-            sr_line = ""
-            if d.get("support_20d"):
-                sr_line = f"Support (20d): ${d['support_20d']}  Resistance (20d): ${d.get('resistance_20d','N/A')}  Pivot: ${d.get('pivot','N/A')}  R1: ${d.get('piv_r1','N/A')}  S1: ${d.get('piv_s1','N/A')}"
-            ctx_line = ""
-            if d.get("sp500_day_chg") is not None:
-                ctx_line = f"S&P 500 today: {d['sp500_day_chg']:+.2f}%  Sector ETF ({d.get('sector_etf','N/A')}): {d.get('sector_day_chg', 0):+.2f}%  Relative strength vs sector: {d.get('relative_strength_1d', 0):+.2f}%"
-            longterm_line = ""
-            if d.get("stock_52w_change") is not None or d.get("stock_5y_change") is not None:
-                longterm_line = (
-                    f"1yr return: {d.get('stock_52w_change', 'N/A')}% (S&P {d.get('sp500_52w_change', 'N/A')}%)  "
-                    f"5yr return: {d.get('stock_5y_change', 'N/A')}% (S&P {d.get('sp500_5y_change', 'N/A')}%) "
-                    f"— if both badly lag the market, weigh that as a possible structural decline, not just a dip."
-                )
-            fundamentals_line = (
-                f"P/E: {d.get('pe_trailing') or 'N/A'} (fwd {d.get('pe_forward') or 'N/A'})  "
-                f"Rev growth: {d.get('revenue_growth') or 'N/A'}  Earnings growth: {d.get('earnings_growth') or 'N/A'}  "
-                f"Profit margin: {d.get('profit_margin') or 'N/A'}  ROE: {d.get('return_on_equity') or 'N/A'}  "
-                f"D/E: {d.get('debt_to_equity') or 'N/A'}  FCF: {d.get('free_cashflow') or 'N/A'}  "
-                f"Short float: {d.get('short_float_pct') or 'N/A'}  Inst. ownership: {d.get('inst_ownership_pct') or 'N/A'} "
-                f"— weigh weak/negative fundamentals against any technical bounce; null means unknown, not zero."
-            )
-            prompt = f"""You are an independent stock analyst. Analyze {ticker} and return ONLY valid JSON with no markdown fences.
-
-            Data for {ticker}:
-            Price: ${d.get('price', 0):.2f} ({d.get('change_pct', 0):+.2f}% today)
-            52-week range: ${d.get('lo52', 0):.2f}–${d.get('hi52', 0):.2f} ({d.get('range_pct', 50):.1f}% of range)
-            RSI(14): {d.get('rsi', 50):.1f}
-            MA50: {d.get('ma50') or 'N/A'}  MA200: {d.get('ma200') or 'N/A'}
-            {sr_line}
-            {ctx_line}
-            {longterm_line}
-            {fundamentals_line}
-            Analyst consensus: {d.get('analyst', 'HOLD')}  Analyst upside: {d.get('upside_pct') or 'N/A'}%
-            Recent news: {news_str}
-            Next earnings: {d.get('earnings_date') or 'Unknown'}
-
-            Reply with exactly this JSON object and nothing else:
-            {{
-              "verdict": "BUY or HOLD or SELL or WATCH",
-              "reasoning": "5-8 sentence analysis",
-              "conviction_score": 0,
-              "risk_level": "LOW or MED or HIGH",
-              "bull_case": "one sentence",
-              "bear_case": "one sentence"
-            }}"""
-
-            client = genai.Client(api_key=api_key)
-            verdict_b = None
-
-            for attempt in range(3):
-                try:
-                    resp = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=prompt,
-                        config=types.GenerateContentConfig(
-                            thinking_config=types.ThinkingConfig(thinking_budget=0)
-                        ),
-                    )
-                    raw = resp.text.strip()
-                    raw = re.sub(r"^```json\s*", "", raw)
-                    raw = re.sub(r"\s*```$", "", raw)
-                    verdict_b = json.loads(raw)
-                    usage = getattr(resp, "usage_metadata", None)
-                    if usage:
-                        verdict_b["gemini_tokens_input"] = usage.prompt_token_count
-                        verdict_b["gemini_tokens_output"] = usage.candidates_token_count
-                    print(f"[{ticker}] Verdict B (Gemini): {verdict_b.get('verdict')}")
-                    break
-                except Exception as e:
-                    print(f"[{ticker}] Gemini attempt {attempt + 1}/3 failed: {e}")
-                    if attempt < 2:
-                        time.sleep(30)
-
-            if verdict_b is None:
-                print(f"[{ticker}] Gemini failed after 3 attempts — verdict_b will be null")
-                verdict_b = {"verdict": None}
-
-            with open(f"/tmp/verdict_b_{ticker}.json", "w") as f:
-                json.dump(verdict_b, f)
-            PYEOF
+            python3 scripts/nightly_verdict_b.py TICKER
             ```
+            Reads /tmp/summary_TICKER.json (from Step 1) and writes /tmp/verdict_b_TICKER.json.
+            Writes {"verdict": null} if Gemini is unavailable — treat that as "verdict_b: null" in Step 3c/4.
 
             ## Step 3c — Judge: reconcile both verdicts
 
