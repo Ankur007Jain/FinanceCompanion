@@ -113,6 +113,8 @@ class StockAnalysis(Base):
     insider_ownership_pct = Column(Float)
     sp500_52w_change = Column(Float)     # S&P 500 return over same period (relative strength context)
     stock_52w_change = Column(Float)
+    sp500_5y_change = Column(Float)      # 5-year trailing return, same idea over a longer horizon
+    stock_5y_change = Column(Float)
     dividend_yield = Column(Float)
     market_cap = Column(Float)
     sector = Column(String)
@@ -168,7 +170,7 @@ class StockAnalysis(Base):
     dont_panic_note = Column(Text)       # populated when price dropped >15% since last BUY
 
     # Signal convergence — deterministic pre-verdict score
-    signal_convergence_score = Column(Integer)  # 0-7, how many independent signals align
+    signal_convergence_score = Column(Integer)  # 0-10, how many independent signals align
     convergence_details = Column(Text)          # JSON dict of which signals fired
 
     # Dual-agent verdicts — Claude (A) vs Gemini (B), reconciled by judge
