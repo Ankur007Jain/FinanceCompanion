@@ -44,6 +44,19 @@ def _run_memory_update(ticker: str, verdict: str, reasoning: str, news_summary: 
         session.close()
 
 
+def _run_simple_fields(analysis_id: str):
+    """Pre-generate plain-English fields after ingest — without this, the UI's default
+    Simple mode falls back to a live translation on every card expand, for every user."""
+    from services.simple_fields import generate_simple_fields
+    session = SessionLocal()
+    try:
+        analysis = session.get(StockAnalysis, analysis_id)
+        if analysis and not analysis.reasoning_simple:
+            asyncio.run(generate_simple_fields(analysis, session))
+    finally:
+        session.close()
+
+
 @router.post("/ingest-analysis")
 def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTasks, x_job_secret: str = "", db: Session = Depends(get_db)):
     """Called by the GitHub Actions nightly agent to persist analysis results."""
@@ -160,12 +173,14 @@ def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTas
                 setattr(existing, col, value)
         db.commit()
         background_tasks.add_task(_run_memory_update, body.ticker, body.verdict or "", body.reasoning or "", body.news_summary or "", "")
+        background_tasks.add_task(_run_simple_fields, existing.id)
         return {"status": "updated", "ticker": body.ticker}
 
     analysis = StockAnalysis(**{k: v for k, v in mapped.items() if v is not None or k in ("signal_convergence_score",)})
     db.add(analysis)
     db.commit()
     background_tasks.add_task(_run_memory_update, body.ticker, body.verdict or "", body.reasoning or "", body.news_summary or "", "")
+    background_tasks.add_task(_run_simple_fields, analysis.id)
     return {"status": "created", "ticker": body.ticker}
 
 

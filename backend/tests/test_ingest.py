@@ -250,3 +250,44 @@ class TestIngestSnapshot:
         payload = {"ticker": "MINML", "cache_date": str(date.today())}
         r = client.post("/jobs/ingest-snapshot", params={"x_job_secret": GOOD_SECRET}, json=payload)
         assert r.status_code == 200
+
+
+class TestIngestSimpleFields:
+    """Ingest must pre-generate plain-English fields — the UI's default Simple mode
+    otherwise falls back to a live translation on every card expand, for every user."""
+
+    def test_ingest_triggers_simple_fields_generation(self, client: TestClient):
+        from unittest.mock import AsyncMock, patch
+
+        payload = {**_BASE, "ticker": "SIMPF", "analysis_date": str(date.today())}
+        with patch("services.simple_fields.generate_simple_fields", new_callable=AsyncMock) as gen:
+            r = client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET}, json=payload)
+            assert r.status_code == 200
+            # TestClient runs background tasks synchronously after the response
+            gen.assert_called_once()
+            analysis_arg = gen.call_args.args[0]
+            assert analysis_arg.ticker == "SIMPF"
+
+    def test_update_path_also_triggers_generation(self, client: TestClient):
+        from unittest.mock import AsyncMock, patch
+
+        payload = {**_BASE, "ticker": "SIMPG", "analysis_date": str(date.today())}
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        with patch("services.simple_fields.generate_simple_fields", new_callable=AsyncMock) as gen:
+            r = client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET}, json=payload)
+            assert r.json()["status"] == "updated"
+            gen.assert_called_once()
+
+    def test_skips_rows_that_already_have_simple_fields(self, client: TestClient, db_session):
+        from unittest.mock import AsyncMock, patch
+        from models import StockAnalysis
+
+        payload = {**_BASE, "ticker": "SIMPH", "analysis_date": str(date.today())}
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        row = db_session.query(StockAnalysis).filter(StockAnalysis.ticker == "SIMPH").first()
+        row.reasoning_simple = "Already simplified."
+        db_session.commit()
+
+        with patch("services.simple_fields.generate_simple_fields", new_callable=AsyncMock) as gen:
+            client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET}, json=payload)
+            gen.assert_not_called()
