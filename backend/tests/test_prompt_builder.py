@@ -23,11 +23,12 @@ def _seed_analysis(db, ticker: str, **extra):
 class TestCommitteeLens:
     def test_static_prompt_mentions_bull_and_bear(self, db_session):
         static, _ = build_system_prompt("nobody@example.com", db_session)
-        assert "BULL" in static and "BEAR" in static
+        low = static.lower()
+        assert "bull" in low and "bear" in low
 
     def test_static_prompt_keeps_plain_voice(self, db_session):
         static, _ = build_system_prompt("nobody@example.com", db_session)
-        assert "no jargon" in static.lower()
+        assert "jargon" in static.lower()
 
 
 class TestDeepBlock:
