@@ -470,79 +470,96 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken, tx
         </div>
       )}
 
-      {/* ── 90-Day Scenarios ── */}
-      {hasScenarios && (
-        <div style={{ padding: "14px 20px", borderBottom: "1px solid var(--t-border-light)" }}>
-          <div style={{ ...secLabel, marginBottom: "0.75rem" }}>90-Day Scenarios</div>
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: "0.75rem" }}>
-            {([
-              { key: "bull", label: "Bull", pct: a.scenario_bull_pct, prob: a.scenario_bull_prob, text: a.scenario_bull, color: "var(--t-green)", bg: "var(--t-green-bg)", bd: "var(--t-green-mid)" },
-              { key: "base", label: "Base", pct: a.scenario_base_pct, prob: a.scenario_base_prob, text: a.scenario_base, color: "var(--t-accent)", bg: "var(--t-accent-bg)", bd: "var(--t-accent-border)" },
-              { key: "bear", label: "Bear", pct: a.scenario_bear_pct, prob: a.scenario_bear_prob, text: a.scenario_bear, color: "var(--t-red)", bg: "var(--t-red-bg)", bd: "var(--t-red-border)" },
-            ] as const).map(s => (
-              <div key={s.key} style={{ background: s.bg, border: `1px solid ${s.bd}`, borderRadius: 8, padding: "10px 12px" }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
-                  <span style={{ fontSize: "0.68rem", fontFamily: MONO, fontWeight: 700, color: s.color, textTransform: "uppercase", letterSpacing: "0.06em" }}>{s.label}</span>
-                  <span style={{ fontSize: "0.68rem", fontFamily: MONO, color: "var(--t-text-muted)" }}>{s.prob}%</span>
-                </div>
-                <div style={{ fontSize: "1.05rem", fontWeight: 700, fontFamily: MONO, color: s.color, marginBottom: 5 }}>
-                  {s.pct != null ? (s.pct >= 0 ? "+" : "") + s.pct.toFixed(1) + "%" : "—"}
-                </div>
-                {s.text && <div style={{ fontSize: "0.72rem", lineHeight: 1.5, color: "var(--t-text-dark)" }}>{s.text}</div>}
-              </div>
-            ))}
+      {/* ── Main content — one readable story column + a compact data rail.
+             All prose lives in the story column at a comfortable reading measure (~66ch);
+             all numbers live in the rail. Never interleave the two. ── */}
+      <div style={{ padding: isMobile ? "0.75rem 0.75rem" : "1.25rem 1.5rem", display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? "1.25rem" : "2.5rem" }}>
+
+        {/* The Story — what's happening → why this verdict → both sides → what breaks it */}
+        <div style={{ flex: 1, minWidth: 0, maxWidth: isMobile ? "100%" : "66ch", display: "flex", flexDirection: "column", gap: "1rem" }}>
+          <div>
+            <div style={secLabel}>The Story</div>
+            <div style={{ fontSize: isMobile ? "0.88rem" : "0.92rem", lineHeight: 1.7, color: "var(--t-text-dark)" }}>{reasoning ?? "—"}</div>
           </div>
-        </div>
-      )}
-
-      {/* ── Main content — 3-col on desktop, stacked on mobile ── */}
-      <div style={{ padding: isMobile ? "0.75rem 0.75rem" : "1.25rem 1.5rem", display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: isMobile ? "1rem" : "1.5rem" }}>
-
-        {/* Bull / bear / thesis — conviction lives in the hero strip above */}
-        {(bull_case || bear_case || thesis_invalidation) && (
-          <div style={{ gridColumn: isMobile ? "1" : "1 / -1", display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-            {bull_case && (
-              <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "var(--t-text-dark)", lineHeight: 1.5 }}>
-                <span style={{ color: "var(--t-green)", fontWeight: 700, flexShrink: 0 }}>Bull</span><span>{bull_case}</span>
-              </div>
-            )}
-            {bear_case && (
-              <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.8rem", color: "var(--t-text-dark)", lineHeight: 1.5 }}>
-                <span style={{ color: "var(--t-red)", fontWeight: 700, flexShrink: 0 }}>Bear</span><span>{bear_case}</span>
-              </div>
-            )}
-            {thesis_invalidation && (
-              <div style={{ display: "flex", gap: "0.5rem", fontSize: "0.78rem", color: "var(--t-text-secondary)", lineHeight: 1.5 }}>
-                <span style={{ color: "var(--t-text-muted)", fontWeight: 600, flexShrink: 0, fontFamily: MONO, fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", paddingTop: 2 }}>Flips if</span>
-                <span>{thesis_invalidation}</span>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Price Targets + Events */}
-        <div>
-          <div style={secLabel}>Price Targets</div>
-          {(a.entry_target || a.exit_target || a.stop_loss || a.hold_period) ? (
-            <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
-              <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap" }}>
-                {a.entry_target && <div><div style={{ fontSize: "0.68rem", color: "var(--t-text-muted)" }}>Entry</div><div style={{ fontWeight: 600, color: "var(--t-green)", fontSize: "1rem", fontFamily: MONO }}>${a.entry_target.toFixed(2)}</div></div>}
-                {a.exit_target  && <div><div style={{ fontSize: "0.68rem", color: "var(--t-text-muted)" }}>Take Profit</div><div style={{ fontWeight: 600, color: "var(--t-accent)", fontSize: "1rem", fontFamily: MONO }}>${a.exit_target.toFixed(2)}</div></div>}
-                {a.stop_loss    && <div><div style={{ fontSize: "0.68rem", color: "var(--t-text-muted)" }}>Stop Loss</div><div style={{ fontWeight: 600, color: "var(--t-red)", fontSize: "1rem", fontFamily: MONO }}>${a.stop_loss.toFixed(2)}</div></div>}
-              </div>
-              {a.hold_period && (
-                <div style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.25rem 0.65rem", background: "var(--t-surface-3)", border: "1px solid var(--t-border)", borderRadius: 6, width: "fit-content" }}>
-                  <span style={{ fontSize: "0.68rem", color: "var(--t-text-muted)", fontFamily: MONO }}>Hold:</span>
-                  <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--t-text)" }}>{a.hold_period}</span>
+          {(bull_case || bear_case || thesis_invalidation) && (
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.7rem", borderTop: "1px solid var(--t-border-light)", paddingTop: "1rem" }}>
+              {bull_case && (
+                <div style={{ display: "flex", gap: "0.6rem", fontSize: "0.88rem", color: "var(--t-text-dark)", lineHeight: 1.65 }}>
+                  <span style={{ color: "var(--t-green)", fontWeight: 700, flexShrink: 0 }}>Bull</span><span>{bull_case}</span>
+                </div>
+              )}
+              {bear_case && (
+                <div style={{ display: "flex", gap: "0.6rem", fontSize: "0.88rem", color: "var(--t-text-dark)", lineHeight: 1.65 }}>
+                  <span style={{ color: "var(--t-red)", fontWeight: 700, flexShrink: 0 }}>Bear</span><span>{bear_case}</span>
+                </div>
+              )}
+              {thesis_invalidation && (
+                <div style={{ display: "flex", gap: "0.6rem", fontSize: "0.84rem", color: "var(--t-text-secondary)", lineHeight: 1.65 }}>
+                  <span style={{ color: "var(--t-text-muted)", fontWeight: 600, flexShrink: 0, fontFamily: MONO, fontSize: "0.68rem", textTransform: "uppercase", letterSpacing: "0.06em", paddingTop: 3 }}>Flips if</span>
+                  <span>{thesis_invalidation}</span>
                 </div>
               )}
             </div>
-          ) : (
-            <div style={{ fontSize: "0.82rem", color: "var(--t-text-muted)" }}>No price targets set</div>
           )}
+          {news_summary && (
+            <div style={{ borderTop: "1px solid var(--t-border-light)", paddingTop: "1rem" }}>
+              <div style={secLabel}>News</div>
+              <div style={{ fontSize: "0.86rem", lineHeight: 1.65, color: "var(--t-text-dark)" }}>{news_summary}</div>
+            </div>
+          )}
+          {a.ripple_analysis && (
+            <div style={{ borderTop: "1px solid var(--t-border-light)", paddingTop: "1rem" }}>
+              <div style={secLabel}>Ripple Effects</div>
+              <div style={{ fontSize: "0.86rem", lineHeight: 1.65, color: "var(--t-text-dark)" }}>{a.ripple_analysis}</div>
+            </div>
+          )}
+        </div>
+
+        {/* Data rail — scannable numbers, no paragraphs */}
+        <div style={{ width: isMobile ? "100%" : 280, flexShrink: 0, display: "flex", flexDirection: "column", gap: "1.25rem" }}>
+          {hasScenarios && (
+            <div>
+              <div style={secLabel}>90-Day Scenarios</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                {([
+                  { key: "bull", label: "Bull", pct: a.scenario_bull_pct, prob: a.scenario_bull_prob, color: "var(--t-green)" },
+                  { key: "base", label: "Base", pct: a.scenario_base_pct, prob: a.scenario_base_prob, color: "var(--t-accent)" },
+                  { key: "bear", label: "Bear", pct: a.scenario_bear_pct, prob: a.scenario_bear_prob, color: "var(--t-red)" },
+                ] as const).map(s => (
+                  <div key={s.key} style={{ display: "flex", alignItems: "baseline", gap: "0.6rem", padding: "3px 0" }}>
+                    <span style={{ fontSize: "0.66rem", fontFamily: MONO, fontWeight: 700, color: s.color, textTransform: "uppercase", letterSpacing: "0.06em", width: 34, flexShrink: 0 }}>{s.label}</span>
+                    <span style={{ fontSize: "0.92rem", fontWeight: 700, fontFamily: MONO, color: s.color }}>
+                      {s.pct != null ? (s.pct >= 0 ? "+" : "") + s.pct.toFixed(1) + "%" : "—"}
+                    </span>
+                    {s.prob != null && <span style={{ fontSize: "0.68rem", fontFamily: MONO, color: "var(--t-text-muted)", marginLeft: "auto" }}>{s.prob}% odds</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <div>
+            <div style={secLabel}>Price Targets</div>
+            {(a.entry_target || a.exit_target || a.stop_loss || a.hold_period) ? (
+              <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                <div style={{ display: "flex", gap: "1.25rem", flexWrap: "wrap" }}>
+                  {a.entry_target && <div><div style={{ fontSize: "0.68rem", color: "var(--t-text-muted)" }}>Entry</div><div style={{ fontWeight: 600, color: "var(--t-green)", fontSize: "1rem", fontFamily: MONO }}>${a.entry_target.toFixed(2)}</div></div>}
+                  {a.exit_target  && <div><div style={{ fontSize: "0.68rem", color: "var(--t-text-muted)" }}>Take Profit</div><div style={{ fontWeight: 600, color: "var(--t-accent)", fontSize: "1rem", fontFamily: MONO }}>${a.exit_target.toFixed(2)}</div></div>}
+                  {a.stop_loss    && <div><div style={{ fontSize: "0.68rem", color: "var(--t-text-muted)" }}>Stop Loss</div><div style={{ fontWeight: 600, color: "var(--t-red)", fontSize: "1rem", fontFamily: MONO }}>${a.stop_loss.toFixed(2)}</div></div>}
+                </div>
+                {a.hold_period && (
+                  <div style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", padding: "0.25rem 0.65rem", background: "var(--t-surface-3)", border: "1px solid var(--t-border)", borderRadius: 6, width: "fit-content" }}>
+                    <span style={{ fontSize: "0.68rem", color: "var(--t-text-muted)", fontFamily: MONO }}>Hold:</span>
+                    <span style={{ fontSize: "0.8rem", fontWeight: 600, color: "var(--t-text)" }}>{a.hold_period}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div style={{ fontSize: "0.82rem", color: "var(--t-text-muted)" }}>No price targets set</div>
+            )}
+          </div>
           {events.length > 0 && (
-            <div style={{ marginTop: "1rem" }}>
-              <div style={{ ...secLabel, marginTop: "0.5rem" }}>Upcoming Events</div>
+            <div>
+              <div style={secLabel}>Upcoming Events</div>
               {events.map((e, i) => (
                 <div key={i} style={{ fontSize: "0.78rem", color: "var(--t-yellow)", marginBottom: "0.25rem", display: "flex", gap: "0.4rem" }}>
                   <span>⚡</span><span>{e.date} — {e.description}</span>
@@ -551,33 +568,14 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken, tx
             </div>
           )}
         </div>
+      </div>
 
-        {/* AI Reasoning */}
-        <div>
-          <div style={secLabel}>AI Reasoning</div>
-          <div style={{ fontSize: "0.8rem", lineHeight: 1.65, color: "var(--t-text-dark)" }}>{reasoning ?? "—"}</div>
-        </div>
-
-        {/* News + Ripple + Chat */}
-        <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-          {news_summary && (
-            <div>
-              <div style={secLabel}>News</div>
-              <div style={{ fontSize: "0.78rem", lineHeight: 1.6, color: "var(--t-text-dark)" }}>{news_summary}</div>
-            </div>
-          )}
-          {a.ripple_analysis && (
-            <div>
-              <div style={secLabel}>Ripple Effects</div>
-              <div style={{ fontSize: "0.78rem", lineHeight: 1.6, color: "var(--t-text-dark)" }}>{a.ripple_analysis}</div>
-            </div>
-          )}
-          <div />
-        </div>
+      {/* ── Full-width sections below the story/rail split ── */}
+      <div style={{ padding: isMobile ? "0 0.75rem 0.75rem" : "0 1.5rem 1.25rem" }}>
 
         {/* Fundamentals */}
         {(a.pe_trailing || a.revenue_growth || a.profit_margin || a.beta || a.market_cap || a.sector) && (
-          <div style={{ gridColumn: isMobile ? "1" : "1 / -1", borderTop: isMobile ? "none" : "1px solid var(--t-border)", paddingTop: isMobile ? 0 : "1rem" }}>
+          <div style={{ borderTop: isMobile ? "none" : "1px solid var(--t-border)", paddingTop: isMobile ? 0 : "1rem" }}>
             <div style={secLabel}>Fundamentals</div>
             <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "0.75rem 1.5rem" }}>
               {a.pe_trailing     != null && <FundStat label="P/E (TTM)"       value={a.pe_trailing.toFixed(1) + "x"} />}
@@ -618,7 +616,7 @@ function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idToken, tx
         )}
 
       {/* ── History + Report ── */}
-      <div style={{ gridColumn: "1 / -1" }}>
+      <div>
         <HistoryPanel ticker={a.ticker} idToken={idToken} currentAnalysis={a} isMobile={isMobile} txCacheRef={txCacheRef} />
       </div>
 
@@ -739,11 +737,11 @@ function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile, txCacheRef }
             const vm = h.verdict ? VERDICT_META[h.verdict] ?? VERDICT_META.WATCH : null;
             const isExp = expandedDate === h.id;
             return (
-              <div key={h.id} style={{ borderRadius: 8, border: `1px solid ${isExp ? "var(--t-accent)" : "var(--t-border-light)"}`, marginBottom: "0.5rem", overflow: "hidden" }}>
+              <div key={h.id} style={{ borderRadius: 8, border: `1px solid ${isExp ? "var(--t-accent)" : h.is_important_day ? "var(--t-yellow-border)" : "var(--t-border-light)"}`, borderLeft: h.is_important_day ? "3px solid var(--t-yellow)" : undefined, marginBottom: "0.5rem", overflow: "hidden" }}>
                 {/* Compact header row */}
                 <button
                   onClick={() => setExpandedDate(isExp ? null : h.id)}
-                  style={{ width: "100%", background: isExp ? "var(--t-surface)" : "none", border: "none", cursor: "pointer", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "0.35rem", textAlign: "left" }}
+                  style={{ width: "100%", background: isExp ? "var(--t-surface)" : h.is_important_day ? "var(--t-yellow-light-bg)" : "none", border: "none", cursor: "pointer", padding: "10px 14px", display: "flex", flexDirection: "column", gap: "0.35rem", textAlign: "left" }}
                 >
                   {/* Row 1: date · verdict · price · change · RSI · conviction · star */}
                   <div style={{ display: "flex", alignItems: "center", gap: isMobile ? "0.4rem" : "0.75rem", width: "100%", flexWrap: isMobile ? "wrap" : "nowrap" }}>
@@ -772,12 +770,16 @@ function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile, txCacheRef }
                     {h.is_important_day && <span style={{ fontSize: "0.7rem", flexShrink: 0 }} title={h.importance_reason ?? ""}>⭐</span>}
                     <span style={{ marginLeft: "auto", fontSize: "0.6rem", color: "var(--t-text-dim)", transition: "transform 0.15s", transform: isExp ? "rotate(180deg)" : "rotate(0deg)", display: "inline-block", flexShrink: 0 }}>▼</span>
                   </div>
-                  {/* Row 2: reasoning snippet */}
-                  {h.reasoning && (
+                  {/* Row 2: story beat for important days (why this day mattered), else reasoning snippet */}
+                  {h.is_important_day && h.importance_reason ? (
+                    <div style={{ fontSize: "0.72rem", color: "var(--t-yellow-dark)", fontFamily: SANS, lineHeight: 1.45, paddingLeft: isMobile ? 0 : 60, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 2, WebkitBoxOrient: "vertical" }}>
+                      {h.importance_reason}
+                    </div>
+                  ) : h.reasoning ? (
                     <div style={{ fontSize: "0.7rem", color: "var(--t-text-muted)", fontFamily: SANS, lineHeight: 1.4, paddingLeft: isMobile ? 0 : 60, overflow: "hidden", display: "-webkit-box", WebkitLineClamp: 1, WebkitBoxOrient: "vertical" }}>
                       {h.reasoning}
                     </div>
-                  )}
+                  ) : null}
                 </button>
 
                 {/* Full analysis inline */}

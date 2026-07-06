@@ -251,27 +251,30 @@ _REPORT_PROMPT = """Here are the past {n} daily analyses for {ticker}, newest fi
 
 {analyses}
 
-Write a report covering these sections (use ## headers):
+Write the report as ONE chronological story that carries the reader from where this stock
+started to a clear conclusion — not parallel analytical sections that each re-walk the same
+days. The reader should never have to rebuild the timeline themselves.
 
-## Verdict Trajectory
-How did the verdict move over this period and why? Note any flips and what drove them.
+Structure (use ## headers; the chapter titles below are examples — write your own that fit
+this stock's actual story):
 
-## Conviction Trend
-Was confidence building or declining? Highlight the highest and lowest conviction days.
+## The Setup
+Where the stock stood at the start of the period — price, verdict, and what the thesis was.
 
-## Price Target Accuracy
-Compare past entry/exit targets to what actually happened with the price. Were the calls useful?
+## 2-3 chapters of your own (e.g. "The Slide", "The Capitulation", "The Turn")
+The story in order: what happened, how the verdict and conviction responded, and — woven in
+at the moment in the story where it happened, not as separate sections — whether the targets
+and calls made along the way proved right or wrong. Be honest when the AI misjudged something:
+bad entry/exit targets, wrong direction calls, stale assumptions, patterns that didn't hold.
 
-## Recurring Themes
-What macro factors, catalysts, or risks kept showing up across multiple days?
+## Where This Leaves Us
+The conclusion the story has been driving toward: current verdict, what the balance of
+evidence says now, and how much confidence the reader should have in it.
 
-## What the AI Got Right vs Wrong
-Honest assessment — where was the analysis accurate, where did it miss?
+## What Proves It / What Breaks It
+One or two concrete things to watch that would confirm or invalidate the current thesis.
 
-## Watch For
-One or two things to monitor going forward based on the pattern you've seen.
-
-Keep the whole report under 600 words. Be specific, not generic."""
+Keep the whole report under 600 words. Be specific with dates and numbers, not generic."""
 
 
 @router.post("/{ticker}/report", response_model=StockReportOut)

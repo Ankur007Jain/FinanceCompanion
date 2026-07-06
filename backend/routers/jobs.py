@@ -200,6 +200,20 @@ def list_all_tickers(x_admin_secret: str = "", db: Session = Depends(get_db)):
     return {"tickers": sorted(tickers - disabled)}
 
 
+@router.get("/admin/memories")
+def get_stock_memories(x_admin_secret: str = "", tickers: str = "", db: Session = Depends(get_db)):
+    """Returns per-ticker memory narratives — the nightly verdict agents read these so
+    lessons extracted from past reports (e.g. 'stale analyst targets') actually inform
+    the next night's verdict instead of only being visible to the chat assistant."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    from models import StockMemory
+    q = db.query(StockMemory)
+    if tickers:
+        q = q.filter(StockMemory.ticker.in_([t.strip().upper() for t in tickers.split(",") if t.strip()]))
+    return {"memories": {m.ticker: m.memory_narrative for m in q.all() if m.memory_narrative}}
+
+
 @router.get("/admin/analyzed-today")
 def analyzed_today(x_admin_secret: str = "", db: Session = Depends(get_db)):
     """Returns tickers already analyzed today — agent skips these to avoid redundant fetches."""

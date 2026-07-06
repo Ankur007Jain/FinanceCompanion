@@ -19,6 +19,14 @@ if not api_key:
 with open(f"/tmp/summary_{ticker}.json") as f:
     d = json.load(f)
 
+# Past lessons for this ticker (written by nightly_fetch_memory.py) — optional
+memory = ""
+try:
+    with open(f"/tmp/memory_{ticker}.txt") as f:
+        memory = f.read().strip()
+except FileNotFoundError:
+    pass
+
 news_str = "; ".join(d.get("news", [])[:3])
 sr_line = ""
 if d.get("support_20d"):
@@ -45,8 +53,15 @@ fundamentals_line = (
     f"— weigh weak/negative fundamentals against any technical bounce; null means unknown, not zero."
 )
 
-prompt = f"""You are an independent stock analyst. Analyze {ticker} and return ONLY valid JSON with no markdown fences.
+memory_block = ""
+if memory:
+    memory_block = (
+        f"\nPast lessons from this ticker's own analysis history — do not repeat these mistakes; "
+        f"if you disagree with a lesson, say why in your reasoning:\n{memory}\n"
+    )
 
+prompt = f"""You are an independent stock analyst. Analyze {ticker} and return ONLY valid JSON with no markdown fences.
+{memory_block}
 Data for {ticker}:
 Price: ${d.get('price', 0):.2f} ({d.get('change_pct', 0):+.2f}% today)
 52-week range: ${d.get('lo52', 0):.2f}-${d.get('hi52', 0):.2f} ({d.get('range_pct', 50):.1f}% of range)

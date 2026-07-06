@@ -45,7 +45,7 @@ async def update_memory_from_report(ticker: str, report_content: str, db: Sessio
             messages=[{"role": "user", "content": prompt}],
         )
         result = resp.content[0].text.strip()
-        if result == "NO_UPDATE" or result == existing:
+        if result.startswith("NO_UPDATE") or result == existing:
             return
 
         result = result[:_MAX_CHARS]
@@ -96,7 +96,9 @@ async def maybe_update_stock_memory(
             messages=[{"role": "user", "content": prompt}],
         )
         result = resp.content[0].text.strip()
-        if result == "NO_UPDATE" or result == existing:
+        # startswith, not ==: the model sometimes writes "NO_UPDATE" and then keeps going,
+        # which used to leak the refusal text into stored memory (44/52 rows in production).
+        if result.startswith("NO_UPDATE") or result == existing:
             return
 
         result = result[:_MAX_CHARS]

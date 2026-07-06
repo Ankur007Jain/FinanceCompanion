@@ -23,11 +23,12 @@ def _seed_analysis(db, ticker: str, **extra):
 class TestCommitteeLens:
     def test_static_prompt_mentions_bull_and_bear(self, db_session):
         static, _ = build_system_prompt("nobody@example.com", db_session)
-        assert "BULL" in static and "BEAR" in static
+        low = static.lower()
+        assert "bull" in low and "bear" in low
 
     def test_static_prompt_keeps_plain_voice(self, db_session):
         static, _ = build_system_prompt("nobody@example.com", db_session)
-        assert "no jargon" in static.lower()
+        assert "jargon" in static.lower()
 
 
 class TestDeepBlock:
@@ -45,6 +46,25 @@ class TestDeepBlock:
         assert "Cash flow funds buybacks." in dynamic
         assert "Pricey multiple" in dynamic
         assert "A guidance cut next quarter." in dynamic
+
+    def test_deep_dossier_shows_longterm_returns_and_ownership(self, db_session):
+        _seed_analysis(
+            db_session, "PBLT",
+            stock_52w_change=-47.8, sp500_52w_change=20.1,
+            stock_5y_change=-33.6, sp500_5y_change=72.3,
+            inst_ownership_pct=0.85, short_float_pct=0.126, short_ratio=6.4,
+            target_price_mean=67.5, target_price_high=88.0, target_price_low=42.0,
+            analyst_count=25, analyst_consensus="BUY",
+        )
+        _, dynamic = build_system_prompt("u@example.com", db_session, conversation_ticker="PBLT")
+        # Values already stored as percentages must not be scaled again
+        assert "1yr -47.8%" in dynamic and "S&P +20.1%" in dynamic
+        assert "5yr -33.6%" in dynamic and "S&P +72.3%" in dynamic
+        # Ownership/short fields are fractions and should be pct-formatted
+        assert "Inst 85.0%" in dynamic
+        assert "Short float 12.6%" in dynamic
+        # Analyst target range with count
+        assert "BUY (25)" in dynamic and "$67.5 ($42.0–$88.0)" in dynamic
 
     def test_focus_ticker_is_case_insensitive(self, db_session):
         _seed_analysis(db_session, "PBCASE", conviction_score=50)

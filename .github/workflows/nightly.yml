@@ -93,6 +93,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
           JOB_SECRET: ${{ secrets.JOB_SECRET }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
         with:
           mode: agent
           model: claude-sonnet-4-6
@@ -122,6 +123,16 @@ jobs:
             python3 scripts/nightly_ingest_snapshot.py TICKER
             ```
             POSTs the raw snapshot from Step 1 to the backend (BACKEND_URL/JOB_SECRET are in the environment).
+
+            ## Step 1c — Fetch past lessons (stock memory)
+
+            Run ONCE for the whole batch (comma-separated tickers, no spaces):
+            ```bash
+            python3 scripts/nightly_fetch_memory.py TICKER1,TICKER2,...
+            ```
+            Writes /tmp/memory_TICKER.txt for each ticker that has accumulated lessons from past
+            analyses and reports (e.g. "Past mistakes to avoid: stale analyst targets as validation").
+            Tickers without a memory file are fine — just skip that context for them.
 
             ## Step 2 — Compute signal convergence score for each ticker
 
@@ -179,6 +190,12 @@ jobs:
             - Any of these fields can be null (small caps, recent IPOs, data gaps) — treat null as
               "unknown," never as zero or as a green light. Lower conviction_score when long-term trend
               and fundamentals contradict a purely technical setup; this is a judgment call, not a hard rule.
+
+            **Past lessons (stock memory):** if /tmp/memory_TICKER.txt exists (from Step 1c), read it
+            before deciding. It contains lessons extracted from this ticker's own past analyses and
+            reports — verdict flips that proved wrong, targets that were stale anchors, patterns that
+            didn't hold. Do not repeat a mistake the memory explicitly warns about; if you disagree
+            with a lesson, say why in your reasoning rather than silently ignoring it.
 
             **Quality rule:** weak or conflicting signals → WATCH. Wrong advice is worse than no advice.
 
