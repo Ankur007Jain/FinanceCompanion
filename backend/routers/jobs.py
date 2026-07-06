@@ -229,6 +229,112 @@ def get_stock_memories(x_admin_secret: str = "", tickers: str = "", db: Session 
     return {"memories": {m.ticker: m.memory_narrative for m in q.all() if m.memory_narrative}}
 
 
+@router.get("/admin/verdict-history")
+def verdict_history(x_admin_secret: str = "", days: int = 45, db: Session = Depends(get_db)):
+    """Feeds the weekly Verdict Scorecard agent — every verdict with its targets so
+    outcomes can be replayed against actual subsequent prices."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    from datetime import timedelta
+    cutoff = date.today() - timedelta(days=days)
+    rows = (
+        db.query(StockAnalysis)
+        .filter(StockAnalysis.analysis_date >= cutoff, StockAnalysis.verdict.isnot(None))
+        .order_by(StockAnalysis.analysis_date)
+        .all()
+    )
+    return {"analyses": [
+        {
+            "ticker": r.ticker,
+            "date": r.analysis_date.isoformat(),
+            "verdict": r.verdict,
+            "conviction": r.conviction_score,
+            "price": r.current_price,
+            "entry_target": r.entry_target,
+            "exit_target": r.exit_target,
+            "stop_loss": r.stop_loss,
+            "hold_period": r.hold_period,
+        }
+        for r in rows
+    ]}
+
+
+# Columns whose sudden NULL-spike means a pipeline regression (each went silently
+# missing at least once before this sentinel existed).
+_DQ_COLUMNS = [
+    "current_price", "rsi", "ma_50", "ma_200", "conviction_score", "reasoning",
+    "pe_trailing", "revenue_growth", "free_cashflow", "inst_ownership_pct",
+    "stock_52w_change", "stock_5y_change", "target_price_mean",
+    "reasoning_simple", "verdict_b", "tokens_input",
+]
+
+
+@router.get("/admin/data-quality")
+def data_quality(x_admin_secret: str = "", days: int = 7, db: Session = Depends(get_db)):
+    """Feeds the daily Data Quality Sentinel — per-date NULL rates for key columns
+    (a column that was populated yesterday and NULL today = silent pipeline break)
+    plus tickers missing from the latest run."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    from datetime import timedelta
+    from models import TickerControl, WatchlistItem
+    cutoff = date.today() - timedelta(days=days)
+
+    rows = db.query(StockAnalysis).filter(StockAnalysis.analysis_date >= cutoff).all()
+    by_date: dict[str, list[StockAnalysis]] = {}
+    for r in rows:
+        by_date.setdefault(r.analysis_date.isoformat(), []).append(r)
+
+    null_rates = {
+        d: {
+            "rows": len(drows),
+            "null_pct": {
+                col: round(100 * sum(1 for r in drows if getattr(r, col) is None) / len(drows), 1)
+                for col in _DQ_COLUMNS
+            },
+        }
+        for d, drows in sorted(by_date.items())
+    }
+
+    expected = {t[0] for t in db.query(WatchlistItem.ticker).distinct().all()}
+    disabled = {c.ticker for c in db.query(TickerControl).filter(TickerControl.analysis_enabled.is_(False)).all()}
+    expected -= disabled
+    latest_date = max(by_date) if by_date else None
+    analyzed_latest = {r.ticker for r in by_date.get(latest_date, [])}
+    return {
+        "null_rates_by_date": null_rates,
+        "latest_date": latest_date,
+        "expected_tickers": len(expected),
+        "missing_in_latest": sorted(expected - analyzed_latest),
+    }
+
+
+@router.post("/admin/memories/{ticker}/lesson")
+def append_memory_lesson(ticker: str, body: dict, x_admin_secret: str = "", db: Session = Depends(get_db)):
+    """Scorecard agent feeds systematic verdict failures back into stock memory so
+    the nightly verdict agents see them — closing the outcome loop, not just the
+    reasoning loop."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    lesson = (body.get("lesson") or "").strip()
+    if not lesson:
+        raise HTTPException(status_code=422, detail="lesson is required.")
+    from datetime import datetime
+    from models import StockMemory
+    from services.stock_memory import _MAX_CHARS
+    ticker = ticker.upper()
+    mem = db.get(StockMemory, ticker)
+    if mem:
+        mem.memory_narrative = (f"{mem.memory_narrative}\n\n[Scorecard] {lesson}")[:_MAX_CHARS]
+        mem.last_updated = datetime.utcnow()
+        mem.update_count = (mem.update_count or 0) + 1
+    else:
+        mem = StockMemory(ticker=ticker, memory_narrative=f"[Scorecard] {lesson}", last_updated=datetime.utcnow(), update_count=1)
+        db.add(mem)
+    db.commit()
+    return {"ticker": ticker, "memory_chars": len(mem.memory_narrative)}
+
+
 @router.get("/admin/analyzed-today")
 def analyzed_today(x_admin_secret: str = "", db: Session = Depends(get_db)):
     """Returns tickers already analyzed today — agent skips these to avoid redundant fetches."""
