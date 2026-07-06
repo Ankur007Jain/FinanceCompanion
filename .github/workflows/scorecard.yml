@@ -1,0 +1,80 @@
+name: Verdict Scorecard
+
+on:
+  schedule:
+    - cron: "0 14 * * 6"   # Saturday 9 AM CT — after the week's verdicts have outcomes
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  scorecard:
+    name: "Weekly verdict scorecard"
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: pip install yfinance pandas requests
+
+      - name: Score verdicts against actual outcomes
+        uses: anthropics/claude-code-action@beta
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+        with:
+          mode: agent
+          model: claude-sonnet-4-6
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_tools: "Bash,Read,Write,Glob,Grep,LS"
+          direct_prompt: |
+            You are FinanceCompanion's Verdict Scorecard analyst. Today is $(date +%Y-%m-%d).
+            Your job: measure whether the nightly verdicts actually worked, publish an honest
+            weekly scorecard, and feed systematic failures back into stock memory.
+
+            ## Step 1 — Compute outcomes (deterministic)
+            ```bash
+            python3 scripts/scorecard_compute.py
+            ```
+            This replays the last 45 days of verdicts against actual prices and prints a JSON
+            report (also saved to /tmp/scorecard.json): forward returns by verdict, BUY returns
+            by conviction band, target-vs-stop resolution, and notable failures.
+            If it exits non-zero (price data unavailable / rate-limited), do NOT publish
+            anything — print the failure reason and stop; a hollow scorecard is worse than none.
+
+            ## Step 2 — Analyze
+            Read the report and answer, with numbers:
+            - Are BUYs outperforming WATCHes? If not, that's the headline.
+            - Is higher conviction actually predicting better returns (70+ vs 50-69 vs <50)?
+              A conviction inversion is a calibration bug — call it out plainly.
+            - Target-vs-stop ratio: are stops being hit more than targets?
+            - Any single ticker with 3+ failed BUY calls in the window (check notable_failures)?
+
+            ## Step 3 — Publish the scorecard as a GitHub issue
+            ```bash
+            gh label create scorecard --color 1D76DB --description "Weekly verdict scorecard" 2>/dev/null || true
+            gh issue create --label scorecard --title "Verdict Scorecard — $(date +%Y-%m-%d)" --body "<markdown>"
+            ```
+            Body: a compact markdown table of the by-verdict and by-conviction numbers, the
+            target-vs-stop ratio, your 2-3 sentence honest verdict on calibration, and the
+            notable failures list. Lead with the single most important finding. No fluff.
+
+            ## Step 4 — Feed systematic failures into stock memory (max 3 per run)
+            ONLY for clear patterns — a ticker with 3+ failed BUYs, or a repeated same-mistake
+            pattern (e.g. buying oversold in a downtrend that kept falling). For each (max 3):
+            ```bash
+            curl -s -X POST "$BACKEND_URL/jobs/admin/memories/TICKER/lesson?x_admin_secret=$ADMIN_SECRET" \
+              -H "Content-Type: application/json" \
+              -d '{"lesson": "<one specific sentence: what was called, what happened, what to weigh differently>"}'
+            ```
+            The lesson must cite actual numbers (dates, prices, returns). Skip this step
+            entirely if no pattern clears the bar — a noisy memory is worse than no memory.

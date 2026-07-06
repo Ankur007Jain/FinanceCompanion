@@ -1,0 +1,73 @@
+name: Data Quality Sentinel
+
+on:
+  schedule:
+    - cron: "0 9 * * 1-5"   # Mon-Fri 9:00 UTC — 5 hours after the nightly job (4:00 UTC)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  sentinel:
+    name: "Daily data quality check"
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check data quality
+        uses: anthropics/claude-code-action@beta
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+        with:
+          mode: agent
+          model: claude-sonnet-4-6
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_tools: "Bash,Read,Write,Glob,Grep,LS"
+          direct_prompt: |
+            You are FinanceCompanion's Data Quality Sentinel. Today is $(date +%Y-%m-%d).
+            The nightly analysis ran ~5 hours ago. Your job: catch silent pipeline
+            regressions the day they happen. Every column you're checking went silently
+            missing at least once before this sentinel existed.
+
+            ## Step 1 — Fetch stats (deterministic)
+            ```bash
+            python3 scripts/data_quality_stats.py
+            ```
+            Returns per-analysis-date NULL percentages for key columns over the last 7 days,
+            plus which expected tickers are missing from the latest run.
+
+            ## Step 2 — Judge (be calibrated, not alarmist)
+            Flag as a REGRESSION only if:
+            - A column's NULL rate jumped ≥30 percentage points on the latest date vs its own
+              recent baseline (e.g. pe_trailing was ~5% null all week, today 80%).
+            - More than 20% of expected tickers are missing from the latest run.
+            - The latest run has zero rows on a weekday (pipeline didn't run at all).
+            NOT regressions: weekends/holidays with no run; columns that are consistently
+            null every day (pre-existing, already known); reasoning_simple lagging a few
+            percent (it fills in asynchronously after ingest); single-ticker gaps (rate limits).
+
+            ## Step 3 — Report ONLY if something is wrong
+            First dedupe against open issues:
+            ```bash
+            gh issue list --label data-quality --state open
+            ```
+            If an open issue already covers the same column/regression, comment on it with
+            today's numbers instead of filing a duplicate. Otherwise:
+            ```bash
+            gh label create data-quality --color D93F0B --description "Pipeline data regression" 2>/dev/null || true
+            gh issue create --label data-quality --title "<specific: 'pe_trailing 80% NULL since 2026-07-08'>" --body "<markdown>"
+            ```
+            Body: the numbers (before/after), affected dates, likely layer (fetch script,
+            ingest mapping, or upstream API), and the single most useful file to look at.
+
+            If everything is healthy, print a one-line all-clear and exit — do NOT create
+            an issue to say things are fine.
