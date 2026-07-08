@@ -2,7 +2,7 @@ name: Data Quality Sentinel
 
 on:
   schedule:
-    - cron: "0 9 * * 1-5"   # Mon-Fri 9:00 UTC — 5 hours after the nightly job (4:00 UTC)
+    - cron: "30 19 * * 1-5"   # Mon-Fri 19:30 UTC (2:30 PM CT) — 5 hours after the analysis job (14:30 UTC)
   workflow_dispatch:
 
 permissions:

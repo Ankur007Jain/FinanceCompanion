@@ -1848,7 +1848,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 <h1 style={{ margin: 0, fontFamily: SERIF, fontWeight: 600, fontSize: 25, letterSpacing: "-0.01em", color: "var(--t-text)" }}>
                   Good morning, {userName.split(" ")[0]}
                 </h1>
-                <div style={{ marginTop: 5, fontSize: 13, color: "var(--t-text-muted)" }}>Updated nightly after market close · {digest.length} stock{digest.length !== 1 ? "s" : ""} tracked</div>
+                <div style={{ marginTop: 5, fontSize: 13, color: "var(--t-text-muted)" }}>Updated each trading morning · {digest.length} stock{digest.length !== 1 ? "s" : ""} tracked</div>
               </div>
 
               {/* Portfolio size prompt */}
@@ -1994,7 +1994,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                   <div style={{ fontSize: 18, fontWeight: 600, color: "var(--t-green)", marginBottom: 8, fontFamily: SERIF }}>All Clear — Nothing to do today</div>
                   <div style={{ fontSize: 13, color: "var(--t-text-secondary)", lineHeight: 1.6 }}>
                     Your {digest.length} stock{digest.length !== 1 ? "s" : ""} are being watched. No high-conviction opportunities cleared the threshold today.<br />
-                    Come back tomorrow — the nightly agent runs after market close.
+                    Come back after 9:30 AM CT — the analysis agent runs each trading morning.
                   </div>
                 </div>
               )}
@@ -2251,7 +2251,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
               <div>
                 <span style={{ fontSize: 11, fontFamily: MONO, fontWeight: 700, letterSpacing: "0.09em", color: "var(--t-text-muted)", textTransform: "uppercase" }}>Watchlist</span>
                 <div style={{ marginTop: 3, fontSize: 13, color: "var(--t-text-muted)" }}>
-                  {filterQ ? `${watchlistItems.length} of ${allWatchlistItems.length}` : allWatchlistItems.length} stock{allWatchlistItems.length !== 1 ? "s" : ""} · Tracking only · Updated nightly after market close
+                  {filterQ ? `${watchlistItems.length} of ${allWatchlistItems.length}` : allWatchlistItems.length} stock{allWatchlistItems.length !== 1 ? "s" : ""} · Tracking only · Updated each trading morning
                 </div>
               </div>
             </div>
