@@ -37,7 +37,8 @@ Apply these before answering — never narrate them, just apply them:
 <data_access>
 - You have tonight's full analysis for the user's tracked stocks, plus historical stock memory.
 - When a ticker is in focus, you also have its deep analysis and day-by-day history below — use it directly, don't re-derive conclusions from raw fields.
-- Use the web_search tool for anything more recent than the analysis date; synthesize new results with existing data rather than just repeating the search output.
+- Other tracked tickers are given as compact figures only (verdict, position, targets, RSI, conviction) — no reasoning or memory. If the user asks about one of them specifically, call get_stock_analysis(ticker) to get the same full depth as the focus ticker rather than guessing from the summary alone. It works for any ticker, not just ones the user tracks.
+- Use web_search only for what get_stock_analysis can't answer — anything more recent than tonight's analysis, or genuinely outside our own data. Don't search the web for something our own analysis already covers.
 </data_access>
 """
 
@@ -93,6 +94,36 @@ def _format_position(w: WatchlistItem, current_price: Optional[float]) -> str:
     return "  ".join(parts) + "\n"
 
 
+def _format_analysis_compact(a: StockAnalysis, position_line: str) -> str:
+    """Numeric-only summary for tickers other than the one in focus, in a ticker-scoped
+    conversation. Keeps every field a user might screen across their whole portfolio —
+    P&L, day move, conviction, targets, RSI, 52w position, MA50/200, analyst target,
+    upcoming events, the ⭐ important-day flag — and drops only the prose (reasoning,
+    memory, news) that's expensive and only valuable once they're actually asking about
+    this specific ticker. That's a get_stock_analysis tool call away the moment they do."""
+    direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
+    flag = " ⭐" if a.is_important_day else ""
+    conv = f"{a.conviction_score}/100" if a.conviction_score is not None else "N/A"
+    position = position_line.strip().removeprefix("Position:").strip()
+    events = ""
+    if a.events_json:
+        try:
+            evs = json.loads(a.events_json)
+            upcoming = [f"{e['date']} {e['description']}" for e in evs[:2]]
+            if upcoming:
+                events = "  Events: " + " | ".join(upcoming)
+        except Exception:
+            pass
+    return (
+        f"{a.verdict}{flag}  {position}  "
+        f"${_fmt(a.current_price)} {direction}{abs(a.day_change_pct or 0):.1f}%  "
+        f"Conv {conv}  RSI {a.rsi or 'N/A'}  52wk-pos {_fmt(a.range_position_pct, 0)}%  "
+        f"MA50/200 ${_fmt(a.ma_50)}/${_fmt(a.ma_200)}  "
+        f"targets: entry ${a.entry_target or 'N/A'} exit ${a.exit_target or 'N/A'} stop ${a.stop_loss or 'N/A'}  "
+        f"Analyst {a.analyst_consensus or 'N/A'} tgt ${a.target_price_mean or 'N/A'}{events}"
+    )
+
+
 def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnalysis], position_line: str) -> str:
     """Full institutional dossier for the ticker currently in focus."""
     direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
@@ -142,6 +173,42 @@ def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnal
     return "\n".join(lines)
 
 
+def build_ticker_dossier(ticker: str, db: Session, user_email: str) -> str:
+    """Full institutional dossier for any ticker — same content whether it's the
+    conversation's initial focus or one the user pivots to mid-chat via the
+    get_stock_analysis tool, so quality never depends on which path got you here."""
+    ticker = ticker.upper()
+    analysis = (
+        db.query(StockAnalysis)
+        .filter(StockAnalysis.ticker == ticker)
+        .order_by(StockAnalysis.analysis_date.desc())
+        .first()
+    )
+    if not analysis:
+        return f"No analysis available yet for {ticker}."
+
+    history = (
+        db.query(StockAnalysis)
+        .filter(StockAnalysis.ticker == ticker, StockAnalysis.id != analysis.id)
+        .order_by(StockAnalysis.analysis_date.desc())
+        .limit(5)
+        .all()
+    )
+    mem_row = db.query(StockMemory).filter(StockMemory.ticker == ticker).first()
+    memory = mem_row.memory_narrative if mem_row else ""
+
+    wl = (
+        db.query(WatchlistItem)
+        .filter(WatchlistItem.user_email == user_email, WatchlistItem.ticker == ticker)
+        .first()
+    )
+    position_line = (
+        _format_position(wl, analysis.current_price)
+        if wl else "Position:       Not in user's watchlist.\n"
+    )
+    return _format_analysis_deep(analysis, memory, history, position_line)
+
+
 def build_system_prompt(
     user_email: str,
     db: Session,
@@ -168,9 +235,10 @@ def build_system_prompt(
 
     lines = [f"Today: {today.isoformat()}\n"]
 
+    focus = conversation_ticker.upper() if conversation_ticker else None
+
     # Deep dossier for the ticker in focus (most prominent context)
-    if conversation_ticker:
-        focus = conversation_ticker.upper()
+    if focus:
         # With a large watchlist, the focus ticker's dossier can get buried among dozens of
         # others below — spell out unambiguously which one "this stock" refers to, since
         # nothing else in the prompt marks it as the active topic vs. just more data.
@@ -180,41 +248,26 @@ def build_system_prompt(
             f"they mean {focus} — not any other ticker listed below. Lead your answer with {focus}; "
             f"only bring in other tickers if the user explicitly asks about them.\n"
         )
-        focus_analysis = (
-            db.query(StockAnalysis)
-            .filter(StockAnalysis.ticker == focus)
-            .order_by(StockAnalysis.analysis_date.desc())
-            .first()
-        )
-        if focus_analysis:
-            history = (
-                db.query(StockAnalysis)
-                .filter(
-                    StockAnalysis.ticker == focus,
-                    StockAnalysis.id != focus_analysis.id,
-                )
-                .order_by(StockAnalysis.analysis_date.desc())
-                .limit(5)
-                .all()
-            )
-            focus_mem = memory_map.get(focus) or ""
-            if not focus_mem:
-                m = db.query(StockMemory).filter(StockMemory.ticker == focus).first()
-                focus_mem = m.memory_narrative if m else ""
-            focus_wl = watchlist_map.get(focus)
-            focus_position = (
-                _format_position(focus_wl, focus_analysis.current_price)
-                if focus_wl else "Position:       Not in user's watchlist.\n"
-            )
-            lines.append(_format_analysis_deep(focus_analysis, focus_mem, history, focus_position))
-            lines.append("")
+        lines.append(build_ticker_dossier(focus, db, user_email))
+        lines.append("")
 
     if analyses:
-        lines.append("=== TONIGHT'S ANALYSIS ===")
+        # In a ticker-scoped conversation, every OTHER ticker gets a numeric-only line —
+        # cheap enough to send for all of them (portfolio-wide screening still works: P&L,
+        # RSI, targets, important-day flag), while the expensive prose (reasoning, memory,
+        # news) is a get_stock_analysis tool call away the moment the user actually asks
+        # about one specifically. A general (non-ticker) conversation is the one place full
+        # per-ticker detail is genuinely the point — that stays exactly as before.
+        lines.append("=== TONIGHT'S ANALYSIS ===" if not focus else "=== OTHER TRACKED TICKERS (compact — ask for detail on any of these) ===")
         for a in analyses:
-            mem = memory_map.get(a.ticker, "")
+            if focus and a.ticker.upper() == focus:
+                continue  # already shown in full above
             wl = watchlist_map.get(a.ticker)
             position_line = _format_position(wl, a.current_price) if wl else "Position:       Not in user's watchlist.\n"
+            if focus:
+                lines.append(f"{a.ticker}: {_format_analysis_compact(a, position_line)}")
+                continue
+            mem = memory_map.get(a.ticker, "")
             lines.append(f"\n{a.ticker}:")
             lines.append(_format_analysis(a, position_line))
             if mem:

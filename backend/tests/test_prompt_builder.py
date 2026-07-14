@@ -76,3 +76,86 @@ class TestDeepBlock:
         db_session.commit()
         _, dynamic = build_system_prompt("nofocus@example.com", db_session)
         assert "FULL ANALYSIS" not in dynamic
+
+
+class TestBuildTickerDossier:
+    """build_ticker_dossier() is reused by both the initial focus ticker and the
+    get_stock_analysis tool — one function, so quality can't drift between the two paths."""
+
+    def test_returns_full_dossier_matching_focus_ticker_path(self, db_session):
+        _seed_analysis(
+            db_session, "PBTOOL",
+            conviction_score=61, bull_case="Cheap on forward earnings.",
+            bear_case="Margin compression risk.",
+        )
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("pbtool", db_session, "u@example.com")
+        assert "PBTOOL — FULL ANALYSIS" in dossier
+        assert "61/100" in dossier
+        assert "Cheap on forward earnings." in dossier
+        assert "Margin compression risk." in dossier
+
+    def test_unknown_ticker_returns_friendly_message_not_crash(self, db_session):
+        from services.prompt_builder import build_ticker_dossier
+        result = build_ticker_dossier("ZZNOPE", db_session, "u@example.com")
+        assert "No analysis available" in result
+        assert "ZZNOPE" in result
+
+    def test_includes_position_for_a_ticker_the_user_holds(self, db_session):
+        _seed_analysis(db_session, "PBPOS")
+        db_session.add(WatchlistItem(user_email="holder@example.com", ticker="PBPOS", shares=10, avg_cost=40.0))
+        db_session.commit()
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("PBPOS", db_session, "holder@example.com")
+        assert "10 shares" in dossier
+        assert "avg cost $40.00" in dossier
+
+
+class TestCompactOtherTickers:
+    """In a ticker-scoped conversation, every OTHER ticker should be a cheap numeric line —
+    keeping everything needed for portfolio-wide screening, dropping only prose."""
+
+    def test_other_ticker_gets_compact_line_not_full_paragraph(self, db_session):
+        _seed_analysis(db_session, "PBFOCUS", conviction_score=70)
+        _seed_analysis(
+            db_session, "PBOTHER",
+            conviction_score=55, rsi=28.0,
+        )
+        db_session.add(WatchlistItem(user_email="u2@example.com", ticker="PBFOCUS"))
+        db_session.add(WatchlistItem(user_email="u2@example.com", ticker="PBOTHER"))
+        db_session.commit()
+        _, dynamic = build_system_prompt("u2@example.com", db_session, conversation_ticker="PBFOCUS")
+        assert "PBOTHER: BUY" in dynamic
+        assert "RSI 28.0" in dynamic
+        assert "Solid setup." not in dynamic.split("OTHER TRACKED TICKERS")[1]
+
+    def test_other_ticker_keeps_position_and_important_flag(self, db_session):
+        _seed_analysis(db_session, "PBFOCUS2", conviction_score=70)
+        _seed_analysis(
+            db_session, "PBHELD", is_important_day=True,
+            importance_reason="Verdict reversal.",
+        )
+        db_session.add(WatchlistItem(user_email="u3@example.com", ticker="PBFOCUS2"))
+        db_session.add(WatchlistItem(user_email="u3@example.com", ticker="PBHELD", shares=5, avg_cost=100.0))
+        db_session.commit()
+        _, dynamic = build_system_prompt("u3@example.com", db_session, conversation_ticker="PBFOCUS2")
+        assert "5 shares" in dynamic and "avg cost $100.00" in dynamic
+        assert "⭐" in dynamic  # important-day flag survives the trim
+
+    def test_focus_ticker_not_duplicated_in_compact_loop(self, db_session):
+        _seed_analysis(db_session, "PBDUP", conviction_score=70)
+        db_session.add(WatchlistItem(user_email="u4@example.com", ticker="PBDUP"))
+        db_session.commit()
+        _, dynamic = build_system_prompt("u4@example.com", db_session, conversation_ticker="PBDUP")
+        # The compact-loop line format is "TICKER: verdict ..." — that specific pattern
+        # must not appear a second time for the ticker already shown in full above.
+        assert dynamic.count("PBDUP: BUY") == 0
+
+    def test_general_chat_keeps_full_detail_unchanged(self, db_session):
+        """No focus ticker => the trim doesn't apply; general chat is exactly the case
+        meant to synthesize across the whole portfolio, so it keeps full paragraphs."""
+        _seed_analysis(db_session, "PBGEN2")
+        db_session.add(WatchlistItem(user_email="u5@example.com", ticker="PBGEN2"))
+        db_session.commit()
+        _, dynamic = build_system_prompt("u5@example.com", db_session)
+        assert "Reasoning:    Solid setup." in dynamic  # full paragraph label, not the compact line
