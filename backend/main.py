@@ -10,7 +10,7 @@ from database import Base, engine, SessionLocal
 from models import AppConfig, StockReport  # noqa: F401 — ensures tables are registered
 from routers import auth, watchlist, analysis, simulation, conversations, streaming, jobs, translate, portfolio, admin, feedback
 
-app = FastAPI(title="FinanceCompanion API", version="0.1.0")
+app = FastAPI(title="FinanceCompanion API", version="0.2.0")
 
 _raw_origins = os.getenv("FRONTEND_URL", "http://localhost:3000")
 _allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]

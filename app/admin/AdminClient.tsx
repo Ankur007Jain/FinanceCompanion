@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import ThemeToggle from "@/app/components/ThemeToggle";
 import Logo from "@/app/components/Logo";
+import pkg from "../../package.json";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 const SANS = "'IBM Plex Sans', sans-serif";
@@ -34,6 +35,7 @@ export default function AdminClient({ idToken }: { idToken: string }) {
   const [feedback, setFeedback] = useState<FeedbackItem[]>([]);
   const [costs, setCosts] = useState<NightlyCost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [backendVersion, setBackendVersion] = useState<string | null>(null);
 
   async function loadAll() {
     setLoading(true);
@@ -46,6 +48,7 @@ export default function AdminClient({ idToken }: { idToken: string }) {
     ]);
     setUsers(u); setTickers(t); setFeedback(f); setCosts(c);
     setLoading(false);
+    fetch(`${API}/health`).then(r => r.ok ? r.json() : null).then(h => setBackendVersion(h?.version ?? null)).catch(() => {});
   }
 
   useEffect(() => { loadAll(); }, []);
@@ -252,6 +255,10 @@ export default function AdminClient({ idToken }: { idToken: string }) {
             )}
           </>
         )}
+
+        <div style={{ marginTop: 32, textAlign: "center", fontSize: 11, fontFamily: MONO, color: "var(--t-text-muted)" }}>
+          Frontend v{pkg.version} · Backend v{backendVersion ?? "—"}
+        </div>
       </div>
     </div>
   );
