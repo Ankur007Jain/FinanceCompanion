@@ -17,8 +17,8 @@ from database import SessionLocal, get_db
 from models import Conversation, Message, User
 from routers.auth import get_current_user
 from schemas import SendMessageRequest
-from services.model_router import _estimate_max_tokens, _select_model
-from services.prompt_builder import build_system_prompt
+from services.model_router import _SONNET, _estimate_max_tokens
+from services.prompt_builder import build_system_prompt, build_ticker_dossier
 
 router = APIRouter(prefix="/conversations", tags=["streaming"])
 
@@ -35,6 +35,24 @@ _WEB_SEARCH_TOOL = {
             "query": {"type": "string", "description": "The search query"}
         },
         "required": ["query"],
+    },
+}
+
+_GET_STOCK_ANALYSIS_TOOL = {
+    "name": "get_stock_analysis",
+    "description": (
+        "Get the full analysis for a ticker — verdict, conviction, bull/bear case, reasoning, "
+        "news, ripple effects, memory of past lessons, and 5-day history. Use this when the user "
+        "asks specifically about a ticker other than the one in focus (you only have a compact "
+        "numeric summary for those). Works for any ticker, not just ones the user tracks. Prefer "
+        "this over web_search for anything we've already analyzed — it's our own vetted data."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string", "description": "The stock ticker symbol, e.g. NVDA"}
+        },
+        "required": ["ticker"],
     },
 }
 
@@ -106,10 +124,24 @@ async def stream_message(
     base_prompt, dynamic_context = build_system_prompt(user.email, db, conv.ticker)
     api_system = [{"type": "text", "text": base_prompt, "cache_control": {"type": "ephemeral"}}]
     if dynamic_context:
-        api_system.append({"type": "text", "text": dynamic_context})
+        # Also cacheable: rebuilt fresh from the DB every call, so this only ever changes
+        # when the underlying data actually changes (new nightly run, watchlist edit) — never
+        # a staleness risk. Was silently never caching before (cache_read_tokens = 0 on every
+        # production message): the static block alone is ~500 tokens, under Anthropic's
+        # ~1024-token minimum to cache on Sonnet. This block easily clears it (~28k tokens
+        # observed), so a 2nd+ message in the same conversation now hits it at ~10% cost
+        # instead of paying full price for identical content again.
+        api_system.append({"type": "text", "text": dynamic_context, "cache_control": {"type": "ephemeral"}})
 
     max_tokens = _estimate_max_tokens(body.content)
-    model = _select_model(body.content, max_tokens)
+    # Always Sonnet — a router that downgraded short messages to Haiku was letting real
+    # financial advice ("mrk" -> "MRK: Hold, don't sell today.") through the cheaper model,
+    # because it judged model choice from the current message alone with no notion that
+    # "no" or "1 more" is a continuation of an active buy/sell decision. Confirmed in
+    # production logs before removing it. Quality is non-negotiable; Haiku stays reserved
+    # for title generation and the overnight simple-field rewrites, neither of which is
+    # advice a user acts on with money.
+    model = _SONNET
 
     title_task = asyncio.create_task(_generate_title(body.content)) if is_first else None
 
@@ -170,7 +202,7 @@ async def stream_message(
                     max_tokens=max_tokens,
                     system=api_system,
                     messages=messages,
-                    tools=[_WEB_SEARCH_TOOL],
+                    tools=[_WEB_SEARCH_TOOL, _GET_STOCK_ANALYSIS_TOOL],
                 ) as stream:
                     async for event in stream:
                         etype = getattr(event, "type", "")
@@ -224,6 +256,15 @@ async def stream_message(
                         query = tu["input"].get("query", "")
                         result = await _execute_web_search(query)
                         yield f"data: {json.dumps({'type': 'tool_result', 'query': query})}\n\n"
+                        tool_results.append({
+                            "type": "tool_result",
+                            "tool_use_id": tu["id"],
+                            "content": result,
+                        })
+                    elif tu["name"] == "get_stock_analysis":
+                        pivot_ticker = tu["input"].get("ticker", "")
+                        result = build_ticker_dossier(pivot_ticker, session, user.email)
+                        yield f"data: {json.dumps({'type': 'tool_result', 'query': pivot_ticker})}\n\n"
                         tool_results.append({
                             "type": "tool_result",
                             "tool_use_id": tu["id"],
