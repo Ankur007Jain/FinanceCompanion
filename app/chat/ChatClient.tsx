@@ -4,6 +4,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import Logo from "../components/Logo";
+import { ExpandedDetail, VERDICT_META, MONO } from "@/app/components/StockDetail";
+import type { Analysis } from "@/app/components/StockDetail";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 
@@ -48,6 +50,11 @@ export default function ChatClient({
   const [showSidebar, setShowSidebar] = useState(false);
   const [lastSystemPrompt, setLastSystemPrompt] = useState("");
   const [showSystemPrompt, setShowSystemPrompt] = useState(false);
+  // Stock detail panel — for ticker-scoped conversations, the full card (same
+  // component as the Stocks tab) opens beside the chat so there's no back-and-forth.
+  const [stockPanelOpen, setStockPanelOpen] = useState(false);
+  const [tickerAnalysis, setTickerAnalysis] = useState<Analysis | null>(null);
+  const txCacheRef = useRef<Record<string, Record<string, string | null>>>({});
   const canViewPrompt = userEmail === "ankur07jain@gmail.com";
   const messagesContainerRef = useRef<HTMLDivElement>(null);
   // Auto-follow new content only while the user is already at (or near) the bottom —
@@ -80,6 +87,19 @@ export default function ChatClient({
     if (activeConvId) loadMessages(activeConvId);
     else setMessages([]);
   }, [activeConvId]);
+
+  const activeTicker = conversations.find(c => c.id === activeConvId)?.ticker ?? null;
+  useEffect(() => {
+    setStockPanelOpen(false);
+    setTickerAnalysis(null);
+    if (!activeTicker) return;
+    let cancelled = false;
+    (async () => {
+      const r = await fetch(`${API}/analysis/${activeTicker}/latest?id_token=${encodeURIComponent(idToken)}`);
+      if (r.ok && !cancelled) setTickerAnalysis(await r.json());
+    })();
+    return () => { cancelled = true; };
+  }, [activeTicker, idToken]);
   useEffect(() => {
     const forced = scrollOnNextRenderRef.current;
     scrollOnNextRenderRef.current = false;
@@ -490,6 +510,53 @@ export default function ChatClient({
 
         {/* Chat area */}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+          {/* Ticker strip — live context for ticker-scoped chats; tap for the full card */}
+          {activeTicker && (
+            <button
+              data-testid="ticker-strip"
+              onClick={() => tickerAnalysis && setStockPanelOpen(o => !o)}
+              style={{
+                display: "flex", alignItems: "center", gap: "0.75rem", width: "100%",
+                padding: isMobile ? "0.55rem 1rem" : "0.55rem 1.5rem", flexShrink: 0,
+                background: "var(--t-surface)", border: "none", borderBottom: "1px solid var(--t-border)",
+                cursor: tickerAnalysis ? "pointer" : "default", textAlign: "left",
+              }}
+            >
+              <span style={{ fontWeight: 700, fontFamily: MONO, fontSize: "0.9rem", color: "var(--t-text)" }}>{activeTicker}</span>
+              {tickerAnalysis ? (
+                <>
+                  {tickerAnalysis.current_price != null && (
+                    <span style={{ fontFamily: MONO, fontSize: "0.85rem", fontWeight: 600, color: "var(--t-text)" }}>
+                      ${tickerAnalysis.current_price.toFixed(2)}
+                    </span>
+                  )}
+                  {tickerAnalysis.day_change_pct != null && (
+                    <span style={{ fontFamily: MONO, fontSize: "0.78rem", fontWeight: 600, color: tickerAnalysis.day_change_pct >= 0 ? "var(--t-green)" : "var(--t-red)" }}>
+                      {tickerAnalysis.day_change_pct >= 0 ? "▲" : "▼"}{Math.abs(tickerAnalysis.day_change_pct).toFixed(2)}%
+                    </span>
+                  )}
+                  {tickerAnalysis.verdict && (() => {
+                    const vm = VERDICT_META[tickerAnalysis.verdict] ?? VERDICT_META.WATCH;
+                    return (
+                      <span style={{ fontSize: "0.62rem", fontFamily: MONO, fontWeight: 700, padding: "2px 8px", borderRadius: 4, background: vm.color, color: "#fff", flexShrink: 0 }}>
+                        {tickerAnalysis.verdict}
+                      </span>
+                    );
+                  })()}
+                  {tickerAnalysis.conviction_score != null && !isMobile && (
+                    <span style={{ fontSize: "0.72rem", fontFamily: MONO, color: "var(--t-text-muted)" }}>
+                      {tickerAnalysis.conviction_score}/100
+                    </span>
+                  )}
+                  <span style={{ marginLeft: "auto", fontSize: "0.75rem", color: "var(--t-accent)", flexShrink: 0 }}>
+                    {stockPanelOpen ? "Hide details ✕" : "View details →"}
+                  </span>
+                </>
+              ) : (
+                <span style={{ fontSize: "0.75rem", color: "var(--t-text-muted)" }}>no analysis yet</span>
+              )}
+            </button>
+          )}
           <div ref={messagesContainerRef} style={{ flex: 1, overflowY: "auto", padding: isMobile ? "1rem" : "1.5rem" }}>
             {messages.length === 0 && (
               <div style={{ textAlign: "center", color: "var(--t-text-muted)", paddingTop: "4rem" }}>
@@ -706,6 +773,41 @@ export default function ChatClient({
             )}
           </div>
         </div>
+
+        {/* Stock detail panel — same ExpandedDetail component as the Stocks tab.
+            Desktop: non-modal side panel so the chat stays visible and usable.
+            Mobile: full-screen sheet. */}
+        {stockPanelOpen && tickerAnalysis && (
+          <div
+            data-testid="stock-panel"
+            style={isMobile ? {
+              position: "fixed", inset: 0, zIndex: 80, background: "var(--t-bg)",
+              display: "flex", flexDirection: "column",
+            } : {
+              width: 540, flexShrink: 0, borderLeft: "1px solid var(--t-border)",
+              background: "var(--t-bg)", display: "flex", flexDirection: "column",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.65rem 1rem", borderBottom: "1px solid var(--t-border)", background: "var(--t-surface)", flexShrink: 0 }}>
+              <span style={{ fontWeight: 700, fontFamily: MONO, fontSize: "0.9rem", color: "var(--t-text)" }}>
+                {activeTicker} · {tickerAnalysis.analysis_date}
+              </span>
+              <button
+                onClick={() => setStockPanelOpen(false)}
+                aria-label="Close details"
+                style={{ background: "none", border: "none", cursor: "pointer", fontSize: 18, color: "var(--t-text-muted)", lineHeight: 1, padding: "2px 6px" }}
+              >
+                ✕
+              </button>
+            </div>
+            <div style={{ flex: 1, overflowY: "auto" }}>
+              {/* isMobile here means "narrow container": the 540px panel needs the stacked
+                  story-above-rail layout just like a phone does, or the story column gets
+                  squeezed to ~230px next to the data rail. */}
+              <ExpandedDetail a={tickerAnalysis} isMobile={true} idToken={idToken} txCacheRef={txCacheRef} />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

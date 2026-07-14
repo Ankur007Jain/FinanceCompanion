@@ -59,6 +59,9 @@ test.describe("Story layout — desktop", () => {
 
   test("expanded card has a story column with prose sections in reading order", async ({ page }) => {
     await expandCard(page);
+    // Simple mode may show a Haiku-rewritten version (generated asynchronously
+    // after ingest) — switch to Technical to assert the raw seeded text.
+    await page.getByRole("button", { name: "Technical" }).click();
     await expect(page.getByText("E2E story reasoning", { exact: false })).toBeVisible();
     // Bull/Bear prose lives under the story, not in scenario boxes
     await expect(page.getByText("Earnings beat drives re-rating.")).toBeVisible();
@@ -91,7 +94,7 @@ test.describe("Story layout — desktop", () => {
     await past.scrollIntoViewIfNeeded();
     await past.click();
     await expect(
-      page.getByText("Verdict flipped BUY to WATCH after breaking key support.")
+      page.getByText("Verdict flipped BUY to WATCH after breaking key support.").first()
     ).toBeVisible({ timeout: 8_000 });
   });
 });
@@ -107,6 +110,7 @@ test.describe("Story layout — mobile viewport", () => {
 
   test("expanded card shows story column and rail stacked, no horizontal overflow", async ({ page }) => {
     await expandCard(page);
+    await page.getByRole("button", { name: "Technical" }).click();
     await expect(page.getByText("E2E story reasoning", { exact: false })).toBeVisible();
     await expect(page.getByText("90-Day Scenarios")).toBeVisible();
     const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
