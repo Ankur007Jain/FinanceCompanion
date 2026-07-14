@@ -44,6 +44,31 @@ def _run_memory_update(ticker: str, verdict: str, reasoning: str, news_summary: 
         session.close()
 
 
+def _check_target_sanity(verdict, current_price, entry_target, exit_target, stop_loss) -> list[str]:
+    """Flags nonsensical target combinations — a stop above current price on a BUY, an exit
+    below entry, an entry wildly far from the actual price. Doesn't block ingest (a missing
+    ticker is worse than an imperfect one); just surfaces a warning into data_conflicts so
+    both the chat AI and the report treat the analysis with the same caution as a real
+    cross-source data conflict. Catches a specific hallucination class: a plausible-looking
+    number that doesn't actually cohere with the rest of the verdict."""
+    issues = []
+    if current_price is None:
+        return issues
+    if verdict == "BUY":
+        if stop_loss is not None and stop_loss >= current_price:
+            issues.append(f"stop_loss ${stop_loss} is at/above current price ${current_price} for a BUY")
+        if entry_target is not None and exit_target is not None and exit_target <= entry_target:
+            issues.append(f"exit_target ${exit_target} is not above entry_target ${entry_target} for a BUY")
+        if entry_target is not None and abs(entry_target - current_price) / current_price > 0.3:
+            issues.append(f"entry_target ${entry_target} is >30% from current price ${current_price}")
+    elif verdict == "SELL":
+        if stop_loss is not None and stop_loss <= current_price:
+            issues.append(f"stop_loss ${stop_loss} is at/below current price ${current_price} for a SELL")
+        if entry_target is not None and exit_target is not None and exit_target >= entry_target:
+            issues.append(f"exit_target ${exit_target} is not below entry_target ${entry_target} for a SELL")
+    return issues
+
+
 def _run_simple_fields(analysis_id: str):
     """Pre-generate plain-English fields after ingest — without this, the UI's default
     Simple mode falls back to a live translation on every card expand, for every user."""
@@ -161,6 +186,13 @@ def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTas
     # Synthesize events_json from earnings_date when the agent sends it but not events_json
     if not mapped.get("events_json") and body.earnings_date:
         mapped["events_json"] = json.dumps([{"date": body.earnings_date, "description": "Earnings"}])
+
+    target_issues = _check_target_sanity(
+        body.verdict, body.current_price, body.entry_target, body.exit_target, body.stop_loss
+    )
+    if target_issues:
+        warning = "Target sanity: " + "; ".join(target_issues)
+        mapped["data_conflicts"] = f"{mapped['data_conflicts']}; {warning}" if mapped.get("data_conflicts") else warning
 
     existing = db.query(StockAnalysis).filter(
         StockAnalysis.ticker == body.ticker,

@@ -155,6 +155,8 @@ def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnal
         lines.append(f"News:           {a.news_summary}")
     if a.ripple_analysis:
         lines.append(f"Ripple effects: {a.ripple_analysis}")
+    if a.data_conflicts:
+        lines.append(f"Data caution:   {a.data_conflicts}")
     if a.events_json:
         try:
             events = json.loads(a.events_json)

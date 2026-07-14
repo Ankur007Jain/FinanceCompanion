@@ -75,6 +75,9 @@ Analyst consensus: {d.get('analyst', 'HOLD')}  Analyst upside: {d.get('upside_pc
 Recent news: {news_str}
 Next earnings: {d.get('earnings_date') or 'Unknown'}
 
+Never invent a number. Every figure in your reasoning/bull_case/bear_case must come from the
+data above — if you don't have a figure, say so rather than stating an invented one as fact.
+
 Reply with exactly this JSON object and nothing else:
 {{
   "verdict": "BUY or HOLD or SELL or WATCH",

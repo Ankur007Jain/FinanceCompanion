@@ -161,7 +161,7 @@ jobs:
             - S&P 500 today: sp500_day_chg% → positive = macro tailwind, negative = headwind
             - Sector ETF (sector_etf) today: sector_day_chg% → sector momentum
             - Relative strength vs sector: relative_strength_1d% → positive = stock outperforming sector
-            - Finnhub cross-check: fh_price and fh_analyst (if conflicts in data_conflicts field, be more conservative)
+            - Finnhub cross-check: fh_price and fh_analyst (if conflicts in data_conflicts field, be more conservative — this field can also carry a target-sanity warning from a prior night, e.g. a stop_loss that didn't cohere with the verdict; treat either kind the same way)
             - Sector-type rules:
               · Utilities / Real Estate: rate-sensitive — factor in macro rates more than RSI
               · Semiconductors (SOXX): high beta, amplify the sector move, tighten stop_loss
@@ -196,6 +196,11 @@ jobs:
             reports — verdict flips that proved wrong, targets that were stale anchors, patterns that
             didn't hold. Do not repeat a mistake the memory explicitly warns about; if you disagree
             with a lesson, say why in your reasoning rather than silently ignoring it.
+
+            **Never invent a number.** Every price, percentage, or date you cite in reasoning/bull_case/
+            bear_case/thesis_invalidation must come from the summary JSON, the deep fields above, or
+            memory — not from general knowledge or a plausible-sounding guess. If you don't have a figure,
+            say so explicitly rather than stating an invented one as fact.
 
             **Quality rule:** weak or conflicting signals → WATCH. Wrong advice is worse than no advice.
 
@@ -276,6 +281,12 @@ jobs:
 
             When verdict_agreement=false, write split_reason as one sentence explaining the key disagreement
             (e.g. "Claude sees oversold RSI as a buy signal; Gemini flags near-term earnings risk as bearish").
+
+            **Even when verdict_agreement=true**, compare verdict_a's and verdict_b's conviction_score. If
+            they differ by 30+ points, still write split_reason noting the confidence gap (e.g. "Both models
+            say BUY, but confidence diverges: Claude 75/100 vs Gemini 40/100 — Gemini sees more risk in the
+            setup"). Agreeing on the verdict isn't the same as agreeing on how strongly to hold it — surface
+            the gap rather than silently averaging or picking one.
 
             Store final_verdict, verdict_a, verdict_b, verdict_agreement, split_reason in working memory
             for Step 4. The `verdict` field in Step 4 must be final_verdict (the judge's output).
