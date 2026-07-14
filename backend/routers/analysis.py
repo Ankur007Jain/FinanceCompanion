@@ -243,8 +243,10 @@ You have access to the last 30 days of AI-generated daily analyses for a specifi
 Each analysis includes: verdict (BUY/HOLD/SELL/WATCH), price, conviction score (0-100), reasoning,
 bull case, bear case, entry target, exit target, stop loss, and scenario probabilities.
 
-Write a concise analytical report in markdown. Be specific with numbers and dates. No jargon.
-Write like a smart friend who tracked this stock for a month and is catching you up.
+Write a concise analytical report in markdown. Be specific with numbers and dates — but every
+number and date must come from the analyses given to you, never invented or estimated to sound
+precise. If a figure isn't in the data, describe the trend in words instead of guessing a number.
+No jargon. Write like a smart friend who tracked this stock for a month and is catching you up.
 Use only: ## headers, **bold**, bullet points, and plain text. Never use strikethrough (~~)."""
 
 _REPORT_PROMPT = """Here are the past {n} daily analyses for {ticker}, newest first:

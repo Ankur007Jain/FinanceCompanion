@@ -35,6 +35,8 @@ async def update_memory_from_report(ticker: str, report_content: str, db: Sessio
         f"Existing memory:\n{existing or '(none)'}\n\n"
         "Return a single updated memory paragraph (max 1200 chars) that keeps the existing context AND appends "
         "a short 'Past mistakes to avoid:' section with 2-3 specific bullet points. "
+        "Every number or date you cite must come from the report or existing memory above — never invent "
+        "one to sound precise. "
         "If the report shows no clear mistakes, reply exactly: NO_UPDATE"
     )
 
@@ -86,6 +88,7 @@ async def maybe_update_stock_memory(
         "a trend change, an upcoming event that matters, or a verdict reversal. "
         "If nothing important is new, reply with exactly: NO_UPDATE\n"
         "If updating, return the FULL updated memory as a single paragraph (max 1200 chars). "
+        "Every number or date must come from what's given above — never invent one. "
         "Do not include dates or bullet points — write as flowing prose."
     )
 
