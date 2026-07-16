@@ -100,11 +100,17 @@ def _format_analysis_compact(a: StockAnalysis, position_line: str) -> str:
     P&L, day move, conviction, targets, RSI, 52w position, MA50/200, analyst target,
     upcoming events, the ⭐ important-day flag — and drops only the prose (reasoning,
     memory, news) that's expensive and only valuable once they're actually asking about
-    this specific ticker. That's a get_stock_analysis tool call away the moment they do."""
+    this specific ticker. That's a get_stock_analysis tool call away the moment they do.
+
+    Sector/category and a short ripple snippet ride along too — cheap (a few hundred
+    tokens across a whole watchlist) but enough for the model to make a cross-ticker
+    connection unprompted (e.g. MU's ripple text naming NVIDIA, with NVDA sitting right
+    there in the same list) instead of needing a separate classifier to find it."""
     direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
     flag = " ⭐" if a.is_important_day else ""
     conv = f"{a.conviction_score}/100" if a.conviction_score is not None else "N/A"
     position = position_line.strip().removeprefix("Position:").strip()
+    sector = f"  [{a.sector}]" if a.sector else ""
     events = ""
     if a.events_json:
         try:
@@ -114,13 +120,17 @@ def _format_analysis_compact(a: StockAnalysis, position_line: str) -> str:
                 events = "  Events: " + " | ".join(upcoming)
         except Exception:
             pass
+    ripple = ""
+    if a.ripple_analysis:
+        snippet = a.ripple_analysis.strip()[:120]
+        ripple = f"  Ripple: {snippet}{'…' if len(a.ripple_analysis.strip()) > 120 else ''}"
     return (
-        f"{a.verdict}{flag}  {position}  "
+        f"{a.verdict}{flag}{sector}  {position}  "
         f"${_fmt(a.current_price)} {direction}{abs(a.day_change_pct or 0):.1f}%  "
         f"Conv {conv}  RSI {a.rsi or 'N/A'}  52wk-pos {_fmt(a.range_position_pct, 0)}%  "
         f"MA50/200 ${_fmt(a.ma_50)}/${_fmt(a.ma_200)}  "
         f"targets: entry ${a.entry_target or 'N/A'} exit ${a.exit_target or 'N/A'} stop ${a.stop_loss or 'N/A'}  "
-        f"Analyst {a.analyst_consensus or 'N/A'} tgt ${a.target_price_mean or 'N/A'}{events}"
+        f"Analyst {a.analyst_consensus or 'N/A'} tgt ${a.target_price_mean or 'N/A'}{events}{ripple}"
     )
 
 

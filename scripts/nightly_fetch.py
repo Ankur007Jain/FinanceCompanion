@@ -66,8 +66,13 @@ try:
 except Exception:
     support_20d = resistance_20d = pivot = piv_r1 = piv_s1 = None
 
-# Sector & S&P 500 context — relative performance
+# Sector & S&P 500 context — relative performance. ETFs have no GICS sector, so fall
+# back to yfinance's fund "category" (e.g. "Precious Metals", "Large Blend") — without
+# this, ~40% of a typical watchlist (anything that's an ETF, not a single stock) shows
+# up with a blank sector tag everywhere it's surfaced.
 sector, industry = info.get("sector", "") or "", info.get("industry", "") or ""
+if not sector:
+    sector = info.get("category", "") or ""
 SECTOR_ETF_MAP = {
     "Technology": "XLK", "Healthcare": "XLV",
     "Financial Services": "XLF", "Financials": "XLF",

@@ -129,6 +129,25 @@ class TestCompactOtherTickers:
         assert "RSI 28.0" in dynamic
         assert "Solid setup." not in dynamic.split("OTHER TRACKED TICKERS")[1]
 
+    def test_other_ticker_shows_sector_and_ripple_snippet(self, db_session):
+        """Sector/category + a short ripple snippet ride along in the compact line so
+        the model can make cross-ticker connections (e.g. MU's ripple text naming
+        NVIDIA) without a full get_stock_analysis call for every tracked ticker."""
+        _seed_analysis(db_session, "PBFOCUS3", conviction_score=70)
+        _seed_analysis(
+            db_session, "PBSECTOR",
+            sector="Technology",
+            ripple_analysis="X's HBM dominance ripples directly into Y's pricing power for AI accelerators, a genuinely long snippet that exceeds one hundred twenty characters easily.",
+        )
+        db_session.add(WatchlistItem(user_email="u7@example.com", ticker="PBFOCUS3"))
+        db_session.add(WatchlistItem(user_email="u7@example.com", ticker="PBSECTOR"))
+        db_session.commit()
+        _, dynamic = build_system_prompt("u7@example.com", db_session, conversation_ticker="PBFOCUS3")
+        other_block = dynamic.split("OTHER TRACKED TICKERS")[1]
+        assert "[Technology]" in other_block
+        assert "Ripple: X's HBM dominance ripples directly into Y's pricing power" in other_block
+        assert "…" in other_block  # truncated, not the full paragraph
+
     def test_other_ticker_keeps_position_and_important_flag(self, db_session):
         _seed_analysis(db_session, "PBFOCUS2", conviction_score=70)
         _seed_analysis(
