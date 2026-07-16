@@ -1,0 +1,34 @@
+name: Ticker Correlation Matrix
+
+on:
+  schedule:
+    # 12 PM CST (UTC-6) = 6 PM UTC, Mon-Fri — well after the nightly batches have
+    # had multiple chances to complete for the day, so market_data_cache is fresh.
+    - cron: "0 18 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  correlations:
+    name: "Compute ticker correlation matrix"
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install deps
+        run: pip install yfinance pandas numpy scipy
+
+      - name: Compute and store correlations
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          JOB_SECRET: ${{ secrets.JOB_SECRET }}
+        run: python3 scripts/compute_correlations.py

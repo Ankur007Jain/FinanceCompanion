@@ -306,3 +306,21 @@ class Feedback(Base):
     user_email = Column(String, ForeignKey("users.email"), nullable=False)
     message = Column(Text, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class TickerCorrelation(Base):
+    """Market-beta-adjusted (partial) correlation between two tickers' daily returns —
+    global, not per-user, same reasoning as StockAnalysis. ticker_a < ticker_b
+    alphabetically so each pair is stored once. Only pairs that survive
+    Benjamini-Hochberg FDR correction (across all computed pairs) are significant=True;
+    everything else is kept for the record but never surfaced to chat, so a pair that's
+    correlated only by chance never gets presented as a real relationship."""
+    __tablename__ = "ticker_correlations"
+    ticker_a = Column(String, primary_key=True)
+    ticker_b = Column(String, primary_key=True)
+    corr_30d = Column(Float)
+    corr_90d = Column(Float)
+    corr_180d = Column(Float)
+    p_value_90d = Column(Float)
+    significant = Column(Boolean, nullable=False, default=False)
+    computed_date = Column(Date, nullable=False)

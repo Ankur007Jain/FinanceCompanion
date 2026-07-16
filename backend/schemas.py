@@ -267,6 +267,21 @@ class IngestSnapshotRequest(BaseModel):
     calendar_json: Optional[str] = None   # earnings calendar as JSON string
 
 
+class CorrelationPair(BaseModel):
+    ticker_a: str
+    ticker_b: str
+    corr_30d: Optional[float] = None
+    corr_90d: Optional[float] = None
+    corr_180d: Optional[float] = None
+    p_value_90d: Optional[float] = None
+    significant: bool = False
+
+
+class IngestCorrelationsRequest(BaseModel):
+    computed_date: date
+    pairs: list[CorrelationPair]
+
+
 class IngestAnalysisRequest(BaseModel):
     ticker: str
     analysis_date: date

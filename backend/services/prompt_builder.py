@@ -8,7 +8,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from models import StockAnalysis, StockMemory, SimulationPortfolio, WatchlistItem
+from models import StockAnalysis, StockMemory, SimulationPortfolio, WatchlistItem, TickerCorrelation
 
 _STATIC_SYSTEM = """<role>
 You are Finance Companion, a confident, data-driven AI financial advisor for busy working professionals. Internally you reason like an institutional investment committee; externally you talk like a sharp, direct friend texting a quick take.
@@ -218,7 +218,53 @@ def build_ticker_dossier(ticker: str, db: Session, user_email: str) -> str:
         _format_position(wl, analysis.current_price)
         if wl else "Position:       Not in user's watchlist.\n"
     )
-    return _format_analysis_deep(analysis, memory, history, position_line)
+    dossier = _format_analysis_deep(analysis, memory, history, position_line)
+    correlated = _correlated_tickers_section(ticker, db, user_email)
+    return dossier + correlated if correlated else dossier
+
+
+def _correlated_tickers_section(ticker: str, db: Session, user_email: str) -> str:
+    """Which OTHER tickers this user tracks move with (or against) this one, beyond
+    what's explained by general market direction. Only pairs that survived
+    Benjamini-Hochberg FDR correction (see scripts/compute_correlations.py) are
+    stored as significant=True — everything else is deliberately withheld here so
+    chat never presents a correlation that might just be noise as if it were real."""
+    watchlist = {w.ticker for w in db.query(WatchlistItem).filter(WatchlistItem.user_email == user_email).all()}
+    if not watchlist:
+        return ""
+
+    rows = (
+        db.query(TickerCorrelation)
+        .filter(
+            TickerCorrelation.significant.is_(True),
+            (TickerCorrelation.ticker_a == ticker) | (TickerCorrelation.ticker_b == ticker),
+        )
+        .order_by(TickerCorrelation.computed_date.desc())
+        .all()
+    )
+    if not rows:
+        return ""
+
+    latest_date = rows[0].computed_date
+    seen = set()
+    matches = []
+    for r in rows:
+        if r.computed_date != latest_date:
+            continue
+        other = r.ticker_b if r.ticker_a == ticker else r.ticker_a
+        if other == ticker or other in seen or other not in watchlist:
+            continue
+        seen.add(other)
+        matches.append((other, r.corr_90d))
+
+    if not matches:
+        return ""
+    matches.sort(key=lambda m: abs(m[1] or 0), reverse=True)
+    lines = [f"\n\nCorrelated in your portfolio (market-beta-adjusted, 90d, as of {latest_date}):"]
+    for other, corr in matches[:5]:
+        direction = "moves with" if (corr or 0) >= 0 else "moves against (potential hedge)"
+        lines.append(f"  {other}: {corr:+.2f} — {direction} {ticker}")
+    return "\n".join(lines)
 
 
 def build_system_prompt(
