@@ -218,22 +218,29 @@ def build_system_prompt(
 ) -> tuple[str, str]:
     today = date.today()
 
-    watchlist = db.query(WatchlistItem).filter(WatchlistItem.user_email == user_email).all()
+    # Ordered explicitly (not just for display) — this text becomes part of the cached
+    # system prompt, and an unordered .in_() query has no guaranteed row order between
+    # calls, which silently breaks Anthropic's exact-prefix cache match on every turn.
+    watchlist = db.query(WatchlistItem).filter(
+        WatchlistItem.user_email == user_email
+    ).order_by(WatchlistItem.ticker).all()
     tickers = [w.ticker for w in watchlist]
     watchlist_map = {w.ticker: w for w in watchlist}
 
     analyses = db.query(StockAnalysis).filter(
         StockAnalysis.ticker.in_(tickers),
         StockAnalysis.analysis_date == today,
-    ).all() if tickers else []
+    ).order_by(StockAnalysis.ticker).all() if tickers else []
 
-    memories = db.query(StockMemory).filter(StockMemory.ticker.in_(tickers)).all() if tickers else []
+    memories = db.query(StockMemory).filter(
+        StockMemory.ticker.in_(tickers)
+    ).order_by(StockMemory.ticker).all() if tickers else []
     memory_map = {m.ticker: m.memory_narrative for m in memories}
 
     portfolios = db.query(SimulationPortfolio).filter(
         SimulationPortfolio.user_email == user_email,
         SimulationPortfolio.status == "open",
-    ).all()
+    ).order_by(SimulationPortfolio.ticker).all()
 
     lines = [f"Today: {today.isoformat()}\n"]
 

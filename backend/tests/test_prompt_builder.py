@@ -159,3 +159,16 @@ class TestCompactOtherTickers:
         db_session.commit()
         _, dynamic = build_system_prompt("u5@example.com", db_session)
         assert "Reasoning:    Solid setup." in dynamic  # full paragraph label, not the compact line
+
+    def test_general_chat_context_is_byte_identical_across_calls(self, db_session):
+        """Unordered .in_() queries have no guaranteed row order between calls, which
+        silently breaks Anthropic's exact-prefix cache match on every turn — this is what
+        production data showed: a fresh multi-thousand-token cache_write on nearly every
+        message in a general (non-ticker) conversation instead of write-once/read-many."""
+        for t in ["PBORD3", "PBORD1", "PBORD2"]:
+            _seed_analysis(db_session, t)
+            db_session.add(WatchlistItem(user_email="u6@example.com", ticker=t))
+        db_session.commit()
+        _, dynamic1 = build_system_prompt("u6@example.com", db_session)
+        _, dynamic2 = build_system_prompt("u6@example.com", db_session)
+        assert dynamic1 == dynamic2
