@@ -2,7 +2,13 @@ name: Nightly Stock Analysis
 
 on:
   schedule:
-    - cron: "0 4 * * 1-5"   # 11 PM CT Mon–Fri (4 AM UTC)
+    # 4 checks/day, Mon-Fri, ~5h apart — 4am UTC is the primary run (11 PM CT); the
+    # other three are free no-op retries when everything's already analyzed (the
+    # split job skips the whole analyze matrix, see has_work below) and a real,
+    # small retry of just the gap when a batch died mid-run (e.g. the shared Claude
+    # Code subscription's usage window was exhausted — retrying ~5h later lines up
+    # with that window resetting, rather than waiting a full day for the next run).
+    - cron: "0 4,9,14,19 * * 1-5"
   workflow_dispatch:          # manual trigger from GitHub UI
 
 permissions:
@@ -75,6 +81,10 @@ jobs:
       matrix:
         batch: ${{ fromJson(needs.split.outputs.batches) }}
       fail-fast: false   # one batch failing doesn't cancel the others
+      max-parallel: 6    # cap concurrent Claude sessions — all batches share one
+                          # Claude Code subscription usage pool, so unlimited
+                          # concurrency (previously ~18 at once) means a spending-cap
+                          # trip catches most of the run mid-flight instead of a few
 
     steps:
       - uses: actions/checkout@v4
