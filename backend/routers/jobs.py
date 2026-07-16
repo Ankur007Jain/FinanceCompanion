@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db, SessionLocal
 from models import StockAnalysis, MarketDataCache
-from schemas import NightlyJobRequest, IngestAnalysisRequest, IngestSnapshotRequest
+from schemas import NightlyJobRequest, IngestAnalysisRequest, IngestSnapshotRequest, IngestCorrelationsRequest
 from services.nightly_runner import run_nightly_analysis
 from services.stock_memory import maybe_update_stock_memory
 
@@ -235,6 +235,28 @@ def ingest_snapshot(body: IngestSnapshotRequest, x_job_secret: str = "", db: Ses
     return {"status": "saved", "ticker": body.ticker, "date": str(body.cache_date)}
 
 
+@router.post("/ingest-correlations")
+def ingest_correlations(body: IngestCorrelationsRequest, x_job_secret: str = "", db: Session = Depends(get_db)):
+    """Called by scripts/compute_correlations.py after the daily correlation run.
+    Replaces the whole table for computed_date's pairs — a full recompute each day,
+    not an incremental update, so there's never a stale pair left over from a ticker
+    that dropped out of every watchlist."""
+    if x_job_secret != os.getenv("JOB_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid job secret.")
+    from models import TickerCorrelation
+
+    db.query(TickerCorrelation).filter(TickerCorrelation.computed_date == body.computed_date).delete()
+    for p in body.pairs:
+        db.add(TickerCorrelation(
+            ticker_a=p.ticker_a, ticker_b=p.ticker_b,
+            corr_30d=p.corr_30d, corr_90d=p.corr_90d, corr_180d=p.corr_180d,
+            p_value_90d=p.p_value_90d, significant=p.significant,
+            computed_date=body.computed_date,
+        ))
+    db.commit()
+    return {"status": "saved", "pairs": len(body.pairs), "date": str(body.computed_date)}
+
+
 @router.get("/admin/tickers")
 def list_all_tickers(x_admin_secret: str = "", db: Session = Depends(get_db)):
     """Returns all unique tickers across all watchlists — used by the nightly agent.
@@ -245,6 +267,69 @@ def list_all_tickers(x_admin_secret: str = "", db: Session = Depends(get_db)):
     tickers = {t[0] for t in db.query(WatchlistItem.ticker).distinct().all()}
     disabled = {c.ticker for c in db.query(TickerControl).filter(TickerControl.analysis_enabled.is_(False)).all()}
     return {"tickers": sorted(tickers - disabled)}
+
+
+@router.get("/admin/closes")
+def get_closes(x_admin_secret: str = "", days: int = 300, db: Session = Depends(get_db)):
+    """Daily closing prices for every tracked ticker — feeds the correlation-matrix
+    compute script. Extracts just {date: close} from each ticker's latest
+    market_data_cache.history_json rather than returning the full OHLCV blob (which
+    also carries Open/High/Low/Volume/Dividends/Splits for every ticker — history_json
+    alone runs ~150-250KB per ticker, and none of that is needed here).
+
+    history_json has shipped in two shapes depending on which nightly pipeline wrote
+    it: a list of {"Date": ..., "Close": ..., ...} records (production GHA path,
+    orient="records"), or a {"columns": [...], "data": [...], "index": [...]} dict
+    (secondary /jobs/nightly path, orient="split"). Both are handled.
+    """
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    from models import TickerControl, WatchlistItem
+    from datetime import timedelta
+
+    tickers = {t[0] for t in db.query(WatchlistItem.ticker).distinct().all()}
+    disabled = {c.ticker for c in db.query(TickerControl).filter(TickerControl.analysis_enabled.is_(False)).all()}
+    tickers -= disabled
+    cutoff = date.today() - timedelta(days=days)
+
+    result: dict[str, dict[str, float]] = {}
+    for ticker in sorted(tickers):
+        cache = (
+            db.query(MarketDataCache)
+            .filter(MarketDataCache.ticker == ticker)
+            .order_by(MarketDataCache.cache_date.desc())
+            .first()
+        )
+        if not cache or not cache.history_json:
+            continue
+        try:
+            raw = json.loads(cache.history_json)
+        except Exception:
+            continue
+
+        closes: dict[str, float] = {}
+        try:
+            if isinstance(raw, list):  # orient="records"
+                for row in raw:
+                    d = str(row.get("Date", ""))[:10]
+                    c = row.get("Close")
+                    if d and c is not None and d >= cutoff.isoformat():
+                        closes[d] = float(c)
+            elif isinstance(raw, dict) and "columns" in raw:  # orient="split"
+                cols = raw["columns"]
+                ci = cols.index("Close")
+                for idx, row in zip(raw.get("index", []), raw.get("data", [])):
+                    d = str(idx)[:10]
+                    c = row[ci]
+                    if d and c is not None and d >= cutoff.isoformat():
+                        closes[d] = float(c)
+        except Exception:
+            continue
+
+        if closes:
+            result[ticker] = closes
+
+    return {"closes": result}
 
 
 @router.get("/admin/memories")

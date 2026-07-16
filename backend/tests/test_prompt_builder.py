@@ -110,6 +110,74 @@ class TestBuildTickerDossier:
         assert "10 shares" in dossier
         assert "avg cost $40.00" in dossier
 
+    def test_shows_significant_correlation_to_a_watchlist_ticker(self, db_session):
+        from datetime import date
+        from models import TickerCorrelation
+        _seed_analysis(db_session, "PBCORA")
+        _seed_analysis(db_session, "PBCORB")
+        db_session.add(WatchlistItem(user_email="corr@example.com", ticker="PBCORA"))
+        db_session.add(WatchlistItem(user_email="corr@example.com", ticker="PBCORB"))
+        db_session.add(TickerCorrelation(
+            ticker_a="PBCORA", ticker_b="PBCORB", corr_90d=0.71, p_value_90d=0.001,
+            significant=True, computed_date=date.today(),
+        ))
+        db_session.commit()
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("PBCORA", db_session, "corr@example.com")
+        assert "Correlated in your portfolio" in dossier
+        assert "PBCORB: +0.71" in dossier
+        assert "moves with" in dossier
+
+    def test_negative_correlation_labeled_as_hedge(self, db_session):
+        from datetime import date
+        from models import TickerCorrelation
+        _seed_analysis(db_session, "PBHEDA")
+        _seed_analysis(db_session, "PBHEDB")
+        db_session.add(WatchlistItem(user_email="hedge@example.com", ticker="PBHEDA"))
+        db_session.add(WatchlistItem(user_email="hedge@example.com", ticker="PBHEDB"))
+        db_session.add(TickerCorrelation(
+            ticker_a="PBHEDA", ticker_b="PBHEDB", corr_90d=-0.65, p_value_90d=0.002,
+            significant=True, computed_date=date.today(),
+        ))
+        db_session.commit()
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("PBHEDA", db_session, "hedge@example.com")
+        assert "PBHEDB: -0.65" in dossier
+        assert "potential hedge" in dossier
+
+    def test_insignificant_correlation_never_shown(self, db_session):
+        from datetime import date
+        from models import TickerCorrelation
+        _seed_analysis(db_session, "PBNSGA")
+        _seed_analysis(db_session, "PBNSGB")
+        db_session.add(WatchlistItem(user_email="nosig@example.com", ticker="PBNSGA"))
+        db_session.add(WatchlistItem(user_email="nosig@example.com", ticker="PBNSGB"))
+        db_session.add(TickerCorrelation(
+            ticker_a="PBNSGA", ticker_b="PBNSGB", corr_90d=0.3, p_value_90d=0.2,
+            significant=False, computed_date=date.today(),
+        ))
+        db_session.commit()
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("PBNSGA", db_session, "nosig@example.com")
+        assert "Correlated in your portfolio" not in dossier
+        assert "PBNSGB" not in dossier
+
+    def test_correlation_to_ticker_not_in_watchlist_not_shown(self, db_session):
+        """A significant correlation to a ticker the user doesn't actually track isn't
+        actionable — only surface pairs where both sides are in their own portfolio."""
+        from datetime import date
+        from models import TickerCorrelation
+        _seed_analysis(db_session, "PBOWNA")
+        db_session.add(WatchlistItem(user_email="onlyone@example.com", ticker="PBOWNA"))
+        db_session.add(TickerCorrelation(
+            ticker_a="PBOWNA", ticker_b="PBNOTOWNED", corr_90d=0.8, p_value_90d=0.001,
+            significant=True, computed_date=date.today(),
+        ))
+        db_session.commit()
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("PBOWNA", db_session, "onlyone@example.com")
+        assert "Correlated in your portfolio" not in dossier
+
 
 class TestCompactOtherTickers:
     """In a ticker-scoped conversation, every OTHER ticker should be a cheap numeric line —
