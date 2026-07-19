@@ -126,6 +126,31 @@ class TestAppendLesson:
         mem = append_lesson("ALSD", "y" * 500, "Chat", db_session)
         assert len(mem.memory_narrative) <= 1200
 
+    def test_newest_lesson_always_survives_when_over_budget(self, db_session):
+        """The actual bug, reproduced: real production data showed a Scorecard lesson
+        for MU never landed (memory was exactly at the 1200-char cap, no [Scorecard]
+        tag anywhere), while TMUS's did — purely because TMUS's existing memory was
+        shorter. The old code did (existing + new)[:1200], keeping stale front content
+        and silently dropping the new lesson at the end whenever memory was already
+        full. Reproducing that exact scenario here."""
+        db_session.merge(StockMemory(ticker="ALSF", memory_narrative="x" * 1150))
+        db_session.commit()
+        mem = append_lesson("ALSF", "5 failed BUYs — avoid entries into this downtrend.", "Scorecard", db_session)
+        assert "[Scorecard] 5 failed BUYs" in mem.memory_narrative
+        assert len(mem.memory_narrative) <= 1200
+
+    def test_oldest_paragraph_dropped_first_not_hard_truncated(self, db_session):
+        """Prefers dropping a whole stale paragraph over an arbitrary mid-word cut."""
+        db_session.merge(StockMemory(
+            ticker="ALSG",
+            memory_narrative="[Chat] Oldest lesson, should be dropped first.\n\n" + ("z" * 1180),
+        ))
+        db_session.commit()
+        mem = append_lesson("ALSG", "Newest lesson must survive.", "Scorecard", db_session)
+        assert "Newest lesson must survive." in mem.memory_narrative
+        assert "Oldest lesson, should be dropped first." not in mem.memory_narrative
+        assert len(mem.memory_narrative) <= 1200
+
     def test_ticker_uppercased(self, db_session):
         mem = append_lesson("alse", "lowercase input.", "Chat", db_session)
         assert mem.ticker == "ALSE"

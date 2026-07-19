@@ -38,15 +38,39 @@ def _server_web_search_block(query: str, failed: bool = False):
 
 
 @contextmanager
-def _mock_anthropic_stream(text: str = "Test reply.", tool_use: dict | None = None, web_search_blocks: list | None = None):
+def _mock_anthropic_stream(
+    text: str = "Test reply.", tool_use: dict | None = None,
+    web_search_blocks: list | None = None, thinking: bool = False,
+):
     """tool_use, if given ({"name": ..., "input": {...}}), makes the mocked stream emit one
     tool_use block before ending (stop_reason=tool_use), so the second loop iteration can
     be asserted on too. Without it, a plain end_turn text reply.
 
     web_search_blocks, if given, is injected straight into final_msg.content — see
     _server_web_search_block(). Independent of `tool_use`, since a real turn can do a
-    server-side web_search AND end_turn in the same response (no round-trip needed)."""
+    server-side web_search AND end_turn in the same response (no round-trip needed).
+
+    thinking=True prepends a thinking content_block_start/delta/stop sequence before
+    the text — matches a real extended-thinking response's shape, so tests can verify
+    thinking content never leaks into full_text (only text_delta does)."""
     events = []
+
+    if thinking:
+        think_start = MagicMock()
+        think_start.type = "content_block_start"
+        think_block = MagicMock()
+        think_block.type = "thinking"
+        think_start.content_block = think_block
+        events.append(think_start)
+
+        think_delta = MagicMock()
+        think_delta.type = "content_block_delta"
+        think_delta.delta = MagicMock(type="thinking_delta", thinking="Reasoning through this...")
+        events.append(think_delta)
+
+        think_stop = MagicMock()
+        think_stop.type = "content_block_stop"
+        events.append(think_stop)
 
     if tool_use:
         cb_start = MagicMock()
@@ -147,6 +171,60 @@ class TestAlwaysSonnet:
             )
         assert r.status_code == 200
         assert mock_client.messages.stream.call_args.kwargs["model"] == _SONNET
+
+
+class TestExtendedThinking:
+    def test_complex_decision_enables_thinking(self, client: TestClient):
+        from services.model_router import _THINKING_BUDGET_TOKENS
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("Let's rebalance.") as mock_client:
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "should I rebalance my portfolio", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        kwargs = mock_client.messages.stream.call_args.kwargs
+        assert kwargs["thinking"] == {"type": "enabled", "budget_tokens": _THINKING_BUDGET_TOKENS}
+        # max_tokens must exceed the thinking budget, not just reuse whatever tier
+        # _estimate_max_tokens picked for a non-thinking message.
+        assert kwargs["max_tokens"] > _THINKING_BUDGET_TOKENS
+
+    def test_simple_question_does_not_enable_thinking(self, client: TestClient):
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("Hi.") as mock_client:
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        assert "thinking" not in mock_client.messages.stream.call_args.kwargs
+
+    def test_thinking_start_event_streamed(self, client: TestClient):
+        """The extra latency thinking adds shouldn't read as a silent hang — a
+        thinking_start SSE event fires so a future UI can show progress."""
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("Done thinking.", thinking=True) as mock_client:
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "should I rebalance", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        assert '"type": "thinking_start"' in r.text
+
+    def test_thinking_content_never_leaks_into_saved_message(self, client: TestClient, db_session):
+        """Only text_delta ever appends to full_text (the saved assistant message) —
+        confirming a thinking block alongside real text doesn't contaminate it."""
+        from models import Message
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("The real answer.", thinking=True):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "should I rebalance", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        db_session.expire_all()
+        saved = db_session.query(Message).filter(Message.conversation_id == conv_id, Message.role == "assistant").first()
+        assert saved.content == "The real answer."
 
 
 class TestPromptCaching:

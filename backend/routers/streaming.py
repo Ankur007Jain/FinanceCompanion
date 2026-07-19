@@ -22,7 +22,7 @@ from database import SessionLocal, get_db
 from models import Conversation, Message, ToolCall, User, UserLearning
 from routers.auth import get_current_user
 from schemas import SendMessageRequest
-from services.model_router import _SONNET, _estimate_max_tokens
+from services.model_router import _SONNET, _estimate_max_tokens, _should_use_extended_thinking, _THINKING_BUDGET_TOKENS
 from services.prompt_builder import build_system_prompt, build_ticker_dossier, build_user_learnings_block
 from services.stock_memory import append_lesson
 
@@ -315,6 +315,13 @@ async def stream_message(
         api_system.append({"type": "text", "text": focus_dossier, "cache_control": {"type": "ephemeral"}})
 
     max_tokens = _estimate_max_tokens(body.content)
+    use_thinking = _should_use_extended_thinking(body.content)
+    if use_thinking:
+        # max_tokens must exceed the thinking budget (it caps thinking + output
+        # combined) — bump it up rather than eating into the existing tier's output
+        # budget for genuinely complex, multi-constraint questions.
+        max_tokens = max(max_tokens, _THINKING_BUDGET_TOKENS + 2000)
+
     # Always Sonnet — a router that downgraded short messages to Haiku was letting real
     # financial advice ("mrk" -> "MRK: Hold, don't sell today.") through the cheaper model,
     # because it judged model choice from the current message alone with no notion that
@@ -378,7 +385,7 @@ async def stream_message(
                 current_tool_id = current_tool_name = current_tool_input = current_tool_type = ""
                 tool_uses: list[dict] = []
 
-                async with client.messages.stream(
+                stream_kwargs = dict(
                     model=model,
                     max_tokens=max_tokens,
                     system=api_system,
@@ -387,7 +394,11 @@ async def stream_message(
                         _WEB_SEARCH_TOOL, _GET_STOCK_ANALYSIS_TOOL, _GET_CHAT_HISTORY_TOOL,
                         _SAVE_LEARNING_TOOL, _DELETE_LEARNING_TOOL, _FLAG_CORRECTION_TOOL,
                     ],
-                ) as stream:
+                )
+                if use_thinking:
+                    stream_kwargs["thinking"] = {"type": "enabled", "budget_tokens": _THINKING_BUDGET_TOKENS}
+
+                async with client.messages.stream(**stream_kwargs) as stream:
                     async for event in stream:
                         etype = getattr(event, "type", "")
 
@@ -404,6 +415,14 @@ async def stream_message(
                                 current_tool_input = ""
                                 current_tool_type = cb_type
                                 yield f"data: {json.dumps({'type': 'tool_start', 'tool': current_tool_name})}\n\n"
+                            elif cb_type == "thinking":
+                                # Extended thinking adds real latency before the first
+                                # visible text_delta — a silent gap that long otherwise
+                                # reads as a hang. Thinking content itself is never
+                                # streamed as chunks (content_block_delta below only
+                                # forwards text_delta), just this one signal that it's
+                                # in progress.
+                                yield f"data: {json.dumps({'type': 'thinking_start'})}\n\n"
 
                         elif etype == "content_block_delta":
                             delta = getattr(event, "delta", None)

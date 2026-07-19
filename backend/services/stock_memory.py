@@ -25,13 +25,34 @@ def append_lesson(ticker: str, lesson: str, source: str, db: Session) -> "StockM
     the weekly Scorecard's systematic-failure feedback and chat's flag_stock_correction
     tool, so a correction caught in conversation reaches the nightly Verdict Agent the
     same way an audit-agent-caught one does. Global, not per-user: this is for facts
-    about the TICKER, never personal context (that's user_learnings instead)."""
+    about the TICKER, never personal context (that's user_learnings instead).
+
+    Real production bug this guards against: the old version truncated with
+    memory_narrative[:_MAX_CHARS] after appending — keeping the FRONT (oldest content)
+    and silently dropping whatever fell past the cap, which is exactly the newly
+    appended lesson whenever a ticker's memory was already near full. Confirmed via
+    real data: MU's Scorecard lesson about 5 failed BUYs never made it into memory at
+    all (exactly 1200 chars, no [Scorecard] tag), while TMUS's did, purely because
+    TMUS's existing memory happened to be shorter before the append. Fixed by trimming
+    the OLDEST paragraphs first when over budget, so the newest lesson — the entire
+    point of calling this function — always survives."""
     from datetime import datetime
     ticker = ticker.upper()
     mem = db.get(StockMemory, ticker)
-    tagged = f"[{source}] {lesson}"
+    tagged = f"[{source}] {lesson}"[:_MAX_CHARS]
     if mem:
-        mem.memory_narrative = (f"{mem.memory_narrative}\n\n{tagged}")[:_MAX_CHARS]
+        paragraphs = mem.memory_narrative.split("\n\n") if mem.memory_narrative else []
+        paragraphs.append(tagged)
+        combined = "\n\n".join(paragraphs)
+        while len(combined) > _MAX_CHARS and len(paragraphs) > 1:
+            paragraphs.pop(0)
+            combined = "\n\n".join(paragraphs)
+        if len(combined) > _MAX_CHARS:
+            # Pathological floor: even the new lesson alone (plus tag/paragraph
+            # overhead) exceeds the cap — hard-cut as a last resort, but this
+            # shouldn't happen given `tagged` is already capped above.
+            combined = combined[-_MAX_CHARS:]
+        mem.memory_narrative = combined
         mem.last_updated = datetime.utcnow()
         mem.update_count = (mem.update_count or 0) + 1
     else:
