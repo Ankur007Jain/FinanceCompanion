@@ -19,7 +19,7 @@ Keep responses short and direct. Never auto-push to git.
 | AI — background | `claude-haiku-4-5-20251001` (news summary, stock memory update, title gen) |
 | Market Data | yfinance (primary) + Finnhub (secondary, cross-validation) |
 | Technical Indicators | pandas-ta (computed from yfinance price data) |
-| Web Search (chatbot) | duckduckgo-search (no API key needed) |
+| Web Search (chatbot) | Anthropic native web_search tool (server-side, billed) |
 | Auth | Google OAuth via NextAuth v5 |
 | Deploy | Vercel (frontend) + Railway (backend) |
 

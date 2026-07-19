@@ -30,6 +30,15 @@ class TestCommitteeLens:
         static, _ = build_system_prompt("nobody@example.com", db_session)
         assert "jargon" in static.lower()
 
+    def test_static_prompt_forbids_stale_knowledge_as_current(self, db_session):
+        """Real production failure this guards against: the model told a user 'Pat
+        Gelsinger was replaced by Lip-Bu Tan in 2024' as if it were fresh context,
+        when a failed web_search should have just been disclosed as unavailable."""
+        static, _ = build_system_prompt("nobody@example.com", db_session)
+        low = static.lower()
+        assert "don't have current data" in low
+        assert "training" in low
+
 
 class TestDeepBlock:
     def test_focus_ticker_injects_deep_dossier(self, db_session):
