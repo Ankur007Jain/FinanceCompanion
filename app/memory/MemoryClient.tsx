@@ -20,15 +20,28 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
   const router = useRouter();
   const [learnings, setLearnings] = useState<Learning[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
-    const r = await fetch(`${API}/learnings?id_token=${encodeURIComponent(idToken)}`);
-    setLearnings(r.ok ? await r.json() : []);
-    setLoading(false);
+    setLoadError(null);
+    try {
+      const r = await fetch(`${API}/learnings?id_token=${encodeURIComponent(idToken)}`);
+      // A non-JSON body (e.g. an HTML error page from a gateway timeout) makes
+      // .json() throw too — caught below, not just the fetch() call itself.
+      setLearnings(r.ok ? await r.json() : []);
+      if (!r.ok) setLoadError(`Couldn't load your memory (${r.status}).`);
+    } catch {
+      // Without this catch, a thrown fetch (network error, CORS, DNS) or a
+      // thrown .json() parse left setLoading(false) never called — the page
+      // just sat on "Loading…" forever with no way to tell what went wrong.
+      setLoadError("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { load(); }, []);
@@ -52,8 +65,12 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
     // established UX rule: no waiting for a network round trip before feedback.
     const prev = learnings;
     setLearnings(learnings.filter(l => l.id !== id));
-    const r = await fetch(`${API}/learnings/${id}?id_token=${encodeURIComponent(idToken)}`, { method: "DELETE" });
-    if (!r.ok) setLearnings(prev);
+    try {
+      const r = await fetch(`${API}/learnings/${id}?id_token=${encodeURIComponent(idToken)}`, { method: "DELETE" });
+      if (!r.ok) setLearnings(prev);
+    } catch {
+      setLearnings(prev);
+    }
   }
 
   function startEdit(l: Learning) {
@@ -65,17 +82,23 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
     const text = editText.trim();
     if (!text) return;
     setSavingId(id);
-    const r = await fetch(`${API}/learnings/${id}?id_token=${encodeURIComponent(idToken)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ learning: text }),
-    });
-    if (r.ok) {
-      const updated = await r.json();
-      setLearnings(learnings.map(l => l.id === id ? updated : l));
-      setEditingId(null);
+    try {
+      const r = await fetch(`${API}/learnings/${id}?id_token=${encodeURIComponent(idToken)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ learning: text }),
+      });
+      if (r.ok) {
+        const updated = await r.json();
+        setLearnings(learnings.map(l => l.id === id ? updated : l));
+        setEditingId(null);
+      }
+    } catch {
+      // Leave editingId set — the textarea stays open with the user's text intact,
+      // rather than silently discarding an edit that never actually saved.
+    } finally {
+      setSavingId(null);
     }
-    setSavingId(null);
   }
 
   const cardStyle: React.CSSProperties = {
@@ -182,6 +205,19 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
 
         {loading ? (
           <div style={{ textAlign: "center", padding: "3rem", color: "var(--t-text-muted)" }}>Loading…</div>
+        ) : loadError ? (
+          <div style={{ ...cardStyle, padding: "2rem", textAlign: "center" }}>
+            <div style={{ color: "var(--t-red)", fontSize: 13, marginBottom: 12 }}>{loadError}</div>
+            <button
+              onClick={load}
+              style={{
+                fontSize: 13, padding: "7px 16px", borderRadius: 7, cursor: "pointer",
+                background: "var(--t-accent)", color: "var(--t-surface)", border: "none",
+              }}
+            >
+              Retry
+            </button>
+          </div>
         ) : learnings.length === 0 ? (
           <div style={{ ...cardStyle, padding: "2rem", textAlign: "center", color: "var(--t-text-muted)" }}>
             Nothing saved yet — ask Ask AI to remember something, or correct it on a specific stock, and it'll show up here.
