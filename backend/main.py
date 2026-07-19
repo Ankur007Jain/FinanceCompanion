@@ -62,6 +62,12 @@ def _migrate_db():
                 conn.execute(text("ALTER TABLE conversations ADD COLUMN updated_at TIMESTAMP"))
             conn.commit()
 
+        if "user_learnings" in tables:
+            ul_cols = {c["name"] for c in inspector.get_columns("user_learnings")}
+            if "ticker" not in ul_cols:
+                conn.execute(text("ALTER TABLE user_learnings ADD COLUMN ticker VARCHAR"))  # nosemgrep
+            conn.commit()
+
         if "stock_analyses" in tables:
             cols = {c["name"] for c in inspector.get_columns("stock_analyses")}
             new_cols = {
