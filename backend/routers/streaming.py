@@ -258,6 +258,17 @@ async def stream_message(
     live_rows = history_rows[-_MAX_LIVE_HISTORY:] if len(history_rows) > _MAX_LIVE_HISTORY else history_rows
 
     history = [{"role": m.role, "content": m.content} for m in live_rows]
+    if history:
+        # Cache breakpoint on the last message that's stable across requests — everything
+        # up through here was already sent last turn, so it reads from cache instead of
+        # being resent as fresh input tokens every time. The new user message below stays
+        # OUTSIDE this block deliberately: it's exactly the part that changes every
+        # request, and a breakpoint on a block that changes every call never gets a hit.
+        last = history[-1]
+        history[-1] = {
+            "role": last["role"],
+            "content": [{"type": "text", "text": last["content"], "cache_control": {"type": "ephemeral"}}],
+        }
     history.append({"role": "user", "content": body.content})
 
     # Save user message
@@ -271,18 +282,14 @@ async def stream_message(
 
     base_prompt, dynamic_context = build_system_prompt(user.email, db, conv.ticker)
     learnings_block = build_user_learnings_block(user.email, db)
-    api_system = [{"type": "text", "text": base_prompt, "cache_control": {"type": "ephemeral"}}]
-    if learnings_block:
-        # Its OWN cache block, separate from dynamic_context below — a user can save a
-        # new learning mid-conversation, and dynamic_context can be tens of thousands of
-        # tokens (ticker dossiers, correlations, watchlist). Without this split, saving
-        # one learning would bust the cache for that whole block on every following turn;
-        # this way only the small learnings block needs a fresh cache_write. Note: like
-        # any cache_control block, this only actually caches once it clears Anthropic's
-        # ~1024-token minimum — a user with just a couple of short saved learnings won't
-        # see a cache hit here, but the block is proportionally cheap either way at that
-        # size; the win compounds for users who've saved many over time.
-        api_system.append({"type": "text", "text": learnings_block, "cache_control": {"type": "ephemeral"}})
+    # Merged into base_prompt's block (was its own breakpoint) — Anthropic caps a request
+    # at 4 cache breakpoints total, and this slot was needed to cache the messages array
+    # itself (see the history breakpoint above), which wasn't being cached at all before.
+    # base_prompt is small (~500 tokens) and learnings changes rarely, so a save_learning
+    # mid-conversation now busts this whole block instead of just its own — cheap either
+    # way at this size, so an acceptable tradeoff for getting message-history caching.
+    static_block = base_prompt + (f"\n\n{learnings_block}" if learnings_block else "")
+    api_system = [{"type": "text", "text": static_block, "cache_control": {"type": "ephemeral"}}]
     if dynamic_context:
         # Also cacheable: rebuilt fresh from the DB every call, so this only ever changes
         # when the underlying data actually changes (new nightly run, watchlist edit) — never
