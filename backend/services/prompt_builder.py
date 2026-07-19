@@ -24,6 +24,7 @@ Apply these before answering — never narrate them, just apply them:
 6. Leveraged ETFs follow stricter rules: short hold periods only, never hold through earnings.
 7. Don't just answer the literal question — before responding, check whether there's a risk, catalyst, or contradiction in the data the user's question doesn't mention but would change their decision if they knew it. Surface it in one sentence, even if unasked.
 8. If web_search fails, returns nothing useful, or you simply don't have current information on something time-sensitive (executive changes, recent news, current prices, anything that could have changed since your training cutoff), say so explicitly — "I don't have current data on that." Never substitute your own general/training knowledge for current information and present it as if it were fresh — that's how stale facts (an executive who's since been replaced, a price that's since moved) get stated with false confidence.
+9. If the user asks "did you save that" / "what do you remember about me" / anything about what's been saved, check the actual "THINGS TO REMEMBER ABOUT THIS USER" list and any per-ticker notes currently in your context — that's the real, current state, not a guess. If it's genuinely there, confirm it and quote it back. If it's not there, say so plainly ("I don't see that saved — want me to save it now?") rather than assuming you saved it because you remember saying you would.
 </reasoning_rules>
 
 <voice>
@@ -221,7 +222,8 @@ def build_ticker_dossier(ticker: str, db: Session, user_email: str) -> str:
     )
     dossier = _format_analysis_deep(analysis, memory, history, position_line)
     correlated = _correlated_tickers_section(ticker, db, user_email)
-    return dossier + correlated if correlated else dossier
+    ticker_learnings = _ticker_learnings_section(ticker, db, user_email)
+    return dossier + correlated + ticker_learnings
 
 
 def _correlated_tickers_section(ticker: str, db: Session, user_email: str) -> str:
@@ -268,11 +270,33 @@ def _correlated_tickers_section(ticker: str, db: Session, user_email: str) -> st
     return "\n".join(lines)
 
 
+def _ticker_learnings_section(ticker: str, db: Session, user_email: str) -> str:
+    """Personal notes this user saved specifically about this ticker (save_learning
+    with ticker set) — e.g. "already knows SLV/GLD overlap, don't re-explain." Only
+    shown when this ticker is actually in the dossier, unlike global learnings which
+    show up everywhere — keeps context lean for tickers with no personal notes."""
+    rows = (
+        db.query(UserLearning)
+        .filter(UserLearning.user_email == user_email, UserLearning.ticker == ticker)
+        .order_by(UserLearning.created_at.desc())
+        .limit(10)
+        .all()
+    )
+    if not rows:
+        return ""
+    lines = ["\n\nThings you've told me about this ticker specifically:"]
+    for r in reversed(rows):
+        lines.append(f"  - {r.learning}")
+    return "\n".join(lines)
+
+
 def build_user_learnings_block(user_email: str, db: Session) -> str:
-    """Durable, ticker-independent facts/preferences this user has explicitly asked to
-    have remembered (save_learning tool) — surfaced in every conversation, not just the
-    one where it was said. Capped to the most recent 15: meant to be a short, high-signal
-    list the model actually applies, not an ever-growing dump.
+    """Durable, ticker-independent (global) facts/preferences this user has explicitly
+    asked to have remembered (save_learning tool with no ticker) — surfaced in every
+    conversation, not just the one where it was said. Ticker-scoped learnings
+    (ticker set) are handled separately by _ticker_learnings_section, only shown when
+    that specific ticker's dossier is built. Capped to the most recent 15: meant to be
+    a short, high-signal list the model actually applies, not an ever-growing dump.
 
     Deliberately its OWN cache_control block, not folded into dynamic_context: a user
     can save a new learning mid-conversation, and dynamic_context can be tens of
@@ -281,7 +305,7 @@ def build_user_learnings_block(user_email: str, db: Session) -> str:
     turn — this way only the small learnings block needs a fresh cache_write."""
     learnings = (
         db.query(UserLearning)
-        .filter(UserLearning.user_email == user_email)
+        .filter(UserLearning.user_email == user_email, UserLearning.ticker.is_(None))
         .order_by(UserLearning.created_at.desc())
         .limit(15)
         .all()
@@ -329,31 +353,31 @@ def build_system_prompt(
 
     focus = conversation_ticker.upper() if conversation_ticker else None
 
-    # Deep dossier for the ticker in focus (most prominent context)
-    if focus:
-        # With a large watchlist, the focus ticker's dossier can get buried among dozens of
-        # others below — spell out unambiguously which one "this stock" refers to, since
-        # nothing else in the prompt marks it as the active topic vs. just more data.
-        lines.append(
-            f"📌 ACTIVE CONVERSATION TOPIC: {focus}. The user is chatting specifically about "
-            f"{focus} right now. When they say \"this stock\", \"this share\", \"it\", or similar, "
-            f"they mean {focus} — not any other ticker listed below. Lead your answer with {focus}; "
-            f"only bring in other tickers if the user explicitly asks about them.\n"
-        )
-        lines.append(build_ticker_dossier(focus, db, user_email))
-        lines.append("")
+    # The focus ticker's full dossier is NOT embedded here anymore — it's built
+    # separately (build_ticker_dossier, called directly by streaming.py) as its own
+    # cache_control block. Anthropic's prompt caching matches an exact PREFIX up to
+    # each cache_control marker, not each block independently — if the focus dossier
+    # (which necessarily differs every time the user switches which ticker they're
+    # viewing) were embedded in THIS block, it would poison the cache match for
+    # everything in this block too, even the compact list below which is otherwise
+    # identical across every ticker-scoped conversation this user has. Keeping this
+    # block dossier-free means it can be cached ONCE and reused across all of them —
+    # confirmed via real data: this block was 71% of the total dynamic_context for a
+    # user with 83 tracked tickers, previously rewritten from scratch on every switch.
 
     if analyses:
-        # In a ticker-scoped conversation, every OTHER ticker gets a numeric-only line —
-        # cheap enough to send for all of them (portfolio-wide screening still works: P&L,
-        # RSI, targets, important-day flag), while the expensive prose (reasoning, memory,
-        # news) is a get_stock_analysis tool call away the moment the user actually asks
-        # about one specifically. A general (non-ticker) conversation is the one place full
-        # per-ticker detail is genuinely the point — that stays exactly as before.
-        lines.append("=== TONIGHT'S ANALYSIS ===" if not focus else "=== OTHER TRACKED TICKERS (compact — ask for detail on any of these) ===")
+        # Every tracked ticker gets a numeric-only line (not excluding the one in
+        # focus, even though its full dossier is shown elsewhere) — cheap enough to
+        # send for all of them (portfolio-wide screening still works: P&L, RSI,
+        # targets, important-day flag), while the expensive prose (reasoning, memory,
+        # news) is a get_stock_analysis tool call away. Deliberately NOT skipping the
+        # focus ticker here (a small, ~150-char redundancy) so this block's content is
+        # byte-identical regardless of which ticker is in focus — that's what makes it
+        # cacheable across different ticker-scoped conversations for the same user.
+        # A general (non-ticker) conversation is the one place full per-ticker detail
+        # is genuinely the point — that stays exactly as before.
+        lines.append("=== TONIGHT'S ANALYSIS ===" if not focus else "=== ALL TRACKED TICKERS (compact — ask for detail on any of these) ===")
         for a in analyses:
-            if focus and a.ticker.upper() == focus:
-                continue  # already shown in full above
             wl = watchlist_map.get(a.ticker)
             position_line = _format_position(wl, a.current_price) if wl else "Position:       Not in user's watchlist.\n"
             if focus:

@@ -188,6 +188,99 @@ class TestPromptCaching:
         assert "THINGS TO REMEMBER" not in system[2]["text"]
 
 
+class TestCacheBlockSplit:
+    """Real production evidence: for a user with 83 tracked tickers, the shared
+    compact-list block was 71% of the whole dynamic_context — but switching between
+    two DIFFERENT ticker-scoped conversations busted the cache for the entire thing,
+    because the focus ticker's dossier used to be embedded inline at the START of
+    that same block. The fix: focus dossier is its own LAST block (cache breakpoints
+    match a prefix, not each block independently — anything after a differing block
+    also cache-misses, so the shared content has to come first)."""
+
+    def test_focus_dossier_is_the_last_block(self, client: TestClient, db_session):
+        from datetime import date
+        from models import StockAnalysis
+        db_session.add(StockAnalysis(ticker="ZFOCUSCACHE", analysis_date=date.today(), verdict="BUY", current_price=50.0))
+        db_session.commit()
+
+        conv_id = _create_conversation(client, ticker="ZFOCUSCACHE")
+        with _mock_google_token(), _mock_anthropic_stream("Hi.") as mock_client:
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        system = mock_client.messages.stream.call_args.kwargs["system"]
+        assert "ZFOCUSCACHE — FULL ANALYSIS" in system[-1]["text"]
+        assert "ACTIVE CONVERSATION TOPIC: ZFOCUSCACHE" in system[-1]["text"]
+        # And the block(s) before it must NOT contain the dossier — that's the split
+        for block in system[:-1]:
+            assert "FULL ANALYSIS" not in block["text"]
+
+    def test_shared_block_is_byte_identical_across_different_ticker_conversations(self, client: TestClient, db_session):
+        """The actual claim being tested: switching from one ticker-scoped conversation
+        to a completely different one must NOT change the shared block's content, so
+        Anthropic's exact-prefix cache match still hits for it."""
+        from datetime import date
+        from models import StockAnalysis, WatchlistItem
+        e = "cacheswitcher@example.com"
+        db_session.add(StockAnalysis(ticker="ZCACHEA", analysis_date=date.today(), verdict="BUY", current_price=10.0))
+        db_session.add(StockAnalysis(ticker="ZCACHEB", analysis_date=date.today(), verdict="SELL", current_price=20.0))
+        db_session.add(WatchlistItem(user_email=e, ticker="ZCACHEA"))
+        db_session.add(WatchlistItem(user_email=e, ticker="ZCACHEB"))
+        db_session.commit()
+
+        conv_a = _create_conversation(client, ticker="ZCACHEA", email=e)
+        with _mock_google_token(e), _mock_anthropic_stream("Hi.") as mock_client_a:
+            client.post(
+                f"/conversations/{conv_a}/messages/stream",
+                json={"content": "hi", "user_email": e, "id_token": "tok"},
+            )
+        system_a = mock_client_a.messages.stream.call_args.kwargs["system"]
+
+        conv_b = _create_conversation(client, ticker="ZCACHEB", email=e)
+        with _mock_google_token(e), _mock_anthropic_stream("Hi.") as mock_client_b:
+            client.post(
+                f"/conversations/{conv_b}/messages/stream",
+                json={"content": "hi", "user_email": e, "id_token": "tok"},
+            )
+        system_b = mock_client_b.messages.stream.call_args.kwargs["system"]
+
+        # Same number of blocks, same structure
+        assert len(system_a) == len(system_b)
+        # Every block EXCEPT the last (focus dossier) must be byte-identical between
+        # the two different ticker-scoped conversations — that's what makes them
+        # cache-shareable instead of each switch forcing a full fresh write.
+        for block_a, block_b in zip(system_a[:-1], system_b[:-1]):
+            assert block_a["text"] == block_b["text"]
+        # The last block (focus dossier) SHOULD differ — that's the one legitimately
+        # ticker-specific piece.
+        assert system_a[-1]["text"] != system_b[-1]["text"]
+        assert "ZCACHEA" in system_a[-1]["text"]
+        assert "ZCACHEB" in system_b[-1]["text"]
+
+    def test_shared_block_includes_focus_tickers_own_compact_line(self, client: TestClient, db_session):
+        """Confirms the mechanism: the focus ticker is no longer excluded from its own
+        compact line in the shared block — that's what makes the shared block's
+        content independent of which ticker happens to be in focus."""
+        from datetime import date
+        from models import StockAnalysis, WatchlistItem
+        e = "cacheself@example.com"
+        db_session.add(StockAnalysis(ticker="ZSELFLINE", analysis_date=date.today(), verdict="HOLD", current_price=15.0))
+        db_session.add(WatchlistItem(user_email=e, ticker="ZSELFLINE"))
+        db_session.commit()
+
+        conv_id = _create_conversation(client, ticker="ZSELFLINE", email=e)
+        with _mock_google_token(e), _mock_anthropic_stream("Hi.") as mock_client:
+            client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": e, "id_token": "tok"},
+            )
+        system = mock_client.messages.stream.call_args.kwargs["system"]
+        shared_block = system[-2]["text"]  # the block just before the focus dossier
+        assert "ZSELFLINE: HOLD" in shared_block
+
+
 class TestNativeWebSearch:
     """web_search switched from duckduckgo_search (unreliable, real production rate-limit
     failures) to Anthropic's native server-side tool. Server-side means Claude executes
@@ -321,13 +414,16 @@ class TestGetStockAnalysisTool:
             )
 
         assert r.status_code == 200
-        spy.assert_called_once()
-        assert spy.call_args.args[0].upper() == "ZPIVOT"
-        assert spy.call_args.args[2] == "streamtest@example.com"
+        # Called twice now: once for the conversation's own focus ticker (TSLA, built
+        # as its own cache block), once for the ZPIVOT pivot via get_stock_analysis.
+        assert spy.call_count == 2
+        pivot_call = next(c for c in spy.call_args_list if c.args[0].upper() == "ZPIVOT")
+        assert pivot_call.args[2] == "streamtest@example.com"
         # And the real function actually returned ZPIVOT's dossier (not a stub)
-        assert len(captured_results) == 1
-        assert "ZPIVOT — FULL ANALYSIS" in captured_results[0]
-        assert "AI demand." in captured_results[0]
+        pivot_results = [r for r in captured_results if "ZPIVOT" in r]
+        assert len(pivot_results) == 1
+        assert "ZPIVOT — FULL ANALYSIS" in pivot_results[0]
+        assert "AI demand." in pivot_results[0]
 
 
 def _make_second_call_end_turn(mock_client):
@@ -509,6 +605,97 @@ class TestSaveLearningTool:
         db_session.expire_all()
         after = db_session.query(UserLearning).filter(UserLearning.user_email == "streamtest@example.com").count()
         assert after == before
+
+    def test_ticker_scoped_save_sets_ticker_column(self, client: TestClient, db_session):
+        from models import UserLearning
+        conv_id = _create_conversation(client, ticker="SLV")
+        with _mock_google_token(), \
+             _mock_anthropic_stream("", tool_use={
+                 "name": "save_learning",
+                 "input": {"learning": "Already knows SLV/GLD overlap, don't re-explain.", "ticker": "slv"},
+             }) as mock_client:
+            _make_second_call_end_turn(mock_client)
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "remember I know SLV/GLD overlap", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        db_session.expire_all()
+        row = db_session.query(UserLearning).filter(
+            UserLearning.user_email == "streamtest@example.com", UserLearning.ticker == "SLV",
+        ).first()
+        assert row is not None
+        assert row.learning == "Already knows SLV/GLD overlap, don't re-explain."
+
+    def test_no_ticker_saves_as_global(self, client: TestClient, db_session):
+        from models import UserLearning
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), \
+             _mock_anthropic_stream("", tool_use={"name": "save_learning", "input": {"learning": "Keeps answers short."}}) as mock_client:
+            _make_second_call_end_turn(mock_client)
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "remember to keep it short", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        db_session.expire_all()
+        row = db_session.query(UserLearning).filter(
+            UserLearning.user_email == "streamtest@example.com", UserLearning.learning == "Keeps answers short.",
+        ).first()
+        assert row is not None
+        assert row.ticker is None
+
+
+class TestDeleteLearningTool:
+    def test_tool_is_offered(self, client: TestClient):
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("Hi.") as mock_client:
+            client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        names = {t["name"] for t in mock_client.messages.stream.call_args.kwargs["tools"]}
+        assert "delete_learning" in names
+
+    def test_deletes_exact_match(self, client: TestClient, db_session):
+        from models import UserLearning
+        db_session.add(UserLearning(user_email="deleter@example.com", learning="Wrong fact to remove."))
+        db_session.commit()
+
+        conv_id = _create_conversation(client, email="deleter@example.com")
+        with _mock_google_token("deleter@example.com"), \
+             _mock_anthropic_stream("", tool_use={"name": "delete_learning", "input": {"learning": "Wrong fact to remove."}}) as mock_client:
+            _make_second_call_end_turn(mock_client)
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "forget that", "user_email": "deleter@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        db_session.expire_all()
+        assert db_session.query(UserLearning).filter(
+            UserLearning.user_email == "deleter@example.com", UserLearning.learning == "Wrong fact to remove.",
+        ).count() == 0
+
+    def test_no_fuzzy_match_deletes_nothing(self, client: TestClient, db_session):
+        """Exact match only — a close-but-not-exact string must not delete the wrong
+        learning. Deleting the wrong one silently is worse than doing nothing."""
+        from models import UserLearning
+        db_session.add(UserLearning(user_email="nofuzzy@example.com", learning="Manages 48 stocks total."))
+        db_session.commit()
+
+        conv_id = _create_conversation(client, email="nofuzzy@example.com")
+        with _mock_google_token("nofuzzy@example.com"), \
+             _mock_anthropic_stream("", tool_use={"name": "delete_learning", "input": {"learning": "manages 48 stocks"}}) as mock_client:
+            _make_second_call_end_turn(mock_client)
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "forget the stock count thing", "user_email": "nofuzzy@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        db_session.expire_all()
+        assert db_session.query(UserLearning).filter(
+            UserLearning.user_email == "nofuzzy@example.com", UserLearning.learning == "Manages 48 stocks total.",
+        ).count() == 1
 
 
 class TestFlagStockCorrectionTool:

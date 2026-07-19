@@ -343,16 +343,18 @@ class ToolCall(Base):
 
 
 class UserLearning(Base):
-    """Durable, ticker-independent fact/preference/instruction about a specific user,
-    saved when they explicitly say something worth remembering across conversations
-    ("remember I manage 48 stocks", "keep answers short"). Deliberately NOT for
-    ticker-specific facts — those are handled by retrieving real past messages
-    (get_chat_history) or, if they're objective corrections about the stock itself
-    rather than personal context, by flag_stock_correction into the shared
-    StockMemory. Per-user, never surfaced to any other user."""
+    """Durable fact/preference/instruction about a specific user, saved when they
+    explicitly say something worth remembering across conversations. Two scopes:
+    ticker=None -> global ("manages 48 stocks", "keep answers short"), surfaced in
+    every conversation. ticker set -> personal note tied to one stock ("already knows
+    SLV/GLD overlap, don't re-explain"), surfaced only when that ticker comes up.
+    Neither is the same as flag_stock_correction: that's for OBJECTIVE corrections
+    about the ticker itself, shared with every user via StockMemory — this table is
+    always personal, never surfaced to any other user."""
     __tablename__ = "user_learnings"
     id = Column(String, primary_key=True, default=_uid)
     user_email = Column(String, ForeignKey("users.email"), nullable=False)
     learning = Column(Text, nullable=False)
+    ticker = Column(String, nullable=True)
     source_conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
