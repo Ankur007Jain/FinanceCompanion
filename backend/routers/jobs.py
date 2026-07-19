@@ -436,19 +436,9 @@ def append_memory_lesson(ticker: str, body: dict, x_admin_secret: str = "", db: 
     lesson = (body.get("lesson") or "").strip()
     if not lesson:
         raise HTTPException(status_code=422, detail="lesson is required.")
-    from datetime import datetime
-    from models import StockMemory
-    from services.stock_memory import _MAX_CHARS
+    from services.stock_memory import append_lesson
     ticker = ticker.upper()
-    mem = db.get(StockMemory, ticker)
-    if mem:
-        mem.memory_narrative = (f"{mem.memory_narrative}\n\n[Scorecard] {lesson}")[:_MAX_CHARS]
-        mem.last_updated = datetime.utcnow()
-        mem.update_count = (mem.update_count or 0) + 1
-    else:
-        mem = StockMemory(ticker=ticker, memory_narrative=f"[Scorecard] {lesson}", last_updated=datetime.utcnow(), update_count=1)
-        db.add(mem)
-    db.commit()
+    mem = append_lesson(ticker, lesson, "Scorecard", db)
     return {"ticker": ticker, "memory_chars": len(mem.memory_narrative)}
 
 

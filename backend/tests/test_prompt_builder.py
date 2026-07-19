@@ -268,3 +268,55 @@ class TestCompactOtherTickers:
         _, dynamic1 = build_system_prompt("u6@example.com", db_session)
         _, dynamic2 = build_system_prompt("u6@example.com", db_session)
         assert dynamic1 == dynamic2
+
+
+class TestUserLearnings:
+    """save_learning-sourced facts must appear in every future conversation for that
+    user, regardless of ticker focus — that's the entire point of the feature."""
+
+    def test_learning_appears_in_general_chat(self, db_session):
+        from models import UserLearning
+        db_session.add(UserLearning(user_email="learner1@example.com", learning="Manages 48 stocks total."))
+        db_session.commit()
+        _, dynamic = build_system_prompt("learner1@example.com", db_session)
+        assert "THINGS TO REMEMBER ABOUT THIS USER" in dynamic
+        assert "Manages 48 stocks total." in dynamic
+
+    def test_learning_appears_regardless_of_ticker_focus(self, db_session):
+        """The whole point: a learning saved in one (e.g. general) conversation must
+        surface in a totally different, ticker-scoped conversation later."""
+        from models import UserLearning
+        _seed_analysis(db_session, "PBLEARN")
+        db_session.add(WatchlistItem(user_email="learner2@example.com", ticker="PBLEARN"))
+        db_session.add(UserLearning(user_email="learner2@example.com", learning="Prefers concise, systematic answers."))
+        db_session.commit()
+        _, dynamic = build_system_prompt("learner2@example.com", db_session, conversation_ticker="PBLEARN")
+        assert "Prefers concise, systematic answers." in dynamic
+
+    def test_no_learnings_section_when_none_saved(self, db_session):
+        _, dynamic = build_system_prompt("nolearnings@example.com", db_session)
+        assert "THINGS TO REMEMBER ABOUT THIS USER" not in dynamic
+
+    def test_learnings_scoped_to_the_correct_user(self, db_session):
+        from models import UserLearning
+        db_session.add(UserLearning(user_email="userA@example.com", learning="Only userA's fact."))
+        db_session.commit()
+        _, dynamic = build_system_prompt("userB@example.com", db_session)
+        assert "Only userA's fact." not in dynamic
+
+    def test_learnings_capped_to_most_recent_15(self, db_session):
+        from datetime import datetime, timedelta
+        from models import UserLearning
+        base = datetime(2026, 1, 1)
+        for i in range(20):
+            db_session.add(UserLearning(
+                user_email="manylearn@example.com", learning=f"Fact number {i}.",
+                created_at=base + timedelta(days=i),
+            ))
+        db_session.commit()
+        _, dynamic = build_system_prompt("manylearn@example.com", db_session)
+        # Only the 15 most recent (highest i) should appear
+        assert "Fact number 19." in dynamic
+        assert "Fact number 5." in dynamic
+        assert "Fact number 4." not in dynamic
+        assert "Fact number 0." not in dynamic

@@ -8,7 +8,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from models import StockAnalysis, StockMemory, SimulationPortfolio, WatchlistItem, TickerCorrelation
+from models import StockAnalysis, StockMemory, SimulationPortfolio, WatchlistItem, TickerCorrelation, UserLearning
 
 _STATIC_SYSTEM = """<role>
 You are Finance Companion, a confident, data-driven AI financial advisor for busy working professionals. Internally you reason like an institutional investment committee; externally you talk like a sharp, direct friend texting a quick take.
@@ -300,6 +300,23 @@ def build_system_prompt(
     ).order_by(SimulationPortfolio.ticker).all()
 
     lines = [f"Today: {today.isoformat()}\n"]
+
+    # Durable, ticker-independent facts/preferences this user has explicitly asked to
+    # have remembered (save_learning tool) — surfaced in every conversation, not just
+    # the one where it was said. Capped to the most recent 15: this is meant to be a
+    # short, high-signal list the model actually applies, not an ever-growing dump.
+    learnings = (
+        db.query(UserLearning)
+        .filter(UserLearning.user_email == user_email)
+        .order_by(UserLearning.created_at.desc())
+        .limit(15)
+        .all()
+    )
+    if learnings:
+        lines.append("=== THINGS TO REMEMBER ABOUT THIS USER (told to you in a past conversation) ===")
+        for learning in reversed(learnings):
+            lines.append(f"- {learning.learning}")
+        lines.append("")
 
     focus = conversation_ticker.upper() if conversation_ticker else None
 

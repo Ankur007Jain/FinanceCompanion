@@ -327,15 +327,32 @@ class TickerCorrelation(Base):
 
 
 class ToolCall(Base):
-    """Log of every tool invocation in chat — web_search or get_stock_analysis.
-    Didn't exist before 2026-07 and its absence was a real blind spot: diagnosing a
-    stale-news complaint meant inferring tool usage from message TEXT alone (searching
-    for phrases like "Search is rate-limited"), with no way to know actual call
-    frequency or how often search failed vs succeeded."""
+    """Log of every tool invocation in chat — web_search, get_stock_analysis,
+    get_chat_history, save_learning, flag_stock_correction. Didn't exist before
+    2026-07 and its absence was a real blind spot: diagnosing a stale-news complaint
+    meant inferring tool usage from message TEXT alone (searching for phrases like
+    "Search is rate-limited"), with no way to know actual call frequency or how often
+    a tool failed vs succeeded."""
     __tablename__ = "tool_calls"
     id = Column(String, primary_key=True, default=_uid)
     conversation_id = Column(String, ForeignKey("conversations.id"), nullable=False)
-    tool_name = Column(String, nullable=False)  # "web_search" or "get_stock_analysis"
-    query = Column(String)  # search query, or ticker for get_stock_analysis
+    tool_name = Column(String, nullable=False)
+    query = Column(String)  # search query, ticker, or a short description of the call
     succeeded = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class UserLearning(Base):
+    """Durable, ticker-independent fact/preference/instruction about a specific user,
+    saved when they explicitly say something worth remembering across conversations
+    ("remember I manage 48 stocks", "keep answers short"). Deliberately NOT for
+    ticker-specific facts — those are handled by retrieving real past messages
+    (get_chat_history) or, if they're objective corrections about the stock itself
+    rather than personal context, by flag_stock_correction into the shared
+    StockMemory. Per-user, never surfaced to any other user."""
+    __tablename__ = "user_learnings"
+    id = Column(String, primary_key=True, default=_uid)
+    user_email = Column(String, ForeignKey("users.email"), nullable=False)
+    learning = Column(Text, nullable=False)
+    source_conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
