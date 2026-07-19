@@ -272,41 +272,48 @@ class TestCompactOtherTickers:
 
 class TestUserLearnings:
     """save_learning-sourced facts must appear in every future conversation for that
-    user, regardless of ticker focus — that's the entire point of the feature."""
+    user, regardless of ticker focus — that's the entire point of the feature.
 
-    def test_learning_appears_in_general_chat(self, db_session):
+    build_user_learnings_block() is its own function (not folded into
+    build_system_prompt's dynamic_context) specifically so it can be its own
+    cache_control block in streaming.py — saving a new learning mid-conversation
+    shouldn't bust the cache for the much larger ticker-data block alongside it."""
+
+    def test_learning_appears_in_the_block(self, db_session):
         from models import UserLearning
+        from services.prompt_builder import build_user_learnings_block
         db_session.add(UserLearning(user_email="learner1@example.com", learning="Manages 48 stocks total."))
         db_session.commit()
-        _, dynamic = build_system_prompt("learner1@example.com", db_session)
-        assert "THINGS TO REMEMBER ABOUT THIS USER" in dynamic
-        assert "Manages 48 stocks total." in dynamic
+        block = build_user_learnings_block("learner1@example.com", db_session)
+        assert "THINGS TO REMEMBER ABOUT THIS USER" in block
+        assert "Manages 48 stocks total." in block
 
-    def test_learning_appears_regardless_of_ticker_focus(self, db_session):
+    def test_function_takes_no_ticker_parameter(self, db_session):
         """The whole point: a learning saved in one (e.g. general) conversation must
-        surface in a totally different, ticker-scoped conversation later."""
-        from models import UserLearning
-        _seed_analysis(db_session, "PBLEARN")
-        db_session.add(WatchlistItem(user_email="learner2@example.com", ticker="PBLEARN"))
-        db_session.add(UserLearning(user_email="learner2@example.com", learning="Prefers concise, systematic answers."))
-        db_session.commit()
-        _, dynamic = build_system_prompt("learner2@example.com", db_session, conversation_ticker="PBLEARN")
-        assert "Prefers concise, systematic answers." in dynamic
+        surface in a totally different, ticker-scoped conversation later. Enforced by
+        construction — this function has no ticker/conversation parameter at all, it
+        can only ever return the same thing for a given user regardless of context."""
+        import inspect
+        from services.prompt_builder import build_user_learnings_block
+        params = inspect.signature(build_user_learnings_block).parameters
+        assert set(params) == {"user_email", "db"}
 
-    def test_no_learnings_section_when_none_saved(self, db_session):
-        _, dynamic = build_system_prompt("nolearnings@example.com", db_session)
-        assert "THINGS TO REMEMBER ABOUT THIS USER" not in dynamic
+    def test_empty_string_when_none_saved(self, db_session):
+        from services.prompt_builder import build_user_learnings_block
+        assert build_user_learnings_block("nolearnings@example.com", db_session) == ""
 
     def test_learnings_scoped_to_the_correct_user(self, db_session):
         from models import UserLearning
+        from services.prompt_builder import build_user_learnings_block
         db_session.add(UserLearning(user_email="userA@example.com", learning="Only userA's fact."))
         db_session.commit()
-        _, dynamic = build_system_prompt("userB@example.com", db_session)
-        assert "Only userA's fact." not in dynamic
+        block = build_user_learnings_block("userB@example.com", db_session)
+        assert "Only userA's fact." not in block
 
     def test_learnings_capped_to_most_recent_15(self, db_session):
         from datetime import datetime, timedelta
         from models import UserLearning
+        from services.prompt_builder import build_user_learnings_block
         base = datetime(2026, 1, 1)
         for i in range(20):
             db_session.add(UserLearning(
@@ -314,9 +321,19 @@ class TestUserLearnings:
                 created_at=base + timedelta(days=i),
             ))
         db_session.commit()
-        _, dynamic = build_system_prompt("manylearn@example.com", db_session)
+        block = build_user_learnings_block("manylearn@example.com", db_session)
         # Only the 15 most recent (highest i) should appear
-        assert "Fact number 19." in dynamic
-        assert "Fact number 5." in dynamic
-        assert "Fact number 4." not in dynamic
-        assert "Fact number 0." not in dynamic
+        assert "Fact number 19." in block
+        assert "Fact number 5." in block
+        assert "Fact number 4." not in block
+        assert "Fact number 0." not in block
+
+    def test_not_present_in_build_system_prompt_dynamic_context(self, db_session):
+        """Confirms the split actually happened — learnings must NOT leak back into
+        dynamic_context, or the whole point of the separate cache block is defeated."""
+        from models import UserLearning
+        db_session.add(UserLearning(user_email="splitcheck@example.com", learning="Should not appear here."))
+        db_session.commit()
+        _, dynamic = build_system_prompt("splitcheck@example.com", db_session)
+        assert "Should not appear here." not in dynamic
+        assert "THINGS TO REMEMBER ABOUT THIS USER" not in dynamic

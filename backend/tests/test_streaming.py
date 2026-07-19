@@ -107,8 +107,8 @@ def _mock_anthropic_stream(text: str = "Test reply.", tool_use: dict | None = No
         yield mock_client
 
 
-def _create_conversation(client: TestClient, ticker: str | None = None):
-    with _mock_google_token():
+def _create_conversation(client: TestClient, ticker: str | None = None, email: str = "streamtest@example.com"):
+    with _mock_google_token(email):
         r = client.post("/conversations", params={"id_token": "tok"}, json={"ticker": ticker})
     return r.json()["id"]
 
@@ -159,9 +159,33 @@ class TestPromptCaching:
             )
         assert r.status_code == 200
         system = mock_client.messages.stream.call_args.kwargs["system"]
+        # No learnings saved for this user -> the 3rd block is conditionally absent
         assert len(system) == 2
         assert system[0]["cache_control"] == {"type": "ephemeral"}
         assert system[1]["cache_control"] == {"type": "ephemeral"}
+
+    def test_learnings_block_is_its_own_separately_cacheable_block(self, client: TestClient, db_session):
+        """The whole reason this is split out: saving a new learning mid-conversation
+        must only bust the cache for this small block, not the much larger
+        dynamic_context block (ticker dossiers, correlations, watchlist) alongside it."""
+        from models import UserLearning
+        db_session.add(UserLearning(user_email="learncache@example.com", learning="Keeps answers short."))
+        db_session.commit()
+
+        conv_id = _create_conversation(client, email="learncache@example.com")
+        with _mock_google_token("learncache@example.com"), _mock_anthropic_stream("Hi.") as mock_client:
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "learncache@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        system = mock_client.messages.stream.call_args.kwargs["system"]
+        assert len(system) == 3
+        assert all(block["cache_control"] == {"type": "ephemeral"} for block in system)
+        assert "THINGS TO REMEMBER ABOUT THIS USER" in system[1]["text"]
+        assert "Keeps answers short." in system[1]["text"]
+        # And it's genuinely separate from the ticker/watchlist block, not just visually
+        assert "THINGS TO REMEMBER" not in system[2]["text"]
 
 
 class TestNativeWebSearch:

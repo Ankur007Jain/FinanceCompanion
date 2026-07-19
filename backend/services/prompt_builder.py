@@ -268,6 +268,32 @@ def _correlated_tickers_section(ticker: str, db: Session, user_email: str) -> st
     return "\n".join(lines)
 
 
+def build_user_learnings_block(user_email: str, db: Session) -> str:
+    """Durable, ticker-independent facts/preferences this user has explicitly asked to
+    have remembered (save_learning tool) — surfaced in every conversation, not just the
+    one where it was said. Capped to the most recent 15: meant to be a short, high-signal
+    list the model actually applies, not an ever-growing dump.
+
+    Deliberately its OWN cache_control block, not folded into dynamic_context: a user
+    can save a new learning mid-conversation, and dynamic_context can be tens of
+    thousands of tokens (ticker dossiers, correlations, watchlist). Without this split,
+    saving one learning would bust the cache for that whole block on every subsequent
+    turn — this way only the small learnings block needs a fresh cache_write."""
+    learnings = (
+        db.query(UserLearning)
+        .filter(UserLearning.user_email == user_email)
+        .order_by(UserLearning.created_at.desc())
+        .limit(15)
+        .all()
+    )
+    if not learnings:
+        return ""
+    lines = ["=== THINGS TO REMEMBER ABOUT THIS USER (told to you in a past conversation) ==="]
+    for learning in reversed(learnings):
+        lines.append(f"- {learning.learning}")
+    return "\n".join(lines)
+
+
 def build_system_prompt(
     user_email: str,
     db: Session,
@@ -300,23 +326,6 @@ def build_system_prompt(
     ).order_by(SimulationPortfolio.ticker).all()
 
     lines = [f"Today: {today.isoformat()}\n"]
-
-    # Durable, ticker-independent facts/preferences this user has explicitly asked to
-    # have remembered (save_learning tool) — surfaced in every conversation, not just
-    # the one where it was said. Capped to the most recent 15: this is meant to be a
-    # short, high-signal list the model actually applies, not an ever-growing dump.
-    learnings = (
-        db.query(UserLearning)
-        .filter(UserLearning.user_email == user_email)
-        .order_by(UserLearning.created_at.desc())
-        .limit(15)
-        .all()
-    )
-    if learnings:
-        lines.append("=== THINGS TO REMEMBER ABOUT THIS USER (told to you in a past conversation) ===")
-        for learning in reversed(learnings):
-            lines.append(f"- {learning.learning}")
-        lines.append("")
 
     focus = conversation_ticker.upper() if conversation_ticker else None
 

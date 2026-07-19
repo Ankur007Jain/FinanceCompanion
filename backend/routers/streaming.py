@@ -23,7 +23,7 @@ from models import Conversation, Message, ToolCall, User, UserLearning
 from routers.auth import get_current_user
 from schemas import SendMessageRequest
 from services.model_router import _SONNET, _estimate_max_tokens
-from services.prompt_builder import build_system_prompt, build_ticker_dossier
+from services.prompt_builder import build_system_prompt, build_ticker_dossier, build_user_learnings_block
 from services.stock_memory import append_lesson
 
 router = APIRouter(prefix="/conversations", tags=["streaming"])
@@ -244,7 +244,19 @@ async def stream_message(
     db.commit()
 
     base_prompt, dynamic_context = build_system_prompt(user.email, db, conv.ticker)
+    learnings_block = build_user_learnings_block(user.email, db)
     api_system = [{"type": "text", "text": base_prompt, "cache_control": {"type": "ephemeral"}}]
+    if learnings_block:
+        # Its OWN cache block, separate from dynamic_context below — a user can save a
+        # new learning mid-conversation, and dynamic_context can be tens of thousands of
+        # tokens (ticker dossiers, correlations, watchlist). Without this split, saving
+        # one learning would bust the cache for that whole block on every following turn;
+        # this way only the small learnings block needs a fresh cache_write. Note: like
+        # any cache_control block, this only actually caches once it clears Anthropic's
+        # ~1024-token minimum — a user with just a couple of short saved learnings won't
+        # see a cache hit here, but the block is proportionally cheap either way at that
+        # size; the win compounds for users who've saved many over time.
+        api_system.append({"type": "text", "text": learnings_block, "cache_control": {"type": "ephemeral"}})
     if dynamic_context:
         # Also cacheable: rebuilt fresh from the DB every call, so this only ever changes
         # when the underlying data actually changes (new nightly run, watchlist edit) — never
