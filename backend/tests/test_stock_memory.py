@@ -13,7 +13,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from models import StockMemory
-from services.stock_memory import maybe_update_stock_memory, update_memory_from_report
+from services.stock_memory import append_lesson, maybe_update_stock_memory, update_memory_from_report
 
 ADMIN_SECRET = "test-admin-secret"
 
@@ -95,6 +95,40 @@ class TestNoUpdateHandling:
             await update_memory_from_report("NOUP3", "## Report", db_session)
         db_session.expire_all()
         assert "Past mistakes" in db_session.get(StockMemory, "NOUP3").memory_narrative
+
+
+class TestAppendLesson:
+    """append_lesson() is the shared write path for both the weekly Scorecard's
+    lesson-append endpoint and chat's flag_stock_correction tool — same tests should
+    hold for either caller since it's the identical function underneath."""
+
+    def test_creates_memory_when_missing(self, db_session):
+        mem = append_lesson("ALSA", "Revenue guidance cut in Q2.", "Chat", db_session)
+        assert mem.memory_narrative == "[Chat] Revenue guidance cut in Q2."
+        assert mem.update_count == 1
+
+    def test_appends_to_existing_memory_with_source_tag(self, db_session):
+        _seed_memory(db_session, "ALSB", "Existing context.")  # update_count left unset (None)
+        mem = append_lesson("ALSB", "CEO stepped down.", "Chat", db_session)
+        assert mem.memory_narrative.startswith("Existing context.")
+        assert "[Chat] CEO stepped down." in mem.memory_narrative
+        assert mem.update_count == 1
+
+    def test_scorecard_and_chat_use_distinct_tags(self, db_session):
+        append_lesson("ALSC", "From scorecard.", "Scorecard", db_session)
+        mem = append_lesson("ALSC", "From chat.", "Chat", db_session)
+        assert "[Scorecard] From scorecard." in mem.memory_narrative
+        assert "[Chat] From chat." in mem.memory_narrative
+
+    def test_caps_total_length(self, db_session):
+        db_session.merge(StockMemory(ticker="ALSD", memory_narrative="x" * 1150))
+        db_session.commit()
+        mem = append_lesson("ALSD", "y" * 500, "Chat", db_session)
+        assert len(mem.memory_narrative) <= 1200
+
+    def test_ticker_uppercased(self, db_session):
+        mem = append_lesson("alse", "lowercase input.", "Chat", db_session)
+        assert mem.ticker == "ALSE"
 
 
 class TestNarrativeReportPrompt:

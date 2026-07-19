@@ -19,13 +19,22 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db
-from models import Conversation, Message, ToolCall, User
+from models import Conversation, Message, ToolCall, User, UserLearning
 from routers.auth import get_current_user
 from schemas import SendMessageRequest
 from services.model_router import _SONNET, _estimate_max_tokens
 from services.prompt_builder import build_system_prompt, build_ticker_dossier
+from services.stock_memory import append_lesson
 
 router = APIRouter(prefix="/conversations", tags=["streaming"])
+
+# Only the most recent messages are resent live each turn — a real production
+# conversation was found sending the ENTIRE history every turn with no cap: 68x cost
+# growth within one conversation (1.8K -> 119K uncached input tokens), and by message
+# 57 alone that's 60.8% of Sonnet's 200K context window — a live collision course with
+# a hard failure, not just rising cost. get_chat_history is the safety valve for
+# whatever this trims off (see below) — verbatim retrieval, not silent data loss.
+_MAX_LIVE_HISTORY = 20
 
 _WEB_SEARCH_TOOL = {
     "type": "web_search_20250305",
@@ -50,6 +59,117 @@ _GET_STOCK_ANALYSIS_TOOL = {
         "required": ["ticker"],
     },
 }
+
+_GET_CHAT_HISTORY_TOOL = {
+    "name": "get_chat_history",
+    "description": (
+        "Retrieve real past messages — either from the user's OTHER conversations about a "
+        "specific ticker, or older messages from earlier in THIS conversation that are no "
+        "longer in the live context (only the most recent ~20 messages are kept live for cost "
+        "reasons). Always returns real quoted messages, never a summary. Use this when the user "
+        "references something discussed before that you don't see in the current context — "
+        "'like we discussed', 'in my SLV chat', or asking about a ticker they've talked about "
+        "elsewhere."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "ticker": {
+                "type": "string",
+                "description": "Ticker to find past conversations about, e.g. SLV. Omit to look further back in this same conversation instead.",
+            }
+        },
+        "required": [],
+    },
+}
+
+_SAVE_LEARNING_TOOL = {
+    "name": "save_learning",
+    "description": (
+        "Save a durable fact, preference, or instruction about THIS USER — not about any "
+        "specific ticker, that's handled automatically — that should be remembered in every "
+        "future conversation. Trigger this when the user says something like 'remember...', "
+        "'from now on...', 'don't forget...', states a lasting preference for how you should "
+        "respond, or shares a durable fact about their situation (portfolio size, constraints, "
+        "goals). Do NOT use this for one-off statements, ticker-specific facts, or anything "
+        "already visible in their watchlist/portfolio data."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "learning": {"type": "string", "description": "The fact/preference/instruction, stated concisely in one sentence"}
+        },
+        "required": ["learning"],
+    },
+}
+
+_FLAG_CORRECTION_TOOL = {
+    "name": "flag_stock_correction",
+    "description": (
+        "Flag a factual correction about a TICKER ITSELF — not the user's personal situation — "
+        "that should be remembered for every future analysis of that stock and shared with "
+        "every user tracking it, e.g. correcting an outdated fact you stated (a former "
+        "executive, a stale price, superseded news). This updates the stock's shared memory "
+        "that the nightly analysis reads every night. Do NOT use this for the user's personal "
+        "preferences — use save_learning for those."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "ticker": {"type": "string"},
+            "correction": {"type": "string", "description": "The correction, stated as one specific factual sentence"},
+        },
+        "required": ["ticker", "correction"],
+    },
+}
+
+
+def _fetch_chat_history(ticker: str, conversation_id: str, user_email: str, db) -> str:
+    """Verbatim retrieval, never summarized — the safety valve for the capped live
+    window and the mechanism for cross-conversation memory, same tool either way.
+    ticker given -> search the user's OTHER conversations for that ticker. No ticker
+    -> pull the trimmed-off older portion of THIS conversation."""
+    _RETRIEVE_LIMIT = 15
+    if ticker:
+        ticker = ticker.upper()
+        other_conv = (
+            db.query(Conversation)
+            .filter(
+                Conversation.user_email == user_email,
+                Conversation.ticker == ticker,
+                Conversation.id != conversation_id,
+            )
+            .order_by(Conversation.updated_at.desc())
+            .first()
+        )
+        if not other_conv:
+            return f"No other conversation found about {ticker}."
+        rows = (
+            db.query(Message)
+            .filter(Message.conversation_id == other_conv.id)
+            .order_by(Message.created_at.desc())
+            .limit(_RETRIEVE_LIMIT)
+            .all()
+        )
+        rows.reverse()
+        if not rows:
+            return f"No other conversation found about {ticker}."
+        header = f"--- Real messages from your other {ticker} conversation ({other_conv.updated_at.date().isoformat()}) ---"
+    else:
+        all_rows = (
+            db.query(Message)
+            .filter(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at)
+            .all()
+        )
+        older = all_rows[:-_MAX_LIVE_HISTORY] if len(all_rows) > _MAX_LIVE_HISTORY else []
+        if not older:
+            return "No earlier messages in this conversation beyond what's already in context."
+        rows = older[-_RETRIEVE_LIMIT:]
+        header = "--- Earlier messages from this conversation, no longer in live context ---"
+
+    lines = [header] + [f"[{r.role}]: {r.content}" for r in rows]
+    return "\n\n".join(lines)
 
 
 def _log_web_searches(final, conversation_id: str, session) -> None:
@@ -103,13 +223,15 @@ async def stream_message(
     # Free-tier token cap disabled until there's an admin page to manage tiers/limits —
     # tokens_used is still tracked below for when that lands.
 
-    # Load history
+    # Load history — capped to the most recent _MAX_LIVE_HISTORY messages. Anything
+    # trimmed off is still fetchable verbatim via the get_chat_history tool, not lost.
     history_rows = db.query(Message).filter(
         Message.conversation_id == conversation_id
     ).order_by(Message.created_at).all()
     is_first = len(history_rows) == 0
+    live_rows = history_rows[-_MAX_LIVE_HISTORY:] if len(history_rows) > _MAX_LIVE_HISTORY else history_rows
 
-    history = [{"role": m.role, "content": m.content} for m in history_rows]
+    history = [{"role": m.role, "content": m.content} for m in live_rows]
     history.append({"role": "user", "content": body.content})
 
     # Save user message
@@ -202,7 +324,10 @@ async def stream_message(
                     max_tokens=max_tokens,
                     system=api_system,
                     messages=messages,
-                    tools=[_WEB_SEARCH_TOOL, _GET_STOCK_ANALYSIS_TOOL],
+                    tools=[
+                        _WEB_SEARCH_TOOL, _GET_STOCK_ANALYSIS_TOOL,
+                        _GET_CHAT_HISTORY_TOOL, _SAVE_LEARNING_TOOL, _FLAG_CORRECTION_TOOL,
+                    ],
                 ) as stream:
                     async for event in stream:
                         etype = getattr(event, "type", "")
@@ -258,12 +383,13 @@ async def stream_message(
                 if final.stop_reason == "end_turn" or not tool_uses:
                     break
 
-                # Execute client-side tool calls — get_stock_analysis only. web_search
-                # is server-side and already resolved above; its result is already part
-                # of `final.content`, which gets appended to `messages` unchanged below.
+                # Execute client-side tool calls. web_search is server-side and already
+                # resolved above; its result is already part of `final.content`, which
+                # gets appended to `messages` unchanged below.
                 tool_results = []
                 for tu in tool_uses:
-                    if tu["name"] == "get_stock_analysis":
+                    name = tu["name"]
+                    if name == "get_stock_analysis":
                         pivot_ticker = tu["input"].get("ticker", "")
                         result = build_ticker_dossier(pivot_ticker, session, user.email)
                         session.add(ToolCall(
@@ -272,10 +398,51 @@ async def stream_message(
                         ))
                         session.commit()
                         yield f"data: {json.dumps({'type': 'tool_result', 'query': pivot_ticker})}\n\n"
+                        tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result})
+
+                    elif name == "get_chat_history":
+                        ticker = tu["input"].get("ticker", "")
+                        result = _fetch_chat_history(ticker, conversation_id, user.email, session)
+                        session.add(ToolCall(
+                            conversation_id=conversation_id, tool_name="get_chat_history",
+                            query=ticker or "(this conversation, older messages)", succeeded=True,
+                        ))
+                        session.commit()
+                        yield f"data: {json.dumps({'type': 'tool_result', 'query': ticker or 'chat history'})}\n\n"
+                        tool_results.append({"type": "tool_result", "tool_use_id": tu["id"], "content": result})
+
+                    elif name == "save_learning":
+                        learning = tu["input"].get("learning", "").strip()
+                        if learning:
+                            session.add(UserLearning(
+                                user_email=user.email, learning=learning,
+                                source_conversation_id=conversation_id,
+                            ))
+                        session.add(ToolCall(
+                            conversation_id=conversation_id, tool_name="save_learning",
+                            query=learning, succeeded=bool(learning),
+                        ))
+                        session.commit()
+                        yield f"data: {json.dumps({'type': 'tool_result', 'query': learning})}\n\n"
                         tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tu["id"],
-                            "content": result,
+                            "type": "tool_result", "tool_use_id": tu["id"],
+                            "content": "Saved." if learning else "Nothing to save — learning was empty.",
+                        })
+
+                    elif name == "flag_stock_correction":
+                        ticker = tu["input"].get("ticker", "").strip()
+                        correction = tu["input"].get("correction", "").strip()
+                        if ticker and correction:
+                            append_lesson(ticker, correction, "Chat", session)
+                        session.add(ToolCall(
+                            conversation_id=conversation_id, tool_name="flag_stock_correction",
+                            query=f"{ticker}: {correction}", succeeded=bool(ticker and correction),
+                        ))
+                        session.commit()
+                        yield f"data: {json.dumps({'type': 'tool_result', 'query': ticker})}\n\n"
+                        tool_results.append({
+                            "type": "tool_result", "tool_use_id": tu["id"],
+                            "content": "Saved to shared memory." if (ticker and correction) else "Missing ticker or correction — not saved.",
                         })
 
                 messages.append({"role": "assistant", "content": final.content})
