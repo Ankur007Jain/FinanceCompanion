@@ -1017,6 +1017,18 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                     </button>
                   )}
                   <button
+                    onClick={() => { setShowProfileMenu(false); router.push("/memory"); }}
+                    style={{
+                      width: "100%", textAlign: "left", padding: "11px 16px",
+                      background: "none", border: "none", cursor: "pointer",
+                      fontSize: 13, color: "var(--t-text)", fontFamily: SANS,
+                      display: "flex", alignItems: "center", gap: 8,
+                      borderBottom: "1px solid var(--t-border-light)",
+                    }}
+                  >
+                    Memory
+                  </button>
+                  <button
                     onClick={() => { setShowProfileMenu(false); setShowFeedbackModal(true); }}
                     style={{
                       width: "100%", textAlign: "left", padding: "11px 16px",

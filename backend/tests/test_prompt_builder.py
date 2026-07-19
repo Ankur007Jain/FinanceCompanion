@@ -39,8 +39,22 @@ class TestCommitteeLens:
         assert "don't have current data" in low
         assert "training" in low
 
+    def test_static_prompt_requires_checking_real_list_before_confirming_saves(self, db_session):
+        """Must not let the model answer 'did you save that?' from its own recollection
+        of calling the tool — has to check the actual THINGS TO REMEMBER list, which is
+        real DB-backed state, not a guess."""
+        static, _ = build_system_prompt("nobody@example.com", db_session)
+        assert "THINGS TO REMEMBER ABOUT THIS USER" in static
+        assert "not a guess" in static.lower() or "not assuming" in static.lower()
+
 
 class TestDeepBlock:
+    """The focus ticker's full dossier is no longer embedded in build_system_prompt's
+    dynamic_context — it's built separately by build_ticker_dossier (called directly
+    by streaming.py as its own cache_control block, see TestCacheBlockSplit below).
+    These tests moved to exercising build_ticker_dossier directly, which is where
+    this content actually lives now."""
+
     def test_focus_ticker_injects_deep_dossier(self, db_session):
         _seed_analysis(
             db_session, "PBDEEP",
@@ -49,12 +63,13 @@ class TestDeepBlock:
             bear_case="Pricey multiple, no margin for error.",
             thesis_invalidation="A guidance cut next quarter.",
         )
-        _, dynamic = build_system_prompt("u@example.com", db_session, conversation_ticker="PBDEEP")
-        assert "PBDEEP — FULL ANALYSIS" in dynamic
-        assert "82/100" in dynamic
-        assert "Cash flow funds buybacks." in dynamic
-        assert "Pricey multiple" in dynamic
-        assert "A guidance cut next quarter." in dynamic
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("PBDEEP", db_session, "u@example.com")
+        assert "PBDEEP — FULL ANALYSIS" in dossier
+        assert "82/100" in dossier
+        assert "Cash flow funds buybacks." in dossier
+        assert "Pricey multiple" in dossier
+        assert "A guidance cut next quarter." in dossier
 
     def test_deep_dossier_shows_longterm_returns_and_ownership(self, db_session):
         _seed_analysis(
@@ -65,26 +80,33 @@ class TestDeepBlock:
             target_price_mean=67.5, target_price_high=88.0, target_price_low=42.0,
             analyst_count=25, analyst_consensus="BUY",
         )
-        _, dynamic = build_system_prompt("u@example.com", db_session, conversation_ticker="PBLT")
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("PBLT", db_session, "u@example.com")
         # Values already stored as percentages must not be scaled again
-        assert "1yr -47.8%" in dynamic and "S&P +20.1%" in dynamic
-        assert "5yr -33.6%" in dynamic and "S&P +72.3%" in dynamic
+        assert "1yr -47.8%" in dossier and "S&P +20.1%" in dossier
+        assert "5yr -33.6%" in dossier and "S&P +72.3%" in dossier
         # Ownership/short fields are fractions and should be pct-formatted
-        assert "Inst 85.0%" in dynamic
-        assert "Short float 12.6%" in dynamic
+        assert "Inst 85.0%" in dossier
+        assert "Short float 12.6%" in dossier
         # Analyst target range with count
-        assert "BUY (25)" in dynamic and "$67.5 ($42.0–$88.0)" in dynamic
+        assert "BUY (25)" in dossier and "$67.5 ($42.0–$88.0)" in dossier
 
     def test_focus_ticker_is_case_insensitive(self, db_session):
         _seed_analysis(db_session, "PBCASE", conviction_score=50)
-        _, dynamic = build_system_prompt("u@example.com", db_session, conversation_ticker="pbcase")
-        assert "PBCASE — FULL ANALYSIS" in dynamic
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("pbcase", db_session, "u@example.com")
+        assert "PBCASE — FULL ANALYSIS" in dossier
 
-    def test_no_focus_ticker_no_deep_block(self, db_session):
+    def test_dynamic_context_never_contains_full_dossier(self, db_session):
+        """Whether or not a ticker is in focus, dynamic_context itself must stay
+        dossier-free now — that's the whole point of the split."""
+        _seed_analysis(db_session, "PBNONE")
         db_session.add(WatchlistItem(user_email="nofocus@example.com", ticker="PBNONE"))
         db_session.commit()
-        _, dynamic = build_system_prompt("nofocus@example.com", db_session)
-        assert "FULL ANALYSIS" not in dynamic
+        _, no_focus = build_system_prompt("nofocus@example.com", db_session)
+        _, with_focus = build_system_prompt("nofocus@example.com", db_session, conversation_ticker="PBNONE")
+        assert "FULL ANALYSIS" not in no_focus
+        assert "FULL ANALYSIS" not in with_focus
 
 
 class TestBuildTickerDossier:
@@ -118,6 +140,34 @@ class TestBuildTickerDossier:
         dossier = build_ticker_dossier("PBPOS", db_session, "holder@example.com")
         assert "10 shares" in dossier
         assert "avg cost $40.00" in dossier
+
+    def test_ticker_scoped_learning_appears_only_for_that_ticker(self, db_session):
+        """save_learning with a ticker set is a personal note tied to one stock —
+        must show up in that ticker's dossier, and NOT bleed into a different ticker's."""
+        from models import UserLearning
+        _seed_analysis(db_session, "PBTICK")
+        _seed_analysis(db_session, "PBOTHERTICK")
+        db_session.add(UserLearning(
+            user_email="tickscope@example.com", ticker="PBTICK",
+            learning="Already knows this overlaps with GLD, don't re-explain.",
+        ))
+        db_session.commit()
+        from services.prompt_builder import build_ticker_dossier
+        own = build_ticker_dossier("PBTICK", db_session, "tickscope@example.com")
+        other = build_ticker_dossier("PBOTHERTICK", db_session, "tickscope@example.com")
+        assert "Already knows this overlaps with GLD" in own
+        assert "Already knows this overlaps with GLD" not in other
+
+    def test_global_learning_not_shown_in_ticker_dossier(self, db_session):
+        """Global learnings (ticker=None) belong in build_user_learnings_block, not
+        repeated inside every ticker's dossier too — keeps the split clean."""
+        from models import UserLearning
+        _seed_analysis(db_session, "PBGLOBALCHK")
+        db_session.add(UserLearning(user_email="globalchk@example.com", learning="Manages 48 stocks total."))
+        db_session.commit()
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("PBGLOBALCHK", db_session, "globalchk@example.com")
+        assert "Manages 48 stocks total." not in dossier
 
     def test_shows_significant_correlation_to_a_watchlist_ticker(self, db_session):
         from datetime import date
@@ -189,8 +239,12 @@ class TestBuildTickerDossier:
 
 
 class TestCompactOtherTickers:
-    """In a ticker-scoped conversation, every OTHER ticker should be a cheap numeric line —
-    keeping everything needed for portfolio-wide screening, dropping only prose."""
+    """In a ticker-scoped conversation, every tracked ticker should be a cheap numeric
+    line — keeping everything needed for portfolio-wide screening, dropping only
+    prose. The focus ticker gets one too now (renamed ALL, not OTHER) — deliberately
+    redundant with its own full dossier elsewhere, so this block's content is
+    identical regardless of which ticker is in focus and stays cache-shareable
+    across every ticker-scoped conversation a user has (see TestCacheBlockSplit)."""
 
     def test_other_ticker_gets_compact_line_not_full_paragraph(self, db_session):
         _seed_analysis(db_session, "PBFOCUS", conviction_score=70)
@@ -204,7 +258,7 @@ class TestCompactOtherTickers:
         _, dynamic = build_system_prompt("u2@example.com", db_session, conversation_ticker="PBFOCUS")
         assert "PBOTHER: BUY" in dynamic
         assert "RSI 28.0" in dynamic
-        assert "Solid setup." not in dynamic.split("OTHER TRACKED TICKERS")[1]
+        assert "Solid setup." not in dynamic.split("ALL TRACKED TICKERS")[1]
 
     def test_other_ticker_shows_sector_and_ripple_snippet(self, db_session):
         """Sector/category + a short ripple snippet ride along in the compact line so
@@ -220,7 +274,7 @@ class TestCompactOtherTickers:
         db_session.add(WatchlistItem(user_email="u7@example.com", ticker="PBSECTOR"))
         db_session.commit()
         _, dynamic = build_system_prompt("u7@example.com", db_session, conversation_ticker="PBFOCUS3")
-        other_block = dynamic.split("OTHER TRACKED TICKERS")[1]
+        other_block = dynamic.split("ALL TRACKED TICKERS")[1]
         assert "[Technology]" in other_block
         assert "Ripple: X's HBM dominance ripples directly into Y's pricing power" in other_block
         assert "…" in other_block  # truncated, not the full paragraph
@@ -238,14 +292,17 @@ class TestCompactOtherTickers:
         assert "5 shares" in dynamic and "avg cost $100.00" in dynamic
         assert "⭐" in dynamic  # important-day flag survives the trim
 
-    def test_focus_ticker_not_duplicated_in_compact_loop(self, db_session):
+    def test_focus_ticker_appears_once_in_compact_loop(self, db_session):
+        """Deliberately NOT excluded anymore, unlike the original design — the focus
+        ticker's own compact line is a small, intentional redundancy (its full dossier
+        lives in a separate block built by streaming.py) that keeps this block's
+        content identical no matter which ticker is in focus, which is what makes it
+        cache-shareable across every ticker-scoped conversation a user has."""
         _seed_analysis(db_session, "PBDUP", conviction_score=70)
         db_session.add(WatchlistItem(user_email="u4@example.com", ticker="PBDUP"))
         db_session.commit()
         _, dynamic = build_system_prompt("u4@example.com", db_session, conversation_ticker="PBDUP")
-        # The compact-loop line format is "TICKER: verdict ..." — that specific pattern
-        # must not appear a second time for the ticker already shown in full above.
-        assert dynamic.count("PBDUP: BUY") == 0
+        assert dynamic.count("PBDUP: BUY") == 1
 
     def test_general_chat_keeps_full_detail_unchanged(self, db_session):
         """No focus ticker => the trim doesn't apply; general chat is exactly the case
@@ -272,41 +329,48 @@ class TestCompactOtherTickers:
 
 class TestUserLearnings:
     """save_learning-sourced facts must appear in every future conversation for that
-    user, regardless of ticker focus — that's the entire point of the feature."""
+    user, regardless of ticker focus — that's the entire point of the feature.
 
-    def test_learning_appears_in_general_chat(self, db_session):
+    build_user_learnings_block() is its own function (not folded into
+    build_system_prompt's dynamic_context) specifically so it can be its own
+    cache_control block in streaming.py — saving a new learning mid-conversation
+    shouldn't bust the cache for the much larger ticker-data block alongside it."""
+
+    def test_learning_appears_in_the_block(self, db_session):
         from models import UserLearning
+        from services.prompt_builder import build_user_learnings_block
         db_session.add(UserLearning(user_email="learner1@example.com", learning="Manages 48 stocks total."))
         db_session.commit()
-        _, dynamic = build_system_prompt("learner1@example.com", db_session)
-        assert "THINGS TO REMEMBER ABOUT THIS USER" in dynamic
-        assert "Manages 48 stocks total." in dynamic
+        block = build_user_learnings_block("learner1@example.com", db_session)
+        assert "THINGS TO REMEMBER ABOUT THIS USER" in block
+        assert "Manages 48 stocks total." in block
 
-    def test_learning_appears_regardless_of_ticker_focus(self, db_session):
+    def test_function_takes_no_ticker_parameter(self, db_session):
         """The whole point: a learning saved in one (e.g. general) conversation must
-        surface in a totally different, ticker-scoped conversation later."""
-        from models import UserLearning
-        _seed_analysis(db_session, "PBLEARN")
-        db_session.add(WatchlistItem(user_email="learner2@example.com", ticker="PBLEARN"))
-        db_session.add(UserLearning(user_email="learner2@example.com", learning="Prefers concise, systematic answers."))
-        db_session.commit()
-        _, dynamic = build_system_prompt("learner2@example.com", db_session, conversation_ticker="PBLEARN")
-        assert "Prefers concise, systematic answers." in dynamic
+        surface in a totally different, ticker-scoped conversation later. Enforced by
+        construction — this function has no ticker/conversation parameter at all, it
+        can only ever return the same thing for a given user regardless of context."""
+        import inspect
+        from services.prompt_builder import build_user_learnings_block
+        params = inspect.signature(build_user_learnings_block).parameters
+        assert set(params) == {"user_email", "db"}
 
-    def test_no_learnings_section_when_none_saved(self, db_session):
-        _, dynamic = build_system_prompt("nolearnings@example.com", db_session)
-        assert "THINGS TO REMEMBER ABOUT THIS USER" not in dynamic
+    def test_empty_string_when_none_saved(self, db_session):
+        from services.prompt_builder import build_user_learnings_block
+        assert build_user_learnings_block("nolearnings@example.com", db_session) == ""
 
     def test_learnings_scoped_to_the_correct_user(self, db_session):
         from models import UserLearning
+        from services.prompt_builder import build_user_learnings_block
         db_session.add(UserLearning(user_email="userA@example.com", learning="Only userA's fact."))
         db_session.commit()
-        _, dynamic = build_system_prompt("userB@example.com", db_session)
-        assert "Only userA's fact." not in dynamic
+        block = build_user_learnings_block("userB@example.com", db_session)
+        assert "Only userA's fact." not in block
 
     def test_learnings_capped_to_most_recent_15(self, db_session):
         from datetime import datetime, timedelta
         from models import UserLearning
+        from services.prompt_builder import build_user_learnings_block
         base = datetime(2026, 1, 1)
         for i in range(20):
             db_session.add(UserLearning(
@@ -314,9 +378,19 @@ class TestUserLearnings:
                 created_at=base + timedelta(days=i),
             ))
         db_session.commit()
-        _, dynamic = build_system_prompt("manylearn@example.com", db_session)
+        block = build_user_learnings_block("manylearn@example.com", db_session)
         # Only the 15 most recent (highest i) should appear
-        assert "Fact number 19." in dynamic
-        assert "Fact number 5." in dynamic
-        assert "Fact number 4." not in dynamic
-        assert "Fact number 0." not in dynamic
+        assert "Fact number 19." in block
+        assert "Fact number 5." in block
+        assert "Fact number 4." not in block
+        assert "Fact number 0." not in block
+
+    def test_not_present_in_build_system_prompt_dynamic_context(self, db_session):
+        """Confirms the split actually happened — learnings must NOT leak back into
+        dynamic_context, or the whole point of the separate cache block is defeated."""
+        from models import UserLearning
+        db_session.add(UserLearning(user_email="splitcheck@example.com", learning="Should not appear here."))
+        db_session.commit()
+        _, dynamic = build_system_prompt("splitcheck@example.com", db_session)
+        assert "Should not appear here." not in dynamic
+        assert "THINGS TO REMEMBER ABOUT THIS USER" not in dynamic

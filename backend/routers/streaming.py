@@ -23,7 +23,7 @@ from models import Conversation, Message, ToolCall, User, UserLearning
 from routers.auth import get_current_user
 from schemas import SendMessageRequest
 from services.model_router import _SONNET, _estimate_max_tokens
-from services.prompt_builder import build_system_prompt, build_ticker_dossier
+from services.prompt_builder import build_system_prompt, build_ticker_dossier, build_user_learnings_block
 from services.stock_memory import append_lesson
 
 router = APIRouter(prefix="/conversations", tags=["streaming"])
@@ -86,18 +86,44 @@ _GET_CHAT_HISTORY_TOOL = {
 _SAVE_LEARNING_TOOL = {
     "name": "save_learning",
     "description": (
-        "Save a durable fact, preference, or instruction about THIS USER — not about any "
-        "specific ticker, that's handled automatically — that should be remembered in every "
-        "future conversation. Trigger this when the user says something like 'remember...', "
-        "'from now on...', 'don't forget...', states a lasting preference for how you should "
-        "respond, or shares a durable fact about their situation (portfolio size, constraints, "
-        "goals). Do NOT use this for one-off statements, ticker-specific facts, or anything "
-        "already visible in their watchlist/portfolio data."
+        "Save a durable fact, preference, or instruction about this user that should be "
+        "remembered in every future conversation. Two scopes: leave ticker empty for a "
+        "GLOBAL fact ('manages 48 stocks', 'keep answers short'); set ticker for a personal "
+        "note tied to one stock ('already knows SLV/GLD overlap, don't re-explain it'). This "
+        "is always private to this user — for an objective correction about the ticker itself "
+        "that should help every user, use flag_stock_correction instead.\n\n"
+        "Trigger on explicit language ('remember...', 'from now on...', 'don't forget...') or "
+        "a clearly stated lasting preference/fact — call this directly, no need to check first. "
+        "If you're INFERRING something might be worth remembering from a pattern in the "
+        "conversation rather than the user stating it outright, ask them to confirm before "
+        "calling this tool — don't save an inferred guess as if it were a confirmed instruction. "
+        "Do NOT use this for one-off statements or anything already visible in their "
+        "watchlist/portfolio data."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "learning": {"type": "string", "description": "The fact/preference/instruction, stated concisely in one sentence"}
+            "learning": {"type": "string", "description": "The fact/preference/instruction, stated concisely in one sentence"},
+            "ticker": {"type": "string", "description": "Leave empty for global. Set to a ticker for a personal note tied to that stock only."},
+        },
+        "required": ["learning"],
+    },
+}
+
+_DELETE_LEARNING_TOOL = {
+    "name": "delete_learning",
+    "description": (
+        "Remove a previously saved learning — use when the user says something was saved "
+        "wrong, no longer applies, or asks you to forget something. Pass the learning's exact "
+        "text as it appears in 'THINGS TO REMEMBER ABOUT THIS USER' or 'Things you've told me "
+        "about this ticker specifically' in your context — copy it verbatim, don't paraphrase. "
+        "If you're not sure which saved learning the user means, ask them to confirm which one "
+        "before calling this — deleting the wrong one is worse than asking."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "learning": {"type": "string", "description": "The exact text of the learning to remove, copied verbatim from context"},
         },
         "required": ["learning"],
     },
@@ -244,7 +270,19 @@ async def stream_message(
     db.commit()
 
     base_prompt, dynamic_context = build_system_prompt(user.email, db, conv.ticker)
+    learnings_block = build_user_learnings_block(user.email, db)
     api_system = [{"type": "text", "text": base_prompt, "cache_control": {"type": "ephemeral"}}]
+    if learnings_block:
+        # Its OWN cache block, separate from dynamic_context below — a user can save a
+        # new learning mid-conversation, and dynamic_context can be tens of thousands of
+        # tokens (ticker dossiers, correlations, watchlist). Without this split, saving
+        # one learning would bust the cache for that whole block on every following turn;
+        # this way only the small learnings block needs a fresh cache_write. Note: like
+        # any cache_control block, this only actually caches once it clears Anthropic's
+        # ~1024-token minimum — a user with just a couple of short saved learnings won't
+        # see a cache hit here, but the block is proportionally cheap either way at that
+        # size; the win compounds for users who've saved many over time.
+        api_system.append({"type": "text", "text": learnings_block, "cache_control": {"type": "ephemeral"}})
     if dynamic_context:
         # Also cacheable: rebuilt fresh from the DB every call, so this only ever changes
         # when the underlying data actually changes (new nightly run, watchlist edit) — never
@@ -252,8 +290,29 @@ async def stream_message(
         # production message): the static block alone is ~500 tokens, under Anthropic's
         # ~1024-token minimum to cache on Sonnet. This block easily clears it (~28k tokens
         # observed), so a 2nd+ message in the same conversation now hits it at ~10% cost
-        # instead of paying full price for identical content again.
+        # instead of paying full price for identical content again. As of the split below,
+        # this block no longer contains the focus ticker's dossier — it's the same content
+        # regardless of which ticker is in focus, so it stays cache-shareable across every
+        # ticker-scoped conversation this user has, not just repeated turns in one.
         api_system.append({"type": "text", "text": dynamic_context, "cache_control": {"type": "ephemeral"}})
+
+    if conv.ticker:
+        # The focus ticker's full dossier — deliberately the LAST block in the array,
+        # not folded into dynamic_context above. Anthropic's cache breakpoints match
+        # an exact PREFIX up to each cache_control marker, not each block in isolation:
+        # if this (which changes every time the user switches which ticker they're
+        # viewing) came before the shared block above, it would poison that block's
+        # cache match too, even though its own content is otherwise identical across
+        # every ticker-scoped conversation. Putting it last means only THIS block
+        # needs a fresh write on a switch — confirmed with real data: it was the
+        # cause of a 71%-of-block cache miss on every ticker switch before this split.
+        focus_dossier = (
+            f"📌 ACTIVE CONVERSATION TOPIC: {conv.ticker}. The user is chatting specifically about "
+            f"{conv.ticker} right now. When they say \"this stock\", \"this share\", \"it\", or similar, "
+            f"they mean {conv.ticker} — not any other ticker listed above. Lead your answer with "
+            f"{conv.ticker}; only bring in other tickers if the user explicitly asks about them.\n\n"
+        ) + build_ticker_dossier(conv.ticker, db, user.email)
+        api_system.append({"type": "text", "text": focus_dossier, "cache_control": {"type": "ephemeral"}})
 
     max_tokens = _estimate_max_tokens(body.content)
     # Always Sonnet — a router that downgraded short messages to Haiku was letting real
@@ -325,8 +384,8 @@ async def stream_message(
                     system=api_system,
                     messages=messages,
                     tools=[
-                        _WEB_SEARCH_TOOL, _GET_STOCK_ANALYSIS_TOOL,
-                        _GET_CHAT_HISTORY_TOOL, _SAVE_LEARNING_TOOL, _FLAG_CORRECTION_TOOL,
+                        _WEB_SEARCH_TOOL, _GET_STOCK_ANALYSIS_TOOL, _GET_CHAT_HISTORY_TOOL,
+                        _SAVE_LEARNING_TOOL, _DELETE_LEARNING_TOOL, _FLAG_CORRECTION_TOOL,
                     ],
                 ) as stream:
                     async for event in stream:
@@ -413,20 +472,41 @@ async def stream_message(
 
                     elif name == "save_learning":
                         learning = tu["input"].get("learning", "").strip()
+                        learn_ticker = (tu["input"].get("ticker") or "").strip().upper() or None
                         if learning:
                             session.add(UserLearning(
-                                user_email=user.email, learning=learning,
+                                user_email=user.email, learning=learning, ticker=learn_ticker,
                                 source_conversation_id=conversation_id,
                             ))
                         session.add(ToolCall(
                             conversation_id=conversation_id, tool_name="save_learning",
-                            query=learning, succeeded=bool(learning),
+                            query=f"[{learn_ticker or 'global'}] {learning}", succeeded=bool(learning),
                         ))
                         session.commit()
                         yield f"data: {json.dumps({'type': 'tool_result', 'query': learning})}\n\n"
                         tool_results.append({
                             "type": "tool_result", "tool_use_id": tu["id"],
                             "content": "Saved." if learning else "Nothing to save — learning was empty.",
+                        })
+
+                    elif name == "delete_learning":
+                        target_text = tu["input"].get("learning", "").strip()
+                        deleted = 0
+                        if target_text:
+                            deleted = (
+                                session.query(UserLearning)
+                                .filter(UserLearning.user_email == user.email, UserLearning.learning == target_text)
+                                .delete()
+                            )
+                        session.add(ToolCall(
+                            conversation_id=conversation_id, tool_name="delete_learning",
+                            query=target_text, succeeded=bool(deleted),
+                        ))
+                        session.commit()
+                        yield f"data: {json.dumps({'type': 'tool_result', 'query': target_text})}\n\n"
+                        tool_results.append({
+                            "type": "tool_result", "tool_use_id": tu["id"],
+                            "content": "Removed." if deleted else "No exact match found for that text — nothing removed.",
                         })
 
                     elif name == "flag_stock_correction":
