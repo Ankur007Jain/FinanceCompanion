@@ -242,10 +242,11 @@ class TestPromptCaching:
         assert system[0]["cache_control"] == {"type": "ephemeral"}
         assert system[1]["cache_control"] == {"type": "ephemeral"}
 
-    def test_learnings_block_is_its_own_separately_cacheable_block(self, client: TestClient, db_session):
-        """The whole reason this is split out: saving a new learning mid-conversation
-        must only bust the cache for this small block, not the much larger
-        dynamic_context block (ticker dossiers, correlations, watchlist) alongside it."""
+    def test_learnings_are_merged_into_the_static_block(self, client: TestClient, db_session):
+        """Learnings used to be their own breakpoint; merged into the static block to
+        free a cache-breakpoint slot (Anthropic caps a request at 4 total) for caching
+        the messages array itself. Still must not leak into dynamic_context, which
+        stays cache-shareable across every ticker-scoped conversation this user has."""
         from models import UserLearning
         db_session.add(UserLearning(user_email="learncache@example.com", learning="Keeps answers short."))
         db_session.commit()
@@ -258,12 +259,53 @@ class TestPromptCaching:
             )
         assert r.status_code == 200
         system = mock_client.messages.stream.call_args.kwargs["system"]
-        assert len(system) == 3
+        assert len(system) == 2
         assert all(block["cache_control"] == {"type": "ephemeral"} for block in system)
-        assert "THINGS TO REMEMBER ABOUT THIS USER" in system[1]["text"]
-        assert "Keeps answers short." in system[1]["text"]
-        # And it's genuinely separate from the ticker/watchlist block, not just visually
-        assert "THINGS TO REMEMBER" not in system[2]["text"]
+        assert "THINGS TO REMEMBER ABOUT THIS USER" in system[0]["text"]
+        assert "Keeps answers short." in system[0]["text"]
+        # Not duplicated into the dynamic_context block
+        assert "THINGS TO REMEMBER" not in system[1]["text"]
+
+
+class TestMessageHistoryCaching:
+    """The `messages` array (conversation history) wasn't cached at all before — only
+    the system blocks were. A breakpoint on the last message that was already sent
+    last turn (never on the new one, which changes every request) lets a growing
+    conversation read history from cache instead of resending it as fresh tokens."""
+
+    def test_last_prior_message_gets_cache_control_new_message_does_not(self, client: TestClient):
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("First reply."):
+            client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "first message", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        with _mock_google_token(), _mock_anthropic_stream("Second reply.") as mock_client:
+            client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "second message", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        messages = mock_client.messages.stream.call_args.kwargs["messages"]
+        # The new message is exactly the block that changes every request — a
+        # breakpoint here would never get a cache hit, so it must stay plain.
+        assert messages[-1]["content"] == "second message"
+        # The message right before it (last turn's assistant reply) is the stable
+        # prefix boundary — must carry the breakpoint, converted to content-block form.
+        second_to_last = messages[-2]
+        assert isinstance(second_to_last["content"], list)
+        assert second_to_last["content"][0]["cache_control"] == {"type": "ephemeral"}
+        assert second_to_last["content"][0]["text"] == "First reply."
+
+    def test_first_message_in_conversation_has_no_history_to_cache(self, client: TestClient):
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("Hi.") as mock_client:
+            client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        messages = mock_client.messages.stream.call_args.kwargs["messages"]
+        assert len(messages) == 1
+        assert messages[0]["content"] == "hi"
 
 
 class TestCacheBlockSplit:
@@ -543,8 +585,12 @@ class TestCappedHistory:
         sent_messages = mock_client.messages.stream.call_args.kwargs["messages"]
         # 20 capped history + 1 new user message
         assert len(sent_messages) == 21
-        # And it's the MOST RECENT ones, not the oldest
-        contents = [m["content"] for m in sent_messages]
+        # And it's the MOST RECENT ones, not the oldest. The last historical message
+        # (msg 29) carries the cache breakpoint, so its content is a block list, not
+        # a plain string — extract the text either way.
+        def _text_of(content):
+            return content if isinstance(content, str) else content[0]["text"]
+        contents = [_text_of(m["content"]) for m in sent_messages]
         assert "msg 29" in contents
         assert "msg 0" not in contents
 
