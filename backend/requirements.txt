@@ -16,7 +16,6 @@ yfinance==0.2.51
 pandas>=2.2.3
 pandas-ta==0.4.71b0
 finnhub-python==2.4.20
-duckduckgo-search==6.3.5
 numpy>=1.26.4
 scipy>=1.13.0
 pypdf>=4.0.0

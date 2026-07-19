@@ -20,11 +20,32 @@ def _mock_google_token(email: str = "streamtest@example.com"):
     )
 
 
+def _server_web_search_block(query: str, failed: bool = False):
+    """A pair of mock content blocks matching what Anthropic's native web_search tool
+    (server_tool_use + web_search_tool_result) puts in final.content — _log_web_searches
+    reads these directly, not the streamed SSE events, so tests can inject them straight
+    into final_msg.content without simulating the full event sequence."""
+    use_block = MagicMock()
+    use_block.type = "server_tool_use"
+    use_block.name = "web_search"
+    use_block.input = {"query": query}
+
+    result_block = MagicMock()
+    result_block.type = "web_search_tool_result"
+    result_block.content = {"type": "web_search_tool_result_error"} if failed else [{"title": "x", "url": "y"}]
+
+    return [use_block, result_block]
+
+
 @contextmanager
-def _mock_anthropic_stream(text: str = "Test reply.", tool_use: dict | None = None):
+def _mock_anthropic_stream(text: str = "Test reply.", tool_use: dict | None = None, web_search_blocks: list | None = None):
     """tool_use, if given ({"name": ..., "input": {...}}), makes the mocked stream emit one
     tool_use block before ending (stop_reason=tool_use), so the second loop iteration can
-    be asserted on too. Without it, a plain end_turn text reply."""
+    be asserted on too. Without it, a plain end_turn text reply.
+
+    web_search_blocks, if given, is injected straight into final_msg.content — see
+    _server_web_search_block(). Independent of `tool_use`, since a real turn can do a
+    server-side web_search AND end_turn in the same response (no round-trip needed)."""
     events = []
 
     if tool_use:
@@ -59,7 +80,7 @@ def _mock_anthropic_stream(text: str = "Test reply.", tool_use: dict | None = No
         input_tokens=100, output_tokens=20,
         cache_read_input_tokens=0, cache_creation_input_tokens=0,
     )
-    final_msg.content = []
+    final_msg.content = list(web_search_blocks) if web_search_blocks else []
 
     stream_ctx = MagicMock()
     # Must be genuinely awaitable — a plain MagicMock() here makes `async with` raise
@@ -141,6 +162,73 @@ class TestPromptCaching:
         assert len(system) == 2
         assert system[0]["cache_control"] == {"type": "ephemeral"}
         assert system[1]["cache_control"] == {"type": "ephemeral"}
+
+
+class TestNativeWebSearch:
+    """web_search switched from duckduckgo_search (unreliable, real production rate-limit
+    failures) to Anthropic's native server-side tool. Server-side means Claude executes
+    the search itself — no client-side round-trip, unlike get_stock_analysis."""
+
+    def test_web_search_tool_uses_native_server_side_shape(self, client: TestClient):
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("Hi.") as mock_client:
+            client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        tools = mock_client.messages.stream.call_args.kwargs["tools"]
+        web_search = next(t for t in tools if t["name"] == "web_search")
+        assert web_search["type"] == "web_search_20250305"
+        assert "input_schema" not in web_search  # native tool, not a client-side one
+
+    def test_successful_search_logged_as_tool_call(self, client: TestClient, db_session):
+        from models import ToolCall
+        conv_id = _create_conversation(client)
+        blocks = _server_web_search_block("current NVDA news")
+        with _mock_google_token(), _mock_anthropic_stream("Here's what I found.", web_search_blocks=blocks):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "what's happening with NVDA today", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        db_session.expire_all()
+        calls = db_session.query(ToolCall).filter(ToolCall.conversation_id == conv_id).all()
+        assert len(calls) == 1
+        assert calls[0].tool_name == "web_search"
+        assert calls[0].query == "current NVDA news"
+        assert calls[0].succeeded is True
+
+    def test_failed_search_logged_as_unsuccessful(self, client: TestClient, db_session):
+        """This is the exact real-world failure this change targets: production logs
+        showed "Search is rate-limited right now" — the search must be logged as failed,
+        not silently dropped, so this kind of regression is diagnosable from data next time."""
+        from models import ToolCall
+        conv_id = _create_conversation(client)
+        blocks = _server_web_search_block("bitcoin price today", failed=True)
+        with _mock_google_token(), _mock_anthropic_stream("I couldn't get current data on that.", web_search_blocks=blocks):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "bitcoin price?", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        db_session.expire_all()
+        call = db_session.query(ToolCall).filter(ToolCall.conversation_id == conv_id).first()
+        assert call.succeeded is False
+
+    def test_server_side_search_does_not_trigger_client_round_trip(self, client: TestClient):
+        """A server-side web_search block must never land in the tool_uses list that
+        drives the client-side execute-and-continue loop — it's already resolved by
+        the time final.content is available. Asserting the endpoint completes cleanly
+        with stop_reason=end_turn and a single .stream() call (no second round trip)."""
+        conv_id = _create_conversation(client)
+        blocks = _server_web_search_block("some query")
+        with _mock_google_token(), _mock_anthropic_stream("Done.", web_search_blocks=blocks) as mock_client:
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "search something", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        assert mock_client.messages.stream.call_count == 1
 
 
 class TestGetStockAnalysisTool:

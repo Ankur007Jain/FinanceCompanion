@@ -1,7 +1,12 @@
 """
 Streaming router — SSE chatbot with web search tool.
-Claude can call web_search when the existing analysis context isn't enough.
-Tool use loop: stream → detect tool_use → execute search → continue stream.
+web_search is Anthropic's native server-side tool (Claude executes the search itself
+and the result comes back inline in the same stream) — not a client-side tool we
+execute and round-trip ourselves, unlike get_stock_analysis below. Previously used
+duckduckgo_search (free, unofficial scraping library); switched off it after real
+production chat logs showed repeated "Search is rate-limited" failures serious enough
+that users noticed stale/wrong answers (Bitcoin price, exec changes, earnings news).
+Tool use loop: stream → detect get_stock_analysis tool_use → execute → continue stream.
 """
 import asyncio
 import json
@@ -14,7 +19,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from database import SessionLocal, get_db
-from models import Conversation, Message, User
+from models import Conversation, Message, ToolCall, User
 from routers.auth import get_current_user
 from schemas import SendMessageRequest
 from services.model_router import _SONNET, _estimate_max_tokens
@@ -23,19 +28,9 @@ from services.prompt_builder import build_system_prompt, build_ticker_dossier
 router = APIRouter(prefix="/conversations", tags=["streaming"])
 
 _WEB_SEARCH_TOOL = {
+    "type": "web_search_20250305",
     "name": "web_search",
-    "description": (
-        "Search the web for current financial news, stock data, or any information "
-        "not available in the existing analysis context. Use when the user asks about "
-        "something that happened today or needs information beyond what's in tonight's analysis."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "query": {"type": "string", "description": "The search query"}
-        },
-        "required": ["query"],
-    },
+    "max_uses": 5,
 }
 
 _GET_STOCK_ANALYSIS_TOOL = {
@@ -57,24 +52,29 @@ _GET_STOCK_ANALYSIS_TOOL = {
 }
 
 
-async def _execute_web_search(query: str) -> str:
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _sync_ddg_search, query)
-
-
-def _sync_ddg_search(query: str) -> str:
-    try:
-        from duckduckgo_search import DDGS
-        with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=5))
-        if not results:
-            return "No search results found."
-        parts = []
-        for r in results:
-            parts.append(f"**{r.get('title', '')}**\n{r.get('body', '')}\nSource: {r.get('href', '')}")
-        return "\n\n---\n\n".join(parts)
-    except Exception as e:
-        return f"Search failed: {e}"
+def _log_web_searches(final, conversation_id: str, session) -> None:
+    """Pairs each server_tool_use(web_search) block with its following
+    web_search_tool_result block (Anthropic emits them adjacent, in order) and logs
+    one ToolCall row per search — the only way to know actual search frequency and
+    failure rate; the SSE events streamed to the client aren't persisted anywhere."""
+    pending_query = None
+    for block in getattr(final, "content", []) or []:
+        btype = getattr(block, "type", "")
+        if btype == "server_tool_use" and getattr(block, "name", "") == "web_search":
+            pending_query = (getattr(block, "input", {}) or {}).get("query", "")
+        elif btype == "web_search_tool_result" and pending_query is not None:
+            content = getattr(block, "content", None)
+            is_error = isinstance(content, dict) and content.get("type") == "web_search_tool_result_error"
+            session.add(ToolCall(
+                conversation_id=conversation_id, tool_name="web_search",
+                query=pending_query, succeeded=not is_error,
+            ))
+            pending_query = None
+    if pending_query is not None:
+        # A server_tool_use with no matching result block shouldn't normally happen,
+        # but don't silently drop the log entry if the API ever returns one.
+        session.add(ToolCall(conversation_id=conversation_id, tool_name="web_search", query=pending_query, succeeded=False))
+    session.commit()
 
 
 async def _generate_title(content: str) -> str:
@@ -194,7 +194,7 @@ async def stream_message(
             messages = list(history)
 
             while True:
-                current_tool_id = current_tool_name = current_tool_input = ""
+                current_tool_id = current_tool_name = current_tool_input = current_tool_type = ""
                 tool_uses: list[dict] = []
 
                 async with client.messages.stream(
@@ -209,10 +209,16 @@ async def stream_message(
 
                         if etype == "content_block_start":
                             cb = getattr(event, "content_block", None)
-                            if cb and getattr(cb, "type", "") == "tool_use":
+                            cb_type = getattr(cb, "type", "") if cb else ""
+                            # tool_use = client-side (get_stock_analysis), we execute and
+                            # round-trip below. server_tool_use = web_search, Anthropic
+                            # already executed it server-side by the time this stream
+                            # finishes — nothing for us to run, just stream the UI event.
+                            if cb_type in ("tool_use", "server_tool_use"):
                                 current_tool_id = cb.id
                                 current_tool_name = cb.name
                                 current_tool_input = ""
+                                current_tool_type = cb_type
                                 yield f"data: {json.dumps({'type': 'tool_start', 'tool': current_tool_name})}\n\n"
 
                         elif etype == "content_block_delta":
@@ -227,7 +233,7 @@ async def stream_message(
                                     current_tool_input += getattr(delta, "partial_json", "")
 
                         elif etype == "content_block_stop":
-                            if current_tool_name:
+                            if current_tool_name and current_tool_type == "tool_use":
                                 try:
                                     parsed_input = json.loads(current_tool_input) if current_tool_input else {}
                                 except Exception:
@@ -237,7 +243,8 @@ async def stream_message(
                                     "name": current_tool_name,
                                     "input": parsed_input,
                                 })
-                                current_tool_name = ""
+                            current_tool_name = ""
+                            current_tool_type = ""
 
                     final = await stream.get_final_message()
                     usage = final.usage
@@ -246,24 +253,24 @@ async def stream_message(
                     total_cr += getattr(usage, "cache_read_input_tokens", 0) or 0
                     total_cw += getattr(usage, "cache_creation_input_tokens", 0) or 0
 
+                _log_web_searches(final, conversation_id, session)
+
                 if final.stop_reason == "end_turn" or not tool_uses:
                     break
 
-                # Execute tool calls
+                # Execute client-side tool calls — get_stock_analysis only. web_search
+                # is server-side and already resolved above; its result is already part
+                # of `final.content`, which gets appended to `messages` unchanged below.
                 tool_results = []
                 for tu in tool_uses:
-                    if tu["name"] == "web_search":
-                        query = tu["input"].get("query", "")
-                        result = await _execute_web_search(query)
-                        yield f"data: {json.dumps({'type': 'tool_result', 'query': query})}\n\n"
-                        tool_results.append({
-                            "type": "tool_result",
-                            "tool_use_id": tu["id"],
-                            "content": result,
-                        })
-                    elif tu["name"] == "get_stock_analysis":
+                    if tu["name"] == "get_stock_analysis":
                         pivot_ticker = tu["input"].get("ticker", "")
                         result = build_ticker_dossier(pivot_ticker, session, user.email)
+                        session.add(ToolCall(
+                            conversation_id=conversation_id, tool_name="get_stock_analysis",
+                            query=pivot_ticker, succeeded=True,
+                        ))
+                        session.commit()
                         yield f"data: {json.dumps({'type': 'tool_result', 'query': pivot_ticker})}\n\n"
                         tool_results.append({
                             "type": "tool_result",

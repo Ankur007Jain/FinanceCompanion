@@ -324,3 +324,18 @@ class TickerCorrelation(Base):
     p_value_90d = Column(Float)
     significant = Column(Boolean, nullable=False, default=False)
     computed_date = Column(Date, nullable=False)
+
+
+class ToolCall(Base):
+    """Log of every tool invocation in chat — web_search or get_stock_analysis.
+    Didn't exist before 2026-07 and its absence was a real blind spot: diagnosing a
+    stale-news complaint meant inferring tool usage from message TEXT alone (searching
+    for phrases like "Search is rate-limited"), with no way to know actual call
+    frequency or how often search failed vs succeeded."""
+    __tablename__ = "tool_calls"
+    id = Column(String, primary_key=True, default=_uid)
+    conversation_id = Column(String, ForeignKey("conversations.id"), nullable=False)
+    tool_name = Column(String, nullable=False)  # "web_search" or "get_stock_analysis"
+    query = Column(String)  # search query, or ticker for get_stock_analysis
+    succeeded = Column(Boolean, nullable=False, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
