@@ -1,4 +1,9 @@
-_SONNET = "claude-sonnet-4-6"
+# Sonnet 5 intro pricing ($2/$10 per MTok in/out) runs through Aug 31, 2026 — cheaper
+# AND newer than 4.6's $3/$15. After that date it reverts to $3/$15, same as 4.6, so
+# the cost argument for staying on 5 disappears (quality/recency argument still holds).
+# Re-check https://docs.anthropic.com/en/docs/about-claude/pricing before/after that
+# date in case pricing changed again — don't trust this comment as of-then-truth.
+_SONNET = "claude-sonnet-5"
 
 # Genuinely complex, multi-factor decisions — not just "give a long answer" (that's
 # _estimate_max_tokens's job below) but "reason through several constraints before
