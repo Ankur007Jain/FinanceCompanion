@@ -1,4 +1,5 @@
 import { test, expect } from "./fixtures";
+import { seedUserLearning } from "./fixtures";
 
 test.describe("Memory settings page", () => {
   test("loads and moves past the loading state", async ({ loggedInPage: page }) => {
@@ -13,7 +14,13 @@ test.describe("Memory settings page", () => {
     expect(hasHeading).toBeGreaterThan(0);
   });
 
-  test("renders real seeded global and ticker-scoped learnings", async ({ loggedInPage: page }) => {
+  test("renders real seeded global and ticker-scoped learnings", async ({ loggedInPage: page, request, testEmail }) => {
+    // Seed via the real API first — this test previously asserted on this exact text
+    // with nothing anywhere creating it, so it only ever passed against whatever a
+    // prior manual/local run happened to leave in the DB. Never seeded in CI.
+    await seedUserLearning(request, testEmail, "E2E test global learning.");
+    await seedUserLearning(request, testEmail, "E2E test ticker-scoped learning.", "ZE2E");
+
     await page.goto("/memory");
     await expect(page.getByText("Loading…")).toHaveCount(0, { timeout: 15_000 });
     await expect(page.getByText("E2E test global learning.")).toBeVisible();

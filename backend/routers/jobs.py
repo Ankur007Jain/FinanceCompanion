@@ -442,6 +442,25 @@ def append_memory_lesson(ticker: str, body: dict, x_admin_secret: str = "", db: 
     return {"ticker": ticker, "memory_chars": len(mem.memory_narrative)}
 
 
+@router.post("/admin/user-learnings")
+def seed_user_learning(body: dict, x_admin_secret: str = "", db: Session = Depends(get_db)):
+    """Test-seeding utility, not a real product flow — UserLearning rows are normally
+    created only via the chat save_learning tool. Lets e2e tests create real rows
+    through the API (matching ingest-analysis/ingest-snapshot) instead of writing to
+    the DB directly."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    from models import UserLearning
+    email = (body.get("user_email") or "").strip()
+    learning = (body.get("learning") or "").strip()
+    if not email or not learning:
+        raise HTTPException(status_code=422, detail="user_email and learning are required.")
+    row = UserLearning(user_email=email, learning=learning, ticker=(body.get("ticker") or "").strip().upper() or None)
+    db.add(row)
+    db.commit()
+    return {"id": row.id}
+
+
 @router.get("/admin/analyzed-today")
 def analyzed_today(x_admin_secret: str = "", db: Session = Depends(get_db)):
     """Returns tickers already analyzed today — agent skips these to avoid redundant fetches."""
