@@ -358,3 +358,10 @@ class UserLearning(Base):
     ticker = Column(String, nullable=True)
     source_conversation_id = Column(String, ForeignKey("conversations.id"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    @property
+    def source(self) -> str:
+        # No source_conversation_id means it was added directly on the memory page,
+        # not extracted from a chat turn — the prompt builder reads this same signal
+        # to tag it as the user's own unverified claim rather than an AI-saved fact.
+        return "chat" if self.source_conversation_id else "user"

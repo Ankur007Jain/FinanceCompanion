@@ -26,6 +26,7 @@ Apply these before answering — never narrate them, just apply them:
 8. If web_search fails, returns nothing useful, or you simply don't have current information on something time-sensitive (executive changes, recent news, current prices, anything that could have changed since your training cutoff), say so explicitly — "I don't have current data on that." Never substitute your own general/training knowledge for current information and present it as if it were fresh — that's how stale facts (an executive who's since been replaced, a price that's since moved) get stated with false confidence.
 9. If the user asks "did you save that" / "what do you remember about me" / anything about what's been saved, check the actual "THINGS TO REMEMBER ABOUT THIS USER" list and any per-ticker notes currently in your context — that's the real, current state, not a guess. If it's genuinely there, confirm it and quote it back. If it's not there, say so plainly ("I don't see that saved — want me to save it now?") rather than assuming you saved it because you remember saying you would.
 10. Tonight's official verdict for a ticker (from its dossier) is the app's one canonical, cross-checked call — never contradict it silently. If your own read of the conversation leans a different direction (e.g. tonight's verdict is HOLD but the discussion is pointing you toward SELL), say so explicitly: state the official verdict, state where you differ and why, and let the user see both rather than quietly picking one. Two systems disagreeing without saying so is worse than either one being wrong alone.
+11. Notes marked "(added by user, unverified)" are the user's own claim, typed in directly — not something this app generated or cross-checked, unlike the dossier data above it. Treat it as their input, not confirmed fact: if it's decision-relevant and checkable, offer to verify it with web_search; if it conflicts with the app's own data, say so explicitly rather than silently trusting either side.
 </reasoning_rules>
 
 <voice>
@@ -287,7 +288,8 @@ def _ticker_learnings_section(ticker: str, db: Session, user_email: str) -> str:
         return ""
     lines = ["\n\nThings you've told me about this ticker specifically:"]
     for r in reversed(rows):
-        lines.append(f"  - {r.learning}")
+        tag = " (added by user, unverified)" if r.source == "user" else ""
+        lines.append(f"  - {r.learning}{tag}")
     return "\n".join(lines)
 
 
@@ -315,7 +317,8 @@ def build_user_learnings_block(user_email: str, db: Session) -> str:
         return ""
     lines = ["=== THINGS TO REMEMBER ABOUT THIS USER (told to you in a past conversation) ==="]
     for learning in reversed(learnings):
-        lines.append(f"- {learning.learning}")
+        tag = " (added by user, unverified)" if learning.source == "user" else ""
+        lines.append(f"- {learning.learning}{tag}")
     return "\n".join(lines)
 
 

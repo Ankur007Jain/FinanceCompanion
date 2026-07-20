@@ -71,6 +71,18 @@ class TestDeepBlock:
         assert "Pricey multiple" in dossier
         assert "A guidance cut next quarter." in dossier
 
+    def test_ticker_scoped_user_note_tagged_unverified_in_dossier(self, db_session):
+        from models import UserLearning
+        _seed_analysis(db_session, "PBNOTE")
+        db_session.add(UserLearning(user_email="u@example.com", ticker="PBNOTE", learning="Self-researched supplier fact."))
+        db_session.add(UserLearning(user_email="u@example.com", ticker="PBNOTE", learning="Chat-saved note.", source_conversation_id="conv-y"))
+        db_session.commit()
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("PBNOTE", db_session, "u@example.com")
+        assert "Self-researched supplier fact. (added by user, unverified)" in dossier
+        assert "Chat-saved note. (added by user, unverified)" not in dossier
+        assert "Chat-saved note." in dossier
+
     def test_deep_dossier_shows_longterm_returns_and_ownership(self, db_session):
         _seed_analysis(
             db_session, "PBLT",
@@ -384,6 +396,21 @@ class TestUserLearnings:
         assert "Fact number 5." in block
         assert "Fact number 4." not in block
         assert "Fact number 0." not in block
+
+    def test_user_added_note_is_tagged_unverified(self, db_session):
+        """No source_conversation_id -> added directly on the memory page, not
+        extracted from chat. Reasoning rule 11 tells the model to treat this
+        differently (the user's own claim, not something the app verified) — the
+        tag is what lets the model tell the two apart in the prompt text itself."""
+        from models import UserLearning
+        from services.prompt_builder import build_user_learnings_block
+        db_session.add(UserLearning(user_email="manualadd@example.com", learning="Self-researched fact."))
+        db_session.add(UserLearning(user_email="manualadd@example.com", learning="Chat-saved fact.", source_conversation_id="conv-x"))
+        db_session.commit()
+        block = build_user_learnings_block("manualadd@example.com", db_session)
+        assert "Self-researched fact. (added by user, unverified)" in block
+        assert "Chat-saved fact. (added by user, unverified)" not in block
+        assert "Chat-saved fact." in block
 
     def test_not_present_in_build_system_prompt_dynamic_context(self, db_session):
         """Confirms the split actually happened — learnings must NOT leak back into

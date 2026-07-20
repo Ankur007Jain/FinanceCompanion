@@ -16,6 +16,7 @@ class LearningOut(BaseModel):
     learning: str
     ticker: Optional[str] = None
     created_at: datetime
+    source: str
 
     class Config:
         from_attributes = True
@@ -23,6 +24,34 @@ class LearningOut(BaseModel):
 
 class LearningUpdate(BaseModel):
     learning: str
+
+
+class LearningCreate(BaseModel):
+    learning: str
+    ticker: Optional[str] = None
+
+
+@router.post("", response_model=LearningOut)
+def create_learning(id_token: str, body: LearningCreate, db: Session = Depends(get_db)):
+    """User adding their own research directly on the memory page — not something
+    extracted mid-chat, so source_conversation_id stays unset. That's the same signal
+    build_user_learnings_block/_ticker_learnings_section use to tag it as the user's
+    own claim rather than something the app itself verified, and why this doesn't need
+    the confirm-before-saving step chat's save_learning uses for inferred facts: the
+    user is directly authoring this, there's nothing to infer."""
+    user = get_current_user(id_token, db)
+    text = body.learning.strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="learning cannot be empty.")
+    row = UserLearning(
+        user_email=user.email,
+        learning=text,
+        ticker=(body.ticker or "").strip().upper() or None,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return row
 
 
 @router.get("", response_model=list[LearningOut])
