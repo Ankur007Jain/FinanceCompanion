@@ -17,7 +17,17 @@ _COMPLEX_DECISION_KEYWORDS = (
     "across my", "across all", "whole portfolio", "entire portfolio",
 )
 
-_THINKING_BUDGET_TOKENS = 3000
+# Sonnet 5 dropped the old "type": "enabled" + budget_tokens shape (still used by
+# Opus 4.5/Haiku 4.5) in favor of adaptive thinking: "type": "adaptive" plus a
+# top-level output_config.effort ("low"/"medium"/"high"/"xhigh"/"max") — the model
+# decides how much to think rather than us setting a token budget. Confirmed against
+# a real 400 from claude-sonnet-5 ("thinking.type.enabled is not supported for this
+# model") and the current API reference before fixing, not assumed from older docs.
+_THINKING_EFFORT = "high"
+# No manual budget to add on top of anymore, but max_tokens still needs enough
+# headroom for the thinking + the final answer combined — same rough magnitude as
+# the old budget_tokens(3000) + 2000 floor this replaces.
+_THINKING_MIN_MAX_TOKENS = 5000
 
 
 def _estimate_max_tokens(message: str) -> int:

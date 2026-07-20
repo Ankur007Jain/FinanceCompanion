@@ -22,7 +22,7 @@ from database import SessionLocal, get_db
 from models import Conversation, Message, ToolCall, User, UserLearning
 from routers.auth import get_current_user
 from schemas import SendMessageRequest
-from services.model_router import _SONNET, _estimate_max_tokens, _should_use_extended_thinking, _THINKING_BUDGET_TOKENS
+from services.model_router import _SONNET, _estimate_max_tokens, _should_use_extended_thinking, _THINKING_EFFORT, _THINKING_MIN_MAX_TOKENS
 from services.prompt_builder import build_system_prompt, build_ticker_dossier, build_user_learnings_block
 from services.stock_memory import append_lesson
 
@@ -324,10 +324,11 @@ async def stream_message(
     max_tokens = _estimate_max_tokens(body.content)
     use_thinking = _should_use_extended_thinking(body.content)
     if use_thinking:
-        # max_tokens must exceed the thinking budget (it caps thinking + output
-        # combined) — bump it up rather than eating into the existing tier's output
-        # budget for genuinely complex, multi-constraint questions.
-        max_tokens = max(max_tokens, _THINKING_BUDGET_TOKENS + 2000)
+        # Adaptive thinking has no manual budget to add on top of — the model decides
+        # how much to think — but max_tokens still needs headroom for thinking + the
+        # final answer combined, so bump it up rather than eating into the existing
+        # tier's output budget for genuinely complex, multi-constraint questions.
+        max_tokens = max(max_tokens, _THINKING_MIN_MAX_TOKENS)
 
     # Always Sonnet — a router that downgraded short messages to Haiku was letting real
     # financial advice ("mrk" -> "MRK: Hold, don't sell today.") through the cheaper model,
@@ -403,7 +404,11 @@ async def stream_message(
                     ],
                 )
                 if use_thinking:
-                    stream_kwargs["thinking"] = {"type": "enabled", "budget_tokens": _THINKING_BUDGET_TOKENS}
+                    # Sonnet 5 requires adaptive thinking, not the old enabled+budget_tokens
+                    # shape — confirmed via a real 400 from the API and the current API
+                    # reference before making this change (see model_router.py comment).
+                    stream_kwargs["thinking"] = {"type": "adaptive"}
+                    stream_kwargs["output_config"] = {"effort": _THINKING_EFFORT}
 
                 async with client.messages.stream(**stream_kwargs) as stream:
                     async for event in stream:
