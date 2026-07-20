@@ -68,6 +68,18 @@ export async function ingestSnapshot(
   );
 }
 
+export async function seedUserLearning(
+  request: APIRequestContext,
+  userEmail: string,
+  learning: string,
+  ticker?: string
+) {
+  return request.post(
+    `${BACKEND}/jobs/admin/user-learnings?x_admin_secret=${ADMIN_SECRET}`,
+    { data: { user_email: userEmail, learning, ticker } }
+  );
+}
+
 export async function getAnalyzedToday(request: APIRequestContext): Promise<string[]> {
   const r = await request.get(
     `${BACKEND}/jobs/admin/analyzed-today?x_admin_secret=${ADMIN_SECRET}`
