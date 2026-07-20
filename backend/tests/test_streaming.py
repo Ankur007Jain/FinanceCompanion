@@ -175,7 +175,7 @@ class TestAlwaysSonnet:
 
 class TestExtendedThinking:
     def test_complex_decision_enables_thinking(self, client: TestClient):
-        from services.model_router import _THINKING_BUDGET_TOKENS
+        from services.model_router import _THINKING_EFFORT, _THINKING_MIN_MAX_TOKENS
         conv_id = _create_conversation(client)
         with _mock_google_token(), _mock_anthropic_stream("Let's rebalance.") as mock_client:
             r = client.post(
@@ -184,10 +184,13 @@ class TestExtendedThinking:
             )
         assert r.status_code == 200
         kwargs = mock_client.messages.stream.call_args.kwargs
-        assert kwargs["thinking"] == {"type": "enabled", "budget_tokens": _THINKING_BUDGET_TOKENS}
-        # max_tokens must exceed the thinking budget, not just reuse whatever tier
-        # _estimate_max_tokens picked for a non-thinking message.
-        assert kwargs["max_tokens"] > _THINKING_BUDGET_TOKENS
+        # Sonnet 5 requires adaptive thinking, not the old enabled+budget_tokens shape
+        # (real production 400: "thinking.type.enabled is not supported for this model").
+        assert kwargs["thinking"] == {"type": "adaptive"}
+        assert kwargs["output_config"] == {"effort": _THINKING_EFFORT}
+        # max_tokens must have enough headroom for thinking + the final answer, not
+        # just reuse whatever tier _estimate_max_tokens picked for a plain message.
+        assert kwargs["max_tokens"] >= _THINKING_MIN_MAX_TOKENS
 
     def test_simple_question_does_not_enable_thinking(self, client: TestClient):
         conv_id = _create_conversation(client)
