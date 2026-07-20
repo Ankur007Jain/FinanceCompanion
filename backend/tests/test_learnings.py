@@ -17,6 +17,42 @@ def _mock_user(email):
     )
 
 
+class TestCreateLearning:
+    def test_creates_global_note(self, client, db_session):
+        e = _email()
+        with _mock_user(e):
+            r = client.post("/learnings", params={"id_token": "tok"}, json={"learning": "Prefers value stocks."})
+        assert r.status_code == 200
+        body = r.json()
+        assert body["learning"] == "Prefers value stocks."
+        assert body["ticker"] is None
+        assert body["source"] == "user"
+        db_session.expire_all()
+        row = db_session.get(UserLearning, body["id"])
+        assert row.source_conversation_id is None
+
+    def test_creates_ticker_scoped_note(self, client):
+        e = _email()
+        with _mock_user(e):
+            r = client.post("/learnings", params={"id_token": "tok"}, json={"learning": "Key supplier is XYZ.", "ticker": "abc"})
+        assert r.status_code == 200
+        assert r.json()["ticker"] == "ABC"
+
+    def test_rejects_empty_text(self, client):
+        e = _email()
+        with _mock_user(e):
+            r = client.post("/learnings", params={"id_token": "tok"}, json={"learning": "   "})
+        assert r.status_code == 422
+
+    def test_chat_saved_learning_has_chat_source(self, client, db_session):
+        e = _email()
+        db_session.add(UserLearning(user_email=e, learning="From chat.", source_conversation_id="conv-1"))
+        db_session.commit()
+        with _mock_user(e):
+            r = client.get("/learnings", params={"id_token": "tok"})
+        assert r.json()[0]["source"] == "chat"
+
+
 class TestListLearnings:
     def test_empty_when_none_saved(self, client):
         e = _email()

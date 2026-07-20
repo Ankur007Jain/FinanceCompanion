@@ -14,6 +14,7 @@ interface Learning {
   learning: string;
   ticker: string | null;
   created_at: string;
+  source: "chat" | "user";
 }
 
 export default function MemoryClient({ idToken }: { idToken: string }) {
@@ -24,6 +25,11 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [savingId, setSavingId] = useState<string | null>(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newText, setNewText] = useState("");
+  const [newTicker, setNewTicker] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [addError, setAddError] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -70,6 +76,33 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
       if (!r.ok) setLearnings(prev);
     } catch {
       setLearnings(prev);
+    }
+  }
+
+  async function addLearning() {
+    const text = newText.trim();
+    if (!text) return;
+    setAdding(true);
+    setAddError(null);
+    try {
+      const r = await fetch(`${API}/learnings?id_token=${encodeURIComponent(idToken)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ learning: text, ticker: newTicker.trim() || null }),
+      });
+      if (r.ok) {
+        const created = await r.json();
+        setLearnings([created, ...learnings]);
+        setNewText("");
+        setNewTicker("");
+        setShowAddForm(false);
+      } else {
+        setAddError("Couldn't save that — try again.");
+      }
+    } catch {
+      setAddError("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      setAdding(false);
     }
   }
 
@@ -127,6 +160,9 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
           )}
           <div style={{ fontSize: 11, fontFamily: MONO, color: "var(--t-text-muted)", marginTop: 4 }}>
             {new Date(l.created_at).toLocaleDateString()}
+            {l.source === "user" && (
+              <span style={{ marginLeft: 8, color: "var(--t-text-dim)" }}>· added by you, not verified by the AI</span>
+            )}
           </div>
         </div>
         <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
@@ -198,10 +234,76 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
 
       <div style={{ maxWidth: 900, margin: "0 auto", padding: "32px" }}>
         <h1 style={{ margin: "0 0 6px", fontFamily: SERIF, fontWeight: 600, fontSize: 25, color: "var(--t-text)" }}>Memory</h1>
-        <p style={{ margin: "0 0 24px", fontSize: 13, color: "var(--t-text-muted)", lineHeight: 1.6 }}>
+        <p style={{ margin: "0 0 20px", fontSize: 13, color: "var(--t-text-muted)", lineHeight: 1.6 }}>
           Everything the AI has been explicitly asked to remember about you — global preferences that apply
           everywhere, and notes tied to a specific stock. Edit or remove anything that's wrong or no longer applies.
         </p>
+
+        {!showAddForm ? (
+          <button
+            onClick={() => setShowAddForm(true)}
+            style={{
+              fontSize: 13, padding: "7px 16px", borderRadius: 7, cursor: "pointer", marginBottom: 24,
+              background: "var(--t-accent)", color: "var(--t-surface)", border: "none",
+            }}
+          >
+            + Add a note
+          </button>
+        ) : (
+          <div style={{ ...cardStyle, padding: 16, marginBottom: 24 }}>
+            <textarea
+              value={newText}
+              onChange={e => setNewText(e.target.value)}
+              autoFocus
+              rows={2}
+              placeholder="Something you researched yourself — e.g. 'Their key supplier is XYZ, ~40% of revenue.'"
+              style={{
+                width: "100%", fontSize: 13, fontFamily: SANS, color: "var(--t-text)",
+                background: "var(--t-surface-3)", border: "1px solid var(--t-accent-border)",
+                borderRadius: 7, padding: "8px 10px", resize: "vertical", boxSizing: "border-box",
+              }}
+            />
+            <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 8 }}>
+              <input
+                value={newTicker}
+                onChange={e => setNewTicker(e.target.value.toUpperCase())}
+                placeholder="Ticker (optional)"
+                style={{
+                  width: 140, fontSize: 13, fontFamily: MONO, color: "var(--t-text)",
+                  background: "var(--t-surface-3)", border: "1px solid var(--t-border)",
+                  borderRadius: 7, padding: "7px 10px",
+                }}
+              />
+              <div style={{ marginLeft: "auto", display: "flex", gap: 6 }}>
+                <button
+                  onClick={() => { setShowAddForm(false); setNewText(""); setNewTicker(""); setAddError(null); }}
+                  style={{
+                    fontSize: 12, padding: "7px 14px", borderRadius: 7, cursor: "pointer",
+                    background: "none", border: "1px solid var(--t-border)", color: "var(--t-text-secondary)",
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={addLearning}
+                  disabled={adding || !newText.trim()}
+                  style={{
+                    fontSize: 12, padding: "7px 14px", borderRadius: 7, cursor: "pointer",
+                    background: "var(--t-accent)", color: "var(--t-surface)", border: "none",
+                    opacity: adding || !newText.trim() ? 0.6 : 1,
+                  }}
+                >
+                  {adding ? "Saving…" : "Save"}
+                </button>
+              </div>
+            </div>
+            {addError && <div style={{ color: "var(--t-red)", fontSize: 12, marginTop: 8 }}>{addError}</div>}
+            <div style={{ fontSize: 11, color: "var(--t-text-dim)", marginTop: 8, lineHeight: 1.5 }}>
+              This gets tagged as your own note, not an AI-verified fact — the AI will treat it as your claim and
+              double-check it against real data before relying on it for a call.
+            </div>
+          </div>
+        )}
 
         {loading ? (
           <div style={{ textAlign: "center", padding: "3rem", color: "var(--t-text-muted)" }}>Loading…</div>
@@ -220,7 +322,7 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
           </div>
         ) : learnings.length === 0 ? (
           <div style={{ ...cardStyle, padding: "2rem", textAlign: "center", color: "var(--t-text-muted)" }}>
-            Nothing saved yet — ask Ask AI to remember something, or correct it on a specific stock, and it'll show up here.
+            Nothing saved yet — ask Ask AI to remember something, add a note above, and it'll show up here.
           </div>
         ) : (
           <>
