@@ -238,14 +238,27 @@ def ingest_snapshot(body: IngestSnapshotRequest, x_job_secret: str = "", db: Ses
 @router.post("/ingest-correlations")
 def ingest_correlations(body: IngestCorrelationsRequest, x_job_secret: str = "", db: Session = Depends(get_db)):
     """Called by scripts/compute_correlations.py after the daily correlation run.
-    Replaces the whole table for computed_date's pairs — a full recompute each day,
+    Replaces the WHOLE table with today's fresh pairs — a full recompute each day,
     not an incremental update, so there's never a stale pair left over from a ticker
-    that dropped out of every watchlist."""
+    that dropped out of every watchlist.
+
+    Real production bug this guards against: TickerCorrelation's primary key is
+    (ticker_a, ticker_b) only, NOT (ticker_a, ticker_b, computed_date) - a pair can
+    only ever have ONE row, always the latest. The old code deleted only rows
+    matching TODAY's computed_date before inserting, which matches nothing on any
+    normal day (nothing has today's date yet) - so yesterday's row for every pair
+    was still there when the fresh insert ran, and it collided on the very first
+    pair (psycopg2.errors.UniqueViolation, confirmed in prod: every single run
+    failed from 2026-07-17 onward, the day after the table's first successful
+    populate). Deleting unconditionally is correct and safe here specifically
+    because every run recomputes the COMPLETE current universe of pairs - there's
+    no partial-payload case where wiping the table first would lose data the
+    incoming payload doesn't replace."""
     if x_job_secret != os.getenv("JOB_SECRET", ""):
         raise HTTPException(status_code=401, detail="Invalid job secret.")
     from models import TickerCorrelation
 
-    db.query(TickerCorrelation).filter(TickerCorrelation.computed_date == body.computed_date).delete()
+    db.query(TickerCorrelation).delete()
     for p in body.pairs:
         db.add(TickerCorrelation(
             ticker_a=p.ticker_a, ticker_b=p.ticker_b,

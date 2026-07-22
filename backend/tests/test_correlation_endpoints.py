@@ -21,11 +21,17 @@ class TestGetCloses:
         assert r.status_code == 401
 
     def test_extracts_closes_from_records_format(self, client: TestClient, db_session):
+        # Relative to today, not hardcoded — a fixed past date falls outside the
+        # days=200 window as soon as enough real calendar time passes (exactly what
+        # broke this test: it hardcoded 2026-01-01/02 and started failing once
+        # "today" drifted far enough past that to push it outside the window).
         os.environ["ADMIN_SECRET"] = ADMIN_SECRET
         db_session.add(WatchlistItem(user_email="u@example.com", ticker="CLOSA"))
+        d1 = (date.today() - timedelta(days=2)).isoformat()
+        d2 = (date.today() - timedelta(days=1)).isoformat()
         history = json.dumps([
-            {"Date": "2026-01-01", "Open": 10, "High": 11, "Low": 9, "Close": 10.5, "Volume": 1000},
-            {"Date": "2026-01-02", "Open": 10.5, "High": 12, "Low": 10, "Close": 11.2, "Volume": 1200},
+            {"Date": d1, "Open": 10, "High": 11, "Low": 9, "Close": 10.5, "Volume": 1000},
+            {"Date": d2, "Open": 10.5, "High": 12, "Low": 10, "Close": 11.2, "Volume": 1200},
         ])
         db_session.add(MarketDataCache(ticker="CLOSA", cache_date=date.today(), history_json=history))
         db_session.commit()
@@ -33,14 +39,16 @@ class TestGetCloses:
         r = client.get("/jobs/admin/closes", params={"x_admin_secret": ADMIN_SECRET, "days": 200})
         assert r.status_code == 200
         closes = r.json()["closes"]
-        assert closes["CLOSA"] == {"2026-01-01": 10.5, "2026-01-02": 11.2}
+        assert closes["CLOSA"] == {d1: 10.5, d2: 11.2}
 
     def test_extracts_closes_from_split_format(self, client: TestClient, db_session):
         os.environ["ADMIN_SECRET"] = ADMIN_SECRET
         db_session.add(WatchlistItem(user_email="u@example.com", ticker="CLOSB"))
+        d1 = (date.today() - timedelta(days=2)).isoformat()
+        d2 = (date.today() - timedelta(days=1)).isoformat()
         history = json.dumps({
             "columns": ["Open", "High", "Low", "Close", "Volume"],
-            "index": ["2026-01-01T00:00:00", "2026-01-02T00:00:00"],
+            "index": [f"{d1}T00:00:00", f"{d2}T00:00:00"],
             "data": [[10, 11, 9, 10.5, 1000], [10.5, 12, 10, 11.2, 1200]],
         })
         db_session.add(MarketDataCache(ticker="CLOSB", cache_date=date.today(), history_json=history))
@@ -49,7 +57,7 @@ class TestGetCloses:
         r = client.get("/jobs/admin/closes", params={"x_admin_secret": ADMIN_SECRET, "days": 200})
         assert r.status_code == 200
         closes = r.json()["closes"]
-        assert closes["CLOSB"] == {"2026-01-01": 10.5, "2026-01-02": 11.2}
+        assert closes["CLOSB"] == {d1: 10.5, d2: 11.2}
 
     def test_excludes_disabled_tickers(self, client: TestClient, db_session):
         os.environ["ADMIN_SECRET"] = ADMIN_SECRET
@@ -131,3 +139,32 @@ class TestIngestCorrelations:
         db_session.expire_all()
         assert db_session.get(TickerCorrelation, ("CCC", "DDD")) is None
         assert db_session.get(TickerCorrelation, ("EEE", "FFF")) is not None
+
+    def test_pair_carried_over_from_a_previous_day_does_not_collide(self, client: TestClient, db_session):
+        """Real production bug: the primary key is (ticker_a, ticker_b) only, not
+        including computed_date - a pair can only ever have one row, always the
+        latest. The old code deleted only rows matching TODAY's computed_date before
+        inserting, which matches nothing on a normal day since nothing has today's
+        date yet - so yesterday's row for every pair was still there and collided
+        with today's insert (psycopg2.errors.UniqueViolation, confirmed in prod:
+        every run failed from the day after the table's first successful populate
+        onward). This is the scenario the old same-date-only test above could never
+        catch, because both its requests used the identical date."""
+        db_session.add(TickerCorrelation(
+            ticker_a="GGG", ticker_b="HHH", corr_90d=0.1, significant=False,
+            computed_date=date.today() - timedelta(days=1),
+        ))
+        db_session.commit()
+
+        today = str(date.today())
+        payload = {"computed_date": today, "pairs": [
+            {"ticker_a": "GGG", "ticker_b": "HHH", "corr_90d": 0.9, "significant": True},
+        ]}
+        r = client.post("/jobs/ingest-correlations", params={"x_job_secret": JOB_SECRET}, json=payload)
+        assert r.status_code == 200
+
+        db_session.expire_all()
+        row = db_session.get(TickerCorrelation, ("GGG", "HHH"))
+        assert row.corr_90d == 0.9
+        assert row.significant is True
+        assert str(row.computed_date) == today
