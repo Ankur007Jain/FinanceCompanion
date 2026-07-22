@@ -40,6 +40,7 @@
     "typescript": "^5"
   },
   "overrides": {
-    "jest-mock": "^29.7.0"
+    "jest-mock": "^29.7.0",
+    "sharp": "^0.35.0"
   }
 }
