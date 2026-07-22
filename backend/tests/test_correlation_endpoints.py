@@ -131,3 +131,32 @@ class TestIngestCorrelations:
         db_session.expire_all()
         assert db_session.get(TickerCorrelation, ("CCC", "DDD")) is None
         assert db_session.get(TickerCorrelation, ("EEE", "FFF")) is not None
+
+    def test_pair_carried_over_from_a_previous_day_does_not_collide(self, client: TestClient, db_session):
+        """Real production bug: the primary key is (ticker_a, ticker_b) only, not
+        including computed_date - a pair can only ever have one row, always the
+        latest. The old code deleted only rows matching TODAY's computed_date before
+        inserting, which matches nothing on a normal day since nothing has today's
+        date yet - so yesterday's row for every pair was still there and collided
+        with today's insert (psycopg2.errors.UniqueViolation, confirmed in prod:
+        every run failed from the day after the table's first successful populate
+        onward). This is the scenario the old same-date-only test above could never
+        catch, because both its requests used the identical date."""
+        db_session.add(TickerCorrelation(
+            ticker_a="GGG", ticker_b="HHH", corr_90d=0.1, significant=False,
+            computed_date=date.today() - timedelta(days=1),
+        ))
+        db_session.commit()
+
+        today = str(date.today())
+        payload = {"computed_date": today, "pairs": [
+            {"ticker_a": "GGG", "ticker_b": "HHH", "corr_90d": 0.9, "significant": True},
+        ]}
+        r = client.post("/jobs/ingest-correlations", params={"x_job_secret": JOB_SECRET}, json=payload)
+        assert r.status_code == 200
+
+        db_session.expire_all()
+        row = db_session.get(TickerCorrelation, ("GGG", "HHH"))
+        assert row.corr_90d == 0.9
+        assert row.significant is True
+        assert str(row.computed_date) == today
