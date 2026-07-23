@@ -10,6 +10,11 @@ on:
     # with that window resetting, rather than waiting a full day for the next run).
     - cron: "0 4,9,14,19 * * 1-5"
   workflow_dispatch:          # manual trigger from GitHub UI
+    inputs:
+      tickers:
+        description: "Comma-separated tickers to test (e.g. NVDA,MSFT) — leave empty for the full watchlist"
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -30,12 +35,14 @@ jobs:
         env:
           BACKEND_URL: ${{ secrets.BACKEND_URL }}
           ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          TICKERS_OVERRIDE: ${{ github.event.inputs.tickers }}
         run: |
           python3 << 'PYEOF'
           import json, subprocess, os
 
           backend = os.environ['BACKEND_URL']
           secret  = os.environ['ADMIN_SECRET']
+          override = os.environ.get('TICKERS_OVERRIDE', '').strip()
 
           def fetch(url):
               r = subprocess.run(['curl', '-sf', url], capture_output=True, text=True, timeout=15)
@@ -44,9 +51,13 @@ jobs:
               except Exception:
                   return {}
 
-          all_tickers = fetch(f"{backend}/jobs/admin/tickers?x_admin_secret={secret}").get('tickers', [])
-          if not all_tickers:
-              all_tickers = ['NFLX', 'MRVL', 'SOXQ', 'SOXL', 'MVLL']
+          if override:
+              all_tickers = [t.strip().upper() for t in override.split(',') if t.strip()]
+              print(f"Manual override — testing only: {all_tickers}")
+          else:
+              all_tickers = fetch(f"{backend}/jobs/admin/tickers?x_admin_secret={secret}").get('tickers', [])
+              if not all_tickers:
+                  all_tickers = ['NFLX', 'MRVL', 'SOXQ', 'SOXL', 'MVLL']
 
           analyzed = set(fetch(f"{backend}/jobs/admin/analyzed-today?x_admin_secret={secret}").get('analyzed', []))
           remaining = [t for t in all_tickers if t not in analyzed]
@@ -106,7 +117,7 @@ jobs:
           ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
         with:
           mode: agent
-          model: claude-sonnet-4-6
+          model: claude-sonnet-5
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           allowed_tools: "Bash,Edit,Read,Write,Glob,Grep,LS"
           direct_prompt: |

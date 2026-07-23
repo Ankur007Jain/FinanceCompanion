@@ -12,7 +12,9 @@ import anthropic
 from agents.price_agent import PriceData
 from agents.analyst_agent import AnalystData
 
-_SONNET = "claude-sonnet-4-6"
+# Sonnet 5 intro pricing runs through Aug 31, 2026 ($2/$10 per MTok in/out vs 4.6's
+# $3/$15) — cheaper and newer, same swap already made for live chat in model_router.py.
+_SONNET = "claude-sonnet-5"
 
 _SYSTEM = """You are FinanceCompanion's advisor — and behind the scenes, an institutional investment committee.
 
