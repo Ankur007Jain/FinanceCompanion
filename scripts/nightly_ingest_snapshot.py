@@ -27,7 +27,7 @@ r = subprocess.run(
     ["curl", "-s", "-o", "/dev/null", "-w", "%{http_code}",
      "-X", "POST", f"{backend}/jobs/ingest-snapshot?x_job_secret={secret}",
      "-H", "Content-Type: application/json",
-     "-d", payload],
-    capture_output=True, text=True
+     "-d", "@-"],
+    input=payload, capture_output=True, text=True
 )
 print(f"[{ticker}] Snapshot saved — HTTP {r.stdout.strip()}")
