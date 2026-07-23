@@ -20,8 +20,16 @@ Rules:
 
 
 async def analyze_ripple(ticker: str, news_summary: str, sector: str = "") -> tuple[str, dict]:
+    # Real production bug this guards against: a June 28 refactor renamed the model
+    # call itself from Sonnet to Haiku but missed these two usage dicts, which kept
+    # referencing an undefined _SONNET. The Haiku call below succeeded and was billed
+    # for real every night, then this function crashed building its own return value
+    # (NameError) immediately after — caught by nightly_runner's broad except, which
+    # silently discarded the real ripple text and substituted a placeholder. Ran this
+    # way, undetected, for about a month: paid for output that was never used, and the
+    # Verdict Agent lost real ripple-effect context every single night.
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    _empty_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": _SONNET}
+    _empty_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": _HAIKU}
     if not api_key or not news_summary or news_summary == "No recent news found.":
         return "No macro events with meaningful ripple effects identified today.", _empty_usage
 
@@ -42,6 +50,6 @@ async def analyze_ripple(ticker: str, news_summary: str, sector: str = "") -> tu
         "output_tokens": resp.usage.output_tokens,
         "cache_read": getattr(resp.usage, "cache_read_input_tokens", 0) or 0,
         "cache_write": getattr(resp.usage, "cache_write_input_tokens", 0) or 0,
-        "model": _SONNET,
+        "model": _HAIKU,
     }
     return resp.content[0].text.strip(), usage

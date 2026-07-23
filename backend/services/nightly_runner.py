@@ -234,7 +234,9 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
     except Exception as e:
         logger.error(f"[{ticker}] Ripple agent failed: {e}")
         ripple = "Ripple analysis unavailable."
-        ripple_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": "claude-sonnet-4-6"}
+        # Ripple Agent is Haiku-only (see ripple_agent.py) — this fallback previously
+        # said "claude-sonnet-4-6", which was never the actual model.
+        ripple_usage = {"input_tokens": 0, "output_tokens": 0, "cache_read": 0, "cache_write": 0, "model": "claude-haiku-4-5-20251001"}
 
     logger.info(f"[{ticker}] Running Verdict agent...")
     try:
