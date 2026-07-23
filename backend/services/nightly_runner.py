@@ -24,10 +24,18 @@ from services.simple_fields import generate_simple_fields
 
 logger = logging.getLogger(__name__)
 
-# Pricing per million tokens — Sonnet 4.6 and Haiku 4.5
+# Pricing per million tokens. cache_write is the 5-minute-TTL rate (1.25x base
+# input), matching what we actually use — see prompt_builder.py/streaming.py, no
+# 1h-TTL cache_control anywhere in this codebase.
+# Real bugs fixed here alongside the Sonnet 5 rollout: (1) claude-haiku-4-5-20251001's
+# rates were stale/wrong ($0.80/$4.00/$0.08 vs the real published $1/$5/$0.10 -
+# understated Haiku cost by 20% in every nightly cost_usd figure), and (2) cache_write
+# tokens were tracked in the returned tuple but never actually priced into `cost` at
+# all - every cache write this app has ever paid for was invisible to cost_usd.
 _PRICING = {
-    "claude-sonnet-4-6":        {"in": 3.0,  "out": 15.0, "cache_read": 0.30},
-    "claude-haiku-4-5-20251001": {"in": 0.80, "out": 4.0,  "cache_read": 0.08},
+    "claude-sonnet-5":           {"in": 2.0,  "out": 10.0, "cache_read": 0.20, "cache_write": 2.50},
+    "claude-sonnet-4-6":         {"in": 3.0,  "out": 15.0, "cache_read": 0.30, "cache_write": 3.75},
+    "claude-haiku-4-5-20251001": {"in": 1.0,  "out": 5.0,  "cache_read": 0.10, "cache_write": 1.25},
 }
 
 
@@ -36,7 +44,7 @@ def _sum_usages(usages: list[dict]) -> tuple[int, int, int, int, float]:
     tin = tout = tcr = tcw = 0
     cost = 0.0
     for u in usages:
-        p = _PRICING.get(u.get("model", "claude-sonnet-4-6"), _PRICING["claude-sonnet-4-6"])
+        p = _PRICING.get(u.get("model", "claude-sonnet-5"), _PRICING["claude-sonnet-5"])
         inp = u.get("input_tokens", 0) or 0
         out = u.get("output_tokens", 0) or 0
         cr  = u.get("cache_read", 0) or 0
@@ -45,6 +53,7 @@ def _sum_usages(usages: list[dict]) -> tuple[int, int, int, int, float]:
         cost += (inp / 1_000_000) * p["in"]
         cost += (out / 1_000_000) * p["out"]
         cost += (cr  / 1_000_000) * p["cache_read"]
+        cost += (cw  / 1_000_000) * p["cache_write"]
     return tin, tout, tcr, tcw, round(cost, 6)
 
 
