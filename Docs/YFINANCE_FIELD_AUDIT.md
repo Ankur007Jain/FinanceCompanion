@@ -13,6 +13,12 @@
 - `t.news` — recent headlines list
 - `t.calendar` — earnings date + estimate
 
+**Version:** pinned to `yfinance==1.5.2` (bumped from `0.2.51` in the fix for issue #99 —
+the old version was dozens of releases behind, and Yahoo's tightened bot detection made
+`t.history()` silently return empty, driving `rsi` to NULL on most nightly runs). The
+1.x line also changed the shape of `t.news` (see Part 3) — `t.calendar` was already
+being treated as a dict here, which turned out to be the forward-compatible shape.
+
 **The good news:** our `market_data_cache` table saves ALL four as raw JSON blobs.
 So every field listed below as 💾 is already preserved in the DB — we just haven't extracted it into analysis columns yet.
 
@@ -177,24 +183,28 @@ DataFrame with 252 rows (1 trading year), one per day.
 
 ## Part 3 — `t.news`
 
-List of dicts per article.
+List of dicts per article. **As of yfinance 1.x, fields are nested under `item["content"]`**
+(was flat top-level keys pre-1.x) — code must check the nested shape first and fall back
+to the old flat keys, since some cached/legacy payloads may still be flat.
 
-| Field | Status | Notes |
-|---|---|---|
-| `title` | ✅ | Used in news summary |
-| `publisher` | ✅ | Used |
-| `providerPublishTime` | ✅ | Used |
-| `link` | 💾 | Article URL — not surfaced in UI yet |
-| `thumbnail` | 💾 | Image URL — not used |
-| `relatedTickers` | 💾 | Other tickers mentioned — useful for ripple analysis |
-| `type` | 💾 | "STORY" vs "VIDEO" etc. |
-| `uuid` | 💾 | Deduplication key |
+| Field (nested under `content`) | Old flat key | Status | Notes |
+|---|---|---|---|
+| `content.title` | `title` | ✅ | Used in news summary |
+| `content.provider.displayName` | `publisher` | ✅ | Used |
+| `content.pubDate` | `providerPublishTime` | ✅ | Used |
+| `content.canonicalUrl.url` / `content.clickThroughUrl.url` | `link` | 💾 | Article URL — not surfaced in UI yet |
+| `content.thumbnail` | `thumbnail` | 💾 | Image URL — not used |
+| — | `relatedTickers` | 💾 | Other tickers mentioned — useful for ripple analysis (not present in the new nested shape; would need a replacement source if we want this) |
+| `content.contentType` | `type` | 💾 | "STORY" vs "VIDEO" etc. |
+| `id` | `uuid` | 💾 | Deduplication key |
 
 ---
 
 ## Part 4 — `t.calendar`
 
-Dict with earnings estimate data.
+Plain `dict` with earnings estimate data (was a pandas `DataFrame` pre-1.x — `event_agent.py`
+had a stale `hasattr(cal, "columns")` check left over from that shape until the issue #99
+fix; `scripts/nightly_fetch.py`, the production path, already read it as a dict).
 
 | Field | Status | Notes |
 |---|---|---|

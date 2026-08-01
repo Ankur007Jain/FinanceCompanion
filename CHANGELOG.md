@@ -4,6 +4,13 @@ All notable changes to FinanceCompanion are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning is
 [SemVer](https://semver.org/): pre-1.0, so MINOR bumps may include breaking changes, PATCH is fixes.
 
+## [Unreleased]
+
+### Fixed
+- Conviction-score inversion — 70+ conviction BUYs were underperforming 50-69 conviction BUYs in the weekly scorecard, because `conviction_score` was pure LLM narrative confidence and the intended objective anchor (`signal_convergence_score`) was also self-reported by the same model, so it couldn't act as an independent check. Now computed deterministically before the LLM runs (`scripts/compute_signal_convergence.py`) and blended into `conviction_score` via a fixed formula (`backend/services/conviction.py`); the LLM's original number is preserved in the new `conviction_score_raw` column (#100, #104)
+- Sustained `rsi` NULL rate (78-93% of nightly analyses since 2026-07-23) — `yfinance` was pinned dozens of releases behind current, and Yahoo's tightened bot detection made `history()` silently return empty. Upgraded `yfinance` 0.2.51 → 1.5.2, which also required fixing two shape changes it exposed: `news_agent.py` (news items now nest under `content`) and `event_agent.py` (`calendar` is now a dict, not a DataFrame) (#99, #105)
+- npm audit high/critical vulnerabilities in `@auth/core`, `postcss`, `uuid`, `brace-expansion`, `@tailwindcss/postcss` (#106)
+
 ## [0.2.0] — 2026-07-14
 
 ### Added

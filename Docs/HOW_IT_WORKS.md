@@ -80,6 +80,8 @@ Specific price levels:
 ### Conviction Score (0–100)
 How confident is the AI in this verdict? A score of 80+ means multiple independent signals are all pointing the same direction. A score of 45 means the analysis is more uncertain — signals are mixed.
 
+This score is half the AI's own read of the setup, and half a fixed count of the objective checklist below (Signal Convergence Score) — so a confidently-worded write-up alone can't inflate it if the underlying signals don't actually back it up.
+
 ### Bull Case / Bear Case / Thesis Invalidation
 Three one-sentence answers:
 - **Bull Case**: the strongest reason this works out well
@@ -116,19 +118,23 @@ If the stock has dropped more than 15% since the AI last issued a BUY, it addres
 
 ## Signal Convergence Score
 
-Before calling Claude, the system runs a quick checklist of seven independent signals:
+Before calling Claude, the system runs a quick checklist of ten independent signals —
+computed by plain code, not asked of the AI, so it can't be talked into a rosier count:
 
 | Signal | What It Means |
 |--------|--------------|
-| Oversold RSI | RSI below 42 — stock may be beaten down more than it deserves |
-| Near 52-week low | Stock is near the bottom of its annual range — potential value entry |
-| Analyst upside >15% | Analysts think it has meaningful room to grow from here |
-| No binary risk | Earnings are more than 21 days away — no surprise risk imminent |
+| Oversold RSI | RSI below 50 — stock may be beaten down more than it deserves |
+| Near 52-week low | Stock is in the bottom 30% of its annual range — potential value entry |
+| Analyst upside ≥15% | Analysts think it has meaningful room to grow from here |
+| No binary risk | Earnings are unknown or more than a week away — no surprise imminent |
 | Positive free cash flow | Company is generating real cash, not burning through it |
-| Institutional backing | Big money managers own >40% — strong vote of confidence |
-| Price above 200-day MA | Stock is above its long-term average — trend is upward |
+| Institutional backing | Big money managers own 50%+ — strong vote of confidence |
+| Price stabilizing | Price is at/above its 50-day average — short-term trend is holding |
+| Near support | Price is close to its recent 20-day floor, not falling through it |
+| Outperforming its sector | Beating its sector ETF today, not just moving with the crowd |
+| Market tailwind | The S&P 500 itself is up today |
 
-**All 7 signals are checked. If 5 or more confirm, BUY is eligible. If fewer than 5, the verdict must be WATCH.** This prevents the AI from issuing BUY signals on weak setups just because one or two things look good.
+**All 10 signals are checked. If 5 or more confirm, BUY is eligible. If fewer than 5, the verdict must be WATCH.** This prevents the AI from issuing BUY signals on weak setups just because one or two things look good, and — as of August 2026 — this same count now also shapes the Conviction Score above, so a well-written case for a weak setup can't score as "high conviction" either.
 
 ---
 
