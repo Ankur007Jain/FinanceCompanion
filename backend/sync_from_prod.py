@@ -27,6 +27,8 @@ TABLES = [
     "copilot_decisions",
     "conversations",
     "messages",
+    "tool_calls",
+    "user_learnings",
     "feedback",
     "ticker_correlations",
 ]

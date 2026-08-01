@@ -21,7 +21,7 @@ dist/
 *.db
 *.db-shm
 *.db-wal
-*.db.bak-*
+*.db.bak*
 *.sqlite
 
 # test artifacts
