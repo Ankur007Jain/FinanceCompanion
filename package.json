@@ -11,7 +11,7 @@
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@auth/core": "0.37.4",
+    "@auth/core": "^0.41.3",
     "next": "16.2.11",
     "next-auth": "^5.0.0-beta.31",
     "react": "^19.0.0",
@@ -41,6 +41,8 @@
   },
   "overrides": {
     "jest-mock": "^29.7.0",
-    "sharp": "^0.35.0"
+    "sharp": "^0.35.0",
+    "postcss": "^8.5.25",
+    "uuid": "^11.1.1"
   }
 }
