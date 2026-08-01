@@ -155,24 +155,25 @@ jobs:
             analyses and reports (e.g. "Past mistakes to avoid: stale analyst targets as validation").
             Tickers without a memory file are fine — just skip that context for them.
 
-            ## Step 2 — Compute signal convergence score for each ticker
+            ## Step 2 — Signal convergence score (precomputed, read-only)
 
-            Score 10 independent signals (true/false each):
-            - oversold_rsi: rsi < 50
-            - near_52w_low: range_pct < 30
-            - analyst_upside_15pct: upside_pct >= 15
-            - no_binary_risk: earnings_date is null OR more than 7 days from today
-            - positive_fcf: true if free_cashflow > 0 (real free cash flow — false if null, never assume positive)
-            - institutional_backing: true if inst_ownership_pct >= 0.50 (real institutional ownership data — false if null, don't default true for large caps)
-            - price_stabilizing: price >= ma50 (or ma50 is null)
-            - near_support: price <= support_20d * 1.03 (within 3% of 20-day support floor)
-            - sector_outperforming: relative_strength_1d > 0 (stock outperforming its sector ETF today)
-            - sp500_tailwind: sp500_day_chg > 0 (market rising — macro tailwind)
+            ```bash
+            python3 scripts/compute_signal_convergence.py TICKER
+            ```
+            Writes /tmp/convergence_TICKER.json: {"signal_convergence_score": 0-10, "convergence_details": {...}}.
+            This score is computed deterministically from the summary JSON — the same 10-signal
+            spec this step used to ask you to self-score. Read it as fixed, read-only context in
+            Step 3a; do not recompute, restate a different value, or adjust these flags yourself.
 
-            convergence_score = count of true signals (0–10)
-            CONVICTION FLOOR: convergence_score < 5 → verdict MUST be WATCH.
+            CONVICTION FLOOR: signal_convergence_score < 5 → verdict MUST be WATCH.
 
             ## Step 3a — Your verdict: Claude Sonnet 4.6 (Verdict A)
+
+            **Signal convergence (from /tmp/convergence_TICKER.json, Step 2 — fixed, read-only):**
+            Read signal_convergence_score and convergence_details from that file and factor them
+            into conviction_score below — don't let confident-sounding reasoning override a low
+            score, and don't inflate conviction when few signals actually confirm. You are not
+            recomputing this score; it's already final.
 
             **Check:** 52-week range position · price vs MA50/MA200 · RSI · analyst consensus ·
             news sentiment · earnings proximity (within 5 days → is_important_day=true) ·
@@ -262,11 +263,11 @@ jobs:
               "scenario_bear": "<one sentence>",
               "scenario_bear_pct": <negative float>,
               "scenario_bear_prob": <0-100>,
-              "dont_panic_note": "<address >15% drop from prior BUY; otherwise empty string>",
-              "signal_convergence_score": <0-10>,
-              "convergence_details": "{\"oversold_rsi\":true/false,\"near_52w_low\":true/false,\"analyst_upside_15pct\":true/false,\"no_binary_risk\":true/false,\"positive_fcf\":true/false,\"institutional_backing\":true/false,\"price_stabilizing\":true/false,\"near_support\":true/false,\"sector_outperforming\":true/false,\"sp500_tailwind\":true/false}"
+              "dont_panic_note": "<address >15% drop from prior BUY; otherwise empty string>"
             }
             ```
+            Do NOT include signal_convergence_score or convergence_details in this JSON — those
+            come from /tmp/convergence_TICKER.json (Step 2), not from you.
             Write the JSON to disk with a bash command, e.g.:
             ```bash
             cat > /tmp/verdict_a_TICKER.json << 'JSONEOF'
@@ -345,8 +346,15 @@ jobs:
 
             Include ALL verdict fields: stop_loss, hold_period, conviction_score, risk_level,
             confidence, bull_case, bear_case, thesis_invalidation, entry_quality,
-            hold_and_forget_rating, position_size_pct, all scenario_* fields, dont_panic_note,
-            signal_convergence_score, convergence_details.
+            hold_and_forget_rating, position_size_pct, all scenario_* fields, dont_panic_note.
+
+            Also send conviction_score_raw = the same value as verdict_a's conviction_score
+            (the backend calibrates conviction_score itself using signal_convergence_score —
+            this field preserves your original, uncalibrated number for audit).
+
+            signal_convergence_score and convergence_details come from /tmp/convergence_TICKER.json
+            (Step 2), NOT from verdict_a — pass them through as-is; convergence_details should be
+            the JSON-stringified object from that file.
 
             Include dual-agent fields from Step 3c: verdict_a, verdict_b, verdict_agreement,
             split_reason. Use null for verdict_b/verdict_agreement/split_reason if Gemini was unavailable.

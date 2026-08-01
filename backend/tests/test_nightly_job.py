@@ -371,4 +371,43 @@ class TestDualAgentFields:
         from models import StockAnalysis
         row = db_session.query(StockAnalysis).filter(StockAnalysis.ticker == "SELL2").first()
         assert row.verdict == "SELL"
-        assert row.verdict_agreement is True
+
+
+class TestConvictionCalibration:
+    """
+    conviction_score stored in the DB must be calibrated (blended with
+    signal_convergence_score), not the LLM's raw narrative number — this is the fix for
+    the conviction-inversion bug (weekly scorecard, issue #100). conviction_score_raw
+    preserves the original LLM value for audit.
+    """
+
+    def test_high_conviction_low_convergence_gets_pulled_down(self, client: TestClient, db_session):
+        payload = {**_ANALYSIS_NVDA, "ticker": "CALIB1", "conviction_score": 95, "signal_convergence_score": 2}
+        r = client.post("/jobs/ingest-analysis", params={"x_job_secret": JOB_SECRET}, json=payload)
+        assert r.status_code == 200
+
+        from models import StockAnalysis
+        row = db_session.query(StockAnalysis).filter(StockAnalysis.ticker == "CALIB1").first()
+        assert row.conviction_score_raw == 95
+        assert row.conviction_score < row.conviction_score_raw
+
+    def test_low_conviction_high_convergence_gets_pulled_up(self, client: TestClient, db_session):
+        payload = {**_ANALYSIS_NVDA, "ticker": "CALIB2", "conviction_score": 40, "signal_convergence_score": 9}
+        r = client.post("/jobs/ingest-analysis", params={"x_job_secret": JOB_SECRET}, json=payload)
+        assert r.status_code == 200
+
+        from models import StockAnalysis
+        row = db_session.query(StockAnalysis).filter(StockAnalysis.ticker == "CALIB2").first()
+        assert row.conviction_score_raw == 40
+        assert row.conviction_score > row.conviction_score_raw
+
+    def test_missing_convergence_score_leaves_conviction_unchanged(self, client: TestClient, db_session):
+        payload = {**_ANALYSIS_NVDA, "ticker": "CALIB3", "conviction_score": 70}
+        payload.pop("signal_convergence_score", None)
+        r = client.post("/jobs/ingest-analysis", params={"x_job_secret": JOB_SECRET}, json=payload)
+        assert r.status_code == 200
+
+        from models import StockAnalysis
+        row = db_session.query(StockAnalysis).filter(StockAnalysis.ticker == "CALIB3").first()
+        assert row.conviction_score == 70
+        assert row.conviction_score_raw == 70

@@ -18,6 +18,7 @@ from agents.price_agent import fetch_price_data
 from agents.yf_fetcher import fetch_yf_data
 from agents.ripple_agent import analyze_ripple
 from agents.verdict_agent import generate_verdict
+from services.conviction import calibrate_conviction
 from models import StockAnalysis, WatchlistItem
 from services.stock_memory import get_stock_memory, maybe_update_stock_memory
 from services.simple_fields import generate_simple_fields
@@ -269,7 +270,7 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         logger.info(f"[{ticker}] Signal convergence: {conv_score}/7 {conv_details}")
 
         # Factual performance retrospective — what actually happened after past verdicts
-        perf_retro = _build_performance_retrospective(recent, price.current_price)
+        perf_retro = _build_performance_retrospective(recent_all, price.current_price)
 
         verdict, verdict_usage = await generate_verdict(
             ticker, price, news, events, analyst, ripple, stock_mem, is_leveraged,
@@ -335,7 +336,8 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
         stop_loss=verdict.stop_loss,
         hold_period=verdict.hold_period,
         reasoning=verdict.reasoning,
-        conviction_score=verdict.conviction_score,
+        conviction_score=calibrate_conviction(verdict.conviction_score, conv_score, max_convergence=7),
+        conviction_score_raw=verdict.conviction_score,
         risk_level=verdict.risk_level,
         confidence=verdict.confidence,
         bull_case=verdict.bull_case,
