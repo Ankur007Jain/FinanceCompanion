@@ -686,6 +686,140 @@ class TestGetChatHistoryTool:
         assert "No other conversation found" in tool_result_content
 
 
+class TestTemporalContext:
+    """Real production bug this addresses: conversations can span days/weeks (up to
+    12 days between messages in real synced production data — 6.5% of all turns had
+    over a day between them), but the model saw the whole history as one flat,
+    undifferentiated block with zero sense of elapsed time. Confirmed cause of a real
+    conversation where the model got confused about a user's timezone claim after a
+    multi-message gap, with no anchor for how much time had actually passed."""
+
+    def test_no_marker_for_a_normal_quick_reply(self):
+        from datetime import datetime, timedelta
+        from routers.streaming import _elapsed_str
+        t0 = datetime(2026, 1, 1, 12, 0, 0)
+        assert _elapsed_str(t0, t0 + timedelta(minutes=2)) is None
+
+    def test_hours_gap_formatted_in_hours(self):
+        from datetime import datetime, timedelta
+        from routers.streaming import _elapsed_str
+        t0 = datetime(2026, 1, 1, 12, 0, 0)
+        assert _elapsed_str(t0, t0 + timedelta(hours=2, minutes=30)) == "2.5 hours later"
+
+    def test_one_day_gap_uses_singular(self):
+        from datetime import datetime, timedelta
+        from routers.streaming import _elapsed_str
+        t0 = datetime(2026, 1, 1, 12, 0, 0)
+        assert _elapsed_str(t0, t0 + timedelta(days=1)) == "1 day later, on 2026-01-02"
+
+    def test_days_gap_includes_the_date(self):
+        from datetime import datetime, timedelta
+        from routers.streaming import _elapsed_str
+        t0 = datetime(2026, 1, 1, 12, 0, 0)
+        assert _elapsed_str(t0, t0 + timedelta(days=3)) == "3 days later, on 2026-01-04"
+
+    def test_real_12_day_gap_from_production_data(self):
+        """The longest real gap found auditing real synced production conversations."""
+        from datetime import datetime, timedelta
+        from routers.streaming import _elapsed_str
+        t0 = datetime(2026, 7, 11, 9, 0, 0)
+        assert "12 days later" in _elapsed_str(t0, t0 + timedelta(days=12, hours=2))
+
+    def test_gap_marker_appears_for_a_conversation_resumed_after_days(self, client: TestClient, db_session):
+        from datetime import datetime, timedelta
+        from models import Message
+        conv_id = _create_conversation(client)
+        old_time = datetime.utcnow() - timedelta(days=5)
+        db_session.add(Message(conversation_id=conv_id, role="user", content="first message", created_at=old_time))
+        db_session.add(Message(conversation_id=conv_id, role="assistant", content="first reply", created_at=old_time + timedelta(seconds=30)))
+        db_session.commit()
+
+        with _mock_google_token(), _mock_anthropic_stream("Welcome back.") as mock_client:
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "resuming after a while", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        messages = mock_client.messages.stream.call_args.kwargs["messages"]
+        # New message was never part of the cached prefix anyway, so its gap is
+        # computed live against right now, not a fixed timestamp.
+        assert "days later" in messages[-1]["content"]
+
+    def test_no_gap_marker_for_a_quick_followup(self, client: TestClient, db_session):
+        from models import Message
+        conv_id = _create_conversation(client)
+        db_session.add(Message(conversation_id=conv_id, role="user", content="first"))
+        db_session.add(Message(conversation_id=conv_id, role="assistant", content="reply"))
+        db_session.commit()
+
+        with _mock_google_token(), _mock_anthropic_stream("Sure.") as mock_client:
+            client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "quick followup", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        messages = mock_client.messages.stream.call_args.kwargs["messages"]
+        assert "later" not in messages[-1]["content"]
+
+    def test_history_is_byte_identical_no_matter_when_its_built(self):
+        """The actual cache-safety claim, proven directly: the SAME historical prefix
+        must produce identical text regardless of how much real time has passed since —
+        only possible because gaps are computed from two fixed timestamps, never "now"."""
+        from datetime import datetime, timedelta
+        from models import Message
+        from routers.streaming import _build_live_history
+        import time
+
+        t0 = datetime(2026, 1, 1, 9, 0, 0)
+        rows = [
+            Message(conversation_id="x", role="user", content="first", created_at=t0),
+            Message(conversation_id="x", role="assistant", content="reply", created_at=t0 + timedelta(days=4)),
+        ]
+        first_build = _build_live_history(rows, rows)
+        time.sleep(0.05)  # simulate real time passing between two "requests"
+        second_build = _build_live_history(rows, rows)
+        assert first_build == second_build
+        assert "4 days later" in first_build[1]["content"]
+
+    def test_first_live_row_gets_gap_against_trimmed_off_predecessor(self):
+        """Edge case: the oldest message still in the live window may itself have a
+        real gap from whatever got trimmed off — that predecessor isn't in live_rows,
+        only in the full history_rows, so it has to be looked up there."""
+        from datetime import datetime, timedelta
+        from models import Message
+        from routers.streaming import _build_live_history
+
+        t0 = datetime(2026, 1, 1, 9, 0, 0)
+        trimmed = Message(conversation_id="x", role="user", content="trimmed off", created_at=t0)
+        kept = Message(conversation_id="x", role="assistant", content="still live", created_at=t0 + timedelta(days=6))
+        history_rows = [trimmed, kept]
+        live_rows = [kept]
+        result = _build_live_history(history_rows, live_rows)
+        assert "6 days later" in result[0]["content"]
+
+    def test_get_chat_history_notes_how_long_ago_retrieved_messages_are(self, client: TestClient, db_session):
+        from datetime import datetime, timedelta
+        from models import Message
+        conv_id = _create_conversation(client)
+        for i in range(25):
+            db_session.add(Message(
+                conversation_id=conv_id, role="user", content=f"old message {i}",
+                created_at=datetime.utcnow() - timedelta(days=10) + timedelta(minutes=i),
+            ))
+        db_session.commit()
+
+        with _mock_google_token(), \
+             _mock_anthropic_stream("", tool_use={"name": "get_chat_history", "input": {}}) as mock_client:
+            _make_second_call_end_turn(mock_client)
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "what did I say earlier?", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        sent_messages = mock_client.messages.stream.call_args.kwargs["messages"]
+        tool_result_content = sent_messages[-1]["content"][0]["content"]
+        assert "days ago" in tool_result_content
+
+
 class TestSaveLearningTool:
     def test_tool_is_offered(self, client: TestClient):
         conv_id = _create_conversation(client)

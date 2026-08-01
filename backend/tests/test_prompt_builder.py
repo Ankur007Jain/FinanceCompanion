@@ -59,6 +59,16 @@ class TestCommitteeLens:
         # And it must not turn into disclaimer bloat — same brevity rule as everywhere else.
         assert "no fluff" in low
 
+    def test_static_prompt_says_fresh_dossier_wins_over_stale_conversation_history(self, db_session):
+        """Companion rule to the gap markers added in streaming.py: the dossier is
+        rebuilt from the DB fresh every message, so it's never the stale side of a
+        conflict — an old price mentioned before a real time gap in the conversation
+        is the one that should lose, not get silently carried forward as current."""
+        static, _ = build_system_prompt("nobody@example.com", db_session)
+        low = static.lower()
+        assert "days later" in low
+        assert "historical record, not current fact" in low
+
 
 class TestDeepBlock:
     """The focus ticker's full dossier is no longer embedded in build_system_prompt's

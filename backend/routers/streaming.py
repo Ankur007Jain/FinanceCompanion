@@ -150,6 +150,50 @@ _FLAG_CORRECTION_TOOL = {
 }
 
 
+# Below this, a real gap is worth telling the model about — below it, normal
+# back-and-forth, no annotation (matches iMessage/Slack showing a date divider only
+# when time actually passed, not on every message).
+_GAP_THRESHOLD_SECONDS = 3600
+
+
+def _elapsed_str(prev_dt: datetime, cur_dt: datetime) -> str | None:
+    """Human-readable elapsed time between two timestamps, or None if the gap's under
+    an hour (not worth mentioning). Real production bug this design avoids: computing
+    this relative to "now" instead of two fixed timestamps would make the annotation
+    text on an already-cached historical message change every day going forward,
+    silently breaking that message's cache match (and everything after it in the
+    prefix) forever — see the two call sites below for which case is which."""
+    gap = (cur_dt - prev_dt).total_seconds()
+    if gap < _GAP_THRESHOLD_SECONDS:
+        return None
+    if gap < 86400:
+        return f"{gap / 3600:.1f} hours later"
+    days = round(gap / 86400)
+    unit = "day" if days == 1 else "days"
+    return f"{days} {unit} later, on {cur_dt.date().isoformat()}"
+
+
+def _gap_prefix(prev_dt: datetime, cur_dt: datetime) -> str:
+    s = _elapsed_str(prev_dt, cur_dt)
+    return f"[{s}]\n\n" if s else ""
+
+
+def _build_live_history(history_rows: list, live_rows: list) -> list[dict]:
+    """The messages array for the API call, with elapsed-time markers at real gaps.
+    Every message here (before the newest one gets appended by the caller) ends up
+    inside the cache_control-covered prefix (see stream_message), so each gap is
+    computed from two FIXED, already-recorded timestamps — never "now" — so the
+    annotation text is permanently stable once written, satisfying Anthropic's
+    exact-prefix-match requirement for a cache hit."""
+    offset = len(history_rows) - len(live_rows)
+    result = []
+    for i, m in enumerate(live_rows):
+        prev = live_rows[i - 1] if i > 0 else (history_rows[offset - 1] if offset > 0 else None)
+        gap = _gap_prefix(prev.created_at, m.created_at) if prev else ""
+        result.append({"role": m.role, "content": gap + m.content})
+    return result
+
+
 def _fetch_chat_history(ticker: str, conversation_id: str, user_email: str, db) -> str:
     """Verbatim retrieval, never summarized — the safety valve for the capped live
     window and the mechanism for cross-conversation memory, same tool either way.
@@ -194,7 +238,16 @@ def _fetch_chat_history(ticker: str, conversation_id: str, user_email: str, db) 
         rows = older[-_RETRIEVE_LIMIT:]
         header = "--- Earlier messages from this conversation, no longer in live context ---"
 
-    lines = [header] + [f"[{r.role}]: {r.content}" for r in rows]
+    # Tool-result content, never part of the cached messages prefix (only the live
+    # conversation array in stream_message gets a cache breakpoint) — safe to compute
+    # gaps live, relative to right now, no cache-stability constraint applies here.
+    lines = [header]
+    how_long_ago = _elapsed_str(rows[-1].created_at, datetime.utcnow())
+    if how_long_ago:
+        lines.append(f"(most recent message here was {how_long_ago.replace(' later', ' ago')})")
+    for i, r in enumerate(rows):
+        gap = _gap_prefix(rows[i - 1].created_at, r.created_at) if i > 0 else ""
+        lines.append(f"{gap}[{r.role}]: {r.content}")
     return "\n\n".join(lines)
 
 
@@ -257,7 +310,7 @@ async def stream_message(
     is_first = len(history_rows) == 0
     live_rows = history_rows[-_MAX_LIVE_HISTORY:] if len(history_rows) > _MAX_LIVE_HISTORY else history_rows
 
-    history = [{"role": m.role, "content": m.content} for m in live_rows]
+    history = _build_live_history(history_rows, live_rows)
     if history:
         # Cache breakpoint on the last message that's stable across requests — everything
         # up through here was already sent last turn, so it reads from cache instead of
@@ -269,7 +322,11 @@ async def stream_message(
             "role": last["role"],
             "content": [{"type": "text", "text": last["content"], "cache_control": {"type": "ephemeral"}}],
         }
-    history.append({"role": "user", "content": body.content})
+    # This message was never going to be part of the cached prefix anyway (it's brand
+    # new every request), so unlike every message above, its gap is safe to compute
+    # live against right now rather than a fixed timestamp.
+    new_gap = _gap_prefix(live_rows[-1].created_at, datetime.utcnow()) if live_rows else ""
+    history.append({"role": "user", "content": new_gap + body.content})
 
     # Save user message
     user_msg = Message(
