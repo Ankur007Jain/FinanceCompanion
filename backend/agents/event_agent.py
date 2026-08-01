@@ -21,6 +21,14 @@ def _yf_earnings(ticker: str, prefetched=None) -> Optional[str]:
         cal = prefetched.calendar if prefetched is not None else yf.Ticker(ticker).calendar
         if cal is None:
             return None
+        # yfinance 1.x returns calendar as a plain dict; older versions returned a
+        # DataFrame — handle both so this doesn't silently break on the next bump either.
+        if isinstance(cal, dict):
+            dates = cal.get("Earnings Date")
+            if dates:
+                val = dates[0]
+                return str(val.date()) if hasattr(val, "date") else str(val)
+            return None
         if hasattr(cal, "columns") and "Earnings Date" in cal.columns:
             val = cal["Earnings Date"].iloc[0]
             return str(val.date()) if hasattr(val, "date") else str(val)

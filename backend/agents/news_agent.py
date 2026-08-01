@@ -23,9 +23,16 @@ def _yf_news(ticker: str, yf_data=None) -> list[str]:
         items = (yf_data.news if yf_data is not None else yf.Ticker(ticker).news) or []
         lines = []
         for n in items[:8]:
-            title = n.get("title", "")
-            publisher = n.get("publisher", "")
-            url = n.get("link") or n.get("url") or ""
+            # yfinance nests fields under "content" as of ~1.x; fall back to the old flat
+            # shape so this keeps working across versions without another silent break.
+            content = n.get("content", {}) or {}
+            title = content.get("title") or n.get("title", "")
+            publisher = (content.get("provider") or {}).get("displayName") or n.get("publisher", "")
+            url = (
+                (content.get("canonicalUrl") or {}).get("url")
+                or (content.get("clickThroughUrl") or {}).get("url")
+                or n.get("link") or n.get("url") or ""
+            )
             if url:
                 lines.append(f"{title} [{publisher}] — {url}")
             else:
