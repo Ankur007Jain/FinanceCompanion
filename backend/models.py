@@ -128,7 +128,8 @@ class StockAnalysis(Base):
     stop_loss = Column(Float)
     hold_period = Column(String)  # e.g. "3-5 days", "2-4 weeks", "1-3 months"
     reasoning = Column(Text)
-    conviction_score = Column(Integer)   # 0-100, strength of the setup
+    conviction_score = Column(Integer)   # 0-100, calibrated (blended with signal_convergence_score)
+    conviction_score_raw = Column(Integer)  # 0-100, LLM's uncalibrated narrative conviction
     risk_level = Column(String)          # LOW / MED / HIGH
     confidence = Column(String)          # High / Medium / Low
     bull_case = Column(Text)

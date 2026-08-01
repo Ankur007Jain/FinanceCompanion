@@ -10,6 +10,7 @@ from models import StockAnalysis, MarketDataCache
 from schemas import NightlyJobRequest, IngestAnalysisRequest, IngestSnapshotRequest, IngestCorrelationsRequest
 from services.nightly_runner import run_nightly_analysis
 from services.stock_memory import maybe_update_stock_memory
+from services.conviction import calibrate_conviction
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -144,7 +145,8 @@ def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTas
         "stop_loss": body.stop_loss,
         "hold_period": body.hold_period,
         "reasoning": body.reasoning,
-        "conviction_score": body.conviction_score,
+        "conviction_score": calibrate_conviction(body.conviction_score, body.signal_convergence_score, max_convergence=10),
+        "conviction_score_raw": body.conviction_score,
         "risk_level": body.risk_level,
         "confidence": body.confidence,
         "bull_case": body.bull_case,

@@ -339,6 +339,7 @@ class IngestAnalysisRequest(BaseModel):
     hold_period: Optional[str] = None
     reasoning: Optional[str] = None
     conviction_score: Optional[int] = None
+    conviction_score_raw: Optional[int] = None
     risk_level: Optional[str] = None
     confidence: Optional[str] = None
     bull_case: Optional[str] = None
