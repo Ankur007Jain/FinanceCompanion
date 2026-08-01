@@ -103,7 +103,8 @@ Nightly (Railway Cron → POST /jobs/nightly):
 | entry_target / exit_target / stop_loss | FLOAT | |
 | hold_period | VARCHAR | e.g. "2-4 weeks" |
 | reasoning | TEXT | 2–3 sentence plain-English |
-| conviction_score | INTEGER | 0–100 |
+| conviction_score | INTEGER | 0–100, calibrated (blended with signal_convergence_score — see below) |
+| conviction_score_raw | INTEGER | 0–100, the Verdict Agent's uncalibrated narrative conviction, preserved for audit |
 | risk_level | VARCHAR | LOW/MED/HIGH |
 | confidence | VARCHAR | High/Medium/Low |
 | bull_case / bear_case / thesis_invalidation | TEXT | one sentence each |
@@ -114,7 +115,7 @@ Nightly (Railway Cron → POST /jobs/nightly):
 | scenario_bull/base/bear_pct | FLOAT | expected % return |
 | scenario_bull/base/bear_prob | INTEGER | probability (three sum to 100) |
 | dont_panic_note | TEXT | populated when price dropped >15% since last BUY |
-| signal_convergence_score | INTEGER | 0–7 independent signals |
+| signal_convergence_score | INTEGER | 0–10 independent signals, computed deterministically before the LLM runs |
 | convergence_details | TEXT | JSON dict of which signals fired |
 | news_summary | TEXT | Haiku 3–4 sentence summary |
 | events_json | TEXT | JSON list of upcoming events |
@@ -352,6 +353,24 @@ For price data (yfinance vs Finnhub):
 
 Same pattern for analyst consensus and earnings dates.
 
+### yfinance Version Notes
+
+Pinned to `yfinance==1.5.2` (bumped from `0.2.51` — see issue #99: the old version was
+dozens of releases behind, and Yahoo's tightened bot detection made `history(period="1y")`
+silently return empty, driving `rsi` to NULL on the majority of nightly runs while
+`.info`-derived fields like `ma_50`/`ma_200` stayed fine, since that hits a different
+Yahoo endpoint). yfinance's major-version bump changed two response shapes worth knowing
+about before touching these agents again:
+- **`Ticker.news`** — items now nest fields under `item["content"]` (`content.title`,
+  `content.provider.displayName`, `content.canonicalUrl.url`) instead of flat top-level
+  keys. `news_agent.py::_yf_news` checks the nested shape first, falls back to the old
+  flat keys.
+- **`Ticker.calendar`** — returns a plain `dict` (`cal.get("Earnings Date")`) instead of
+  a pandas `DataFrame`. `event_agent.py::_yf_earnings` handles both shapes.
+- `scripts/nightly_fetch.py` (the production GHA path) already treated `calendar` as a
+  dict before this fix — only the local/manual `event_agent.py` path had the stale
+  DataFrame assumption.
+
 ---
 
 ## Important Day Flagging
@@ -368,19 +387,41 @@ Verdict Agent sets `is_important_day: true` when any of the following apply:
 
 ## Signal Convergence Score
 
-Computed deterministically before the Verdict Agent call — 7 independent signals:
+Computed deterministically **before** the Verdict Agent call — 10 independent signals, never
+self-reported by the LLM:
 
 | Signal | Condition |
 |--------|-----------|
-| `oversold_rsi` | RSI < 42 |
-| `near_52w_low` | Range position < 35% |
-| `analyst_upside_15pct` | Analyst upside > 15% |
-| `no_binary_risk` | Days to earnings > 21 |
+| `oversold_rsi` | RSI < 50 |
+| `near_52w_low` | Range position < 30% |
+| `analyst_upside_15pct` | Analyst upside ≥ 15% |
+| `no_binary_risk` | Earnings unknown or > 7 days away |
 | `positive_fcf` | Free cash flow > 0 |
-| `institutional_backing` | Institutional ownership > 40% |
-| `price_stabilizing` | Current price > MA200 × 0.90 |
+| `institutional_backing` | Institutional ownership ≥ 50% |
+| `price_stabilizing` | Current price ≥ MA50 (or MA50 unknown) |
+| `near_support` | Current price ≤ 20d support × 1.03 |
+| `sector_outperforming` | Relative strength vs. sector ETF > 0 today |
+| `sp500_tailwind` | S&P 500 up today |
 
 **Conviction floor rule: score < 5 → verdict MUST be WATCH.** This is enforced in the prompt — the agent cannot override it.
+
+- **Local/manual path** (`backend/services/nightly_runner.py::_compute_signal_convergence`) — computes a 7-signal subset (the first 7 above) directly from ORM objects, before calling `generate_verdict()`.
+- **Production path** (GHA `nightly.yml`) — `scripts/compute_signal_convergence.py TICKER` computes the full 10-signal score from `/tmp/summary_TICKER.json` (written by Step 1) and writes `/tmp/convergence_TICKER.json`, which Step 3a's prompt reads as fixed, read-only context. **Until this fix, production had the LLM self-report this score in the same JSON response as `conviction_score` — which meant it could inflate both together and the score couldn't act as an independent check.** This was the root cause of the conviction-inversion bug found in the weekly scorecard (issue #100, PR #104): 70+ conviction BUYs underperformed 50-69 conviction BUYs.
+
+### Conviction Calibration
+
+`backend/services/conviction.py::calibrate_conviction(raw_conviction, convergence_score, max_convergence)`
+blends the LLM's narrative conviction with the deterministic signal score (50/50 weight,
+tunable) into the `conviction_score` column everyone reads downstream:
+
+```python
+signal_component = (convergence_score / max_convergence) * 100
+conviction_score = round(0.5 * raw_conviction + 0.5 * signal_component)
+```
+
+Applied identically at both ingestion choke points — `POST /jobs/ingest-analysis`
+(production) and `nightly_runner.py` (local) — so the formula can't drift between them.
+The LLM's original, uncalibrated number is preserved in `conviction_score_raw` for audit.
 
 ---
 

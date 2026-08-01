@@ -89,6 +89,24 @@ The most important missing piece. Right now the Verdict Agent can issue BUY when
 
 New DB field: `signal_convergence_score` (Integer 0–7), `convergence_details` (JSON — which signals fired)
 
+> **Implementation update (PR #104, 2026-08):** what shipped to production diverged from the
+> proposal above in two ways, both worth knowing if you're reading this to understand current
+> behavior rather than original intent:
+> - **10 signals, not 7** — production (`nightly.yml`) always specified 10 (adds `near_support`,
+>   `sector_outperforming`, `sp500_tailwind`; some thresholds also shifted, e.g. RSI < 50 not
+>   < 42, institutional ownership ≥ 50% not > 40%). The local/manual path
+>   (`nightly_runner.py`) still uses the original 7. See `TECHNICAL.md`'s Signal Convergence
+>   Score section for the exact current thresholds on both paths.
+> - **The score itself was being self-reported by the LLM in production**, not computed
+>   deterministically as this doc originally intended — the same model writing
+>   `conviction_score` was also grading its own convergence flags, so it couldn't act as an
+>   independent check. This was the root cause of a conviction-inversion bug found in the
+>   weekly scorecard (issue #100): 70+ conviction BUYs underperformed 50-69 conviction BUYs.
+>   Fixed by `scripts/compute_signal_convergence.py`, which now computes it in plain Python
+>   before the LLM ever runs, and `backend/services/conviction.py::calibrate_conviction()`,
+>   which blends it with the LLM's raw conviction (50/50) into the final `conviction_score`.
+>   The LLM's original number is kept in `conviction_score_raw` for audit.
+
 ---
 
 ### 2. The "All Clear" Message — Silence Is Not an Answer
