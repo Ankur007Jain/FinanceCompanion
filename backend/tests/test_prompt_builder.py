@@ -47,6 +47,18 @@ class TestCommitteeLens:
         assert "THINGS TO REMEMBER ABOUT THIS USER" in static
         assert "not a guess" in static.lower() or "not assuming" in static.lower()
 
+    def test_static_prompt_requires_checking_user_reported_realtime_data(self, db_session):
+        """Real production incident: a user pasted intraday TMUS prices mid-chat that
+        contradicted tonight's dossier close, and the model built confident directional
+        analysis ("-8.8%", "confirms the exact bear scenario") straight on top of her
+        numbers with no verification and no disclosure it hadn't checked them."""
+        static, _ = build_system_prompt("nobody@example.com", db_session)
+        low = static.lower()
+        assert "conflicts with tonight's dossier" in low
+        assert "not something you've confirmed" in low
+        # And it must not turn into disclaimer bloat — same brevity rule as everywhere else.
+        assert "no fluff" in low
+
 
 class TestDeepBlock:
     """The focus ticker's full dossier is no longer embedded in build_system_prompt's
