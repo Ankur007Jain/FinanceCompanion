@@ -74,6 +74,21 @@ def _yf_analyst(ticker: str, prefetched=None) -> dict:
         }
         consensus = label_map.get(rec, "N/A")
 
+        # info["freeCashflow"] is frequently stale/wrong (confirmed against MSFT: info
+        # said $16.4B, the real cash flow statement said $67.0B) — prefer the prefetched,
+        # statement-derived value; fall back to a direct fetch, then to info as a last resort.
+        free_cashflow = None
+        if prefetched is not None:
+            free_cashflow = (prefetched.cashflow or {}).get("free_cash_flow")
+        else:
+            try:
+                from agents.yf_fetcher import _extract_cashflow
+                free_cashflow = (_extract_cashflow(yf.Ticker(ticker).cashflow) or {}).get("free_cash_flow")
+            except Exception:
+                free_cashflow = None
+        if free_cashflow is None:
+            free_cashflow = _safe_float(info, "freeCashflow")
+
         # Fundamentals — extracted from the same info dict we already fetched
         fundamentals = {
             "pe_trailing": _safe_float(info, "trailingPE"),
@@ -82,7 +97,7 @@ def _yf_analyst(ticker: str, prefetched=None) -> dict:
             "earnings_growth": _safe_float(info, "earningsGrowth"),
             "profit_margin": _safe_float(info, "profitMargins"),
             "debt_to_equity": _safe_float(info, "debtToEquity"),
-            "free_cashflow": _safe_float(info, "freeCashflow"),
+            "free_cashflow": free_cashflow,
             "return_on_equity": _safe_float(info, "returnOnEquity"),
             "beta": _safe_float(info, "beta"),
             "short_float_pct": _safe_float(info, "shortPercentOfFloat"),

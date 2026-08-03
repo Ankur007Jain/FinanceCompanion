@@ -17,6 +17,33 @@ try:
 except Exception:
     calendar = {}
 
+
+def _extract_free_cashflow(cf):
+    """info["freeCashflow"] is frequently stale/wrong (confirmed against MSFT: info
+    said $16.4B, the real cash flow statement said $67.0B) — pull it from the real
+    cash flow statement instead. Most recent annual column only."""
+    if cf is None or cf.empty:
+        return None
+    try:
+        if "Free Cash Flow" in cf.index:
+            val = cf.loc["Free Cash Flow"].iloc[0]
+            if val == val:  # NaN check without importing pandas/numpy here
+                return float(val)
+        if "Operating Cash Flow" in cf.index and "Capital Expenditure" in cf.index:
+            ocf = cf.loc["Operating Cash Flow"].iloc[0]
+            capex = cf.loc["Capital Expenditure"].iloc[0]
+            if ocf == ocf and capex == capex:
+                return float(ocf + capex)  # capex is already negative
+    except Exception:
+        pass
+    return None
+
+
+try:
+    cashflow_free = _extract_free_cashflow(t.cashflow)
+except Exception:
+    cashflow_free = None
+
 price = fi.last_price or info.get("currentPrice", 0) or 0
 prev  = fi.previous_close or info.get("previousClose", price) or price
 chg   = ((price - prev) / prev * 100) if prev else 0
@@ -41,7 +68,8 @@ ups = ((tgt - price) / price * 100) if tgt and price else None
 pe_trailing, pe_forward = info.get("trailingPE"), info.get("forwardPE")
 revenue_growth, earnings_growth = info.get("revenueGrowth"), info.get("earningsGrowth")
 profit_margin, return_on_equity = info.get("profitMargins"), info.get("returnOnEquity")
-debt_to_equity, free_cashflow = info.get("debtToEquity"), info.get("freeCashflow")
+debt_to_equity = info.get("debtToEquity")
+free_cashflow = cashflow_free if cashflow_free is not None else info.get("freeCashflow")
 beta = info.get("beta")
 short_float_pct, short_ratio = info.get("shortPercentOfFloat"), info.get("shortRatio")
 inst_ownership_pct = info.get("heldPercentInstitutions")

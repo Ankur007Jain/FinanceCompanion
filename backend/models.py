@@ -48,6 +48,7 @@ class MarketDataCache(Base):
     history_json = Column(Text)     # 1-year daily OHLCV as JSON
     news_json = Column(Text)        # raw news list
     calendar_json = Column(Text)    # earnings calendar
+    cashflow_json = Column(Text)    # extracted free/operating cash flow, most recent annual period
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
