@@ -454,6 +454,38 @@ def data_quality(x_admin_secret: str = "", days: int = 7, db: Session = Depends(
     }
 
 
+@router.get("/admin/chat-quality-sample")
+def chat_quality_sample(x_admin_secret: str = "", days: int = 1, limit: int = 150, db: Session = Depends(get_db)):
+    """Feeds the daily Chat Quality Sentinel — a recent sample of chatbot messages for
+    the agent to spot-check (hallucinated numbers, off-topic/unhelpful answers).
+    Deliberately excludes user_email — this is a quality-review pass, not a per-user
+    audit, and there's no legitimate reason for it to know who said what."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    from datetime import datetime, timedelta
+    from models import Conversation, Message
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    rows = (
+        db.query(Message, Conversation.ticker)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .filter(Message.created_at >= cutoff)
+        .order_by(Message.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+    return {"messages": [
+        {
+            "ticker": ticker,
+            "role": msg.role,
+            "content": msg.content,
+            "model_used": msg.model_used,
+            "created_at": msg.created_at.isoformat(),
+        }
+        for msg, ticker in rows
+    ]}
+
+
 @router.post("/admin/memories/{ticker}/lesson")
 def append_memory_lesson(ticker: str, body: dict, x_admin_secret: str = "", db: Session = Depends(get_db)):
     """Scorecard agent feeds systematic verdict failures back into stock memory so
