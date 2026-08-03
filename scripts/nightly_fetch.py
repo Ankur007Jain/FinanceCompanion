@@ -3,13 +3,27 @@ Nightly pipeline — Step 1: fetch market data for one ticker.
 Usage: python3 scripts/nightly_fetch.py TICKER
 Prints the analysis summary JSON and writes /tmp/summary_{ticker}.json + /tmp/raw_{ticker}.json.
 """
-import sys, json
+import sys, json, os
+import requests
 import yfinance as yf
+from price_series_client import fetch_series
+
+_BACKEND = os.environ["BACKEND_URL"]
+_JOB_SECRET = os.environ["JOB_SECRET"]
+
+
+def _fetch_series(symbol: str):
+    # Backed by the price_history cache (backfilled once per symbol, then only appended
+    # to nightly) instead of pulling 5 years fresh from yfinance every run. Shared symbols
+    # (S&P 500, sector ETFs) sync once per night regardless of batch size, since whichever
+    # ticker-script asks first populates the cache for the rest.
+    return fetch_series(symbol, _BACKEND, _JOB_SECRET)
+
 
 ticker = sys.argv[1]
 t = yf.Ticker(ticker)
 info = t.info or {}
-hist = t.history(period="5y")  # covers 1y and 5y trend context from one fetch
+hist = _fetch_series(ticker)  # covers 1y and 5y trend context from one call
 fi = t.fast_info
 raw_news = t.news or []
 try:
@@ -113,14 +127,14 @@ SECTOR_ETF_MAP = {
 sector_etf_ticker = "SOXX" if "semiconductor" in industry.lower() else SECTOR_ETF_MAP.get(sector, "SPY")
 
 try:
-    sp5 = yf.Ticker("^GSPC").history(period="5y")  # covers daily + 5y change below
+    sp5 = _fetch_series("^GSPC")  # covers daily + 5y change below
     sp500_day_chg = round(((float(sp5["Close"].iloc[-1]) - float(sp5["Close"].iloc[-2])) / float(sp5["Close"].iloc[-2])) * 100, 2)
     sp500_5y_change = round(((float(sp5["Close"].iloc[-1]) - float(sp5["Close"].iloc[0])) / float(sp5["Close"].iloc[0])) * 100, 1)
 except Exception:
     sp500_day_chg = sp500_5y_change = None
 
 try:
-    sect = yf.Ticker(sector_etf_ticker).history(period="25d")
+    sect = _fetch_series(sector_etf_ticker)  # last 2 rows are all that's used below — same as the old 25d pull
     sector_day_chg = round(((float(sect["Close"].iloc[-1]) - float(sect["Close"].iloc[-2])) / float(sect["Close"].iloc[-2])) * 100, 2)
     relative_strength_1d = round(chg - sector_day_chg, 2)
 except Exception:
@@ -138,9 +152,6 @@ except Exception:
     stock_5y_change = None
 
 # Finnhub cross-validation — price & analyst (secondary source)
-import os
-import requests
-
 fh_price = fh_analyst = data_conflicts_str = None
 fh_key = os.environ.get("FINNHUB_API_KEY", "")
 if fh_key and fh_key not in ("placeholder", "test-key", ""):

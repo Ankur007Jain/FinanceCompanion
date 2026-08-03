@@ -52,6 +52,23 @@ class MarketDataCache(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class PriceHistory(Base):
+    """Accumulating daily OHLCV bars, backfilled once per symbol then appended to nightly —
+    replaces the old pattern of re-pulling a full multi-year yfinance history every night.
+    symbol is a ticker, an index ("^GSPC"), or a sector ETF (XLK, SOXX, ...) — same table for all three,
+    so ^GSPC/sector-ETF rows sync once per night regardless of how many tickers reference them."""
+    __tablename__ = "price_history"
+    symbol = Column(String, primary_key=True)
+    date = Column(Date, primary_key=True)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    volume = Column(BigInteger)
+    stock_split = Column(Float, default=0.0)  # yfinance's "Stock Splits" value for this day; nonzero = split occurred
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class StockAnalysis(Base):
     """Nightly analysis result — global per ticker, not per user."""
     __tablename__ = "stock_analyses"

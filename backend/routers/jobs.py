@@ -11,6 +11,7 @@ from schemas import NightlyJobRequest, IngestAnalysisRequest, IngestSnapshotRequ
 from services.nightly_runner import run_nightly_analysis
 from services.stock_memory import maybe_update_stock_memory
 from services.conviction import calibrate_conviction
+from services.price_history_sync import sync_and_get_bars
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
@@ -18,6 +19,18 @@ router = APIRouter(prefix="/jobs", tags=["jobs"])
 # https://ai.google.dev/gemini-api/docs/pricing before relying on this for real budgeting.
 _GEMINI_FLASH_PRICE_IN = 0.30   # per 1M input tokens
 _GEMINI_FLASH_PRICE_OUT = 2.50  # per 1M output tokens
+
+
+@router.post("/price-series")
+def get_price_series(ticker: str, x_job_secret: str = "", db: Session = Depends(get_db)):
+    """Backfills/incrementally syncs `ticker`'s daily OHLCV into price_history, then
+    returns the stored bars. `ticker` can be a stock ticker, an index ("^GSPC"), or a
+    sector ETF — callers sharing a symbol (e.g. every tech-stock script requesting XLK
+    in the same nightly batch) get a cache hit once the first one has synced it today."""
+    if x_job_secret != os.getenv("JOB_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid job secret.")
+    bars = sync_and_get_bars(ticker, db)
+    return {"symbol": ticker, "bars": bars}
 
 
 @router.post("/nightly")
