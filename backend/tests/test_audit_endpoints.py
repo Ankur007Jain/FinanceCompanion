@@ -1,13 +1,15 @@
 """
 Tests for the audit-agent endpoints: verdict-history (Scorecard), data-quality
-(Sentinel), and memory lesson append (Scorecard → memory feedback loop).
+(Sentinel), chat-quality-sample (Chat Quality Sentinel), and memory lesson append
+(Scorecard → memory feedback loop).
 """
+import json
 import os
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 
-from models import StockAnalysis, StockMemory, WatchlistItem
+from models import Conversation, Message, StockAnalysis, StockMemory, WatchlistItem
 
 ADMIN_SECRET = "test-admin-secret"
 
@@ -71,6 +73,58 @@ class TestDataQuality:
         assert day["rows"] >= 2
         assert 0 < day["null_pct"]["pe_trailing"] < 100
         assert "DQTC" in body["missing_in_latest"]
+
+
+class TestChatQualitySample:
+    def _seed_message(self, db, ticker, role, content, model_used="claude-sonnet-5"):
+        conv = Conversation(user_email="chat@example.com", ticker=ticker)
+        db.add(conv)
+        db.commit()
+        msg = Message(conversation_id=conv.id, role=role, content=content, model_used=model_used)
+        db.add(msg)
+        db.commit()
+        return msg
+
+    def test_rejects_bad_secret(self, client: TestClient):
+        os.environ["ADMIN_SECRET"] = ADMIN_SECRET
+        r = client.get("/jobs/admin/chat-quality-sample", params={"x_admin_secret": "nope"})
+        assert r.status_code == 401
+
+    def test_returns_message_with_ticker_and_no_user_identifier(self, client: TestClient, db_session):
+        os.environ["ADMIN_SECRET"] = ADMIN_SECRET
+        self._seed_message(db_session, "CQTA", "assistant", "NVDA's RSI is 62.")
+
+        r = client.get("/jobs/admin/chat-quality-sample", params={"x_admin_secret": ADMIN_SECRET})
+
+        assert r.status_code == 200
+        body = r.json()
+        row = next(m for m in body["messages"] if m["content"] == "NVDA's RSI is 62.")
+        assert row["ticker"] == "CQTA"
+        assert row["role"] == "assistant"
+        assert row["model_used"] == "claude-sonnet-5"
+        # Privacy: this is a quality-review sample, never a per-user audit — no user
+        # identifier should ever appear in the response.
+        assert "user_email" not in row
+        assert "chat@example.com" not in json.dumps(body)
+
+    def test_old_messages_excluded_by_days_window(self, client: TestClient, db_session):
+        os.environ["ADMIN_SECRET"] = ADMIN_SECRET
+        old = self._seed_message(db_session, "CQTB", "assistant", "Old message outside window.")
+        old.created_at = datetime.utcnow() - timedelta(days=5)
+        db_session.commit()
+
+        r = client.get("/jobs/admin/chat-quality-sample", params={"x_admin_secret": ADMIN_SECRET, "days": 1})
+
+        assert all(m["content"] != "Old message outside window." for m in r.json()["messages"])
+
+    def test_limit_caps_returned_messages(self, client: TestClient, db_session):
+        os.environ["ADMIN_SECRET"] = ADMIN_SECRET
+        for i in range(5):
+            self._seed_message(db_session, "CQTC", "assistant", f"Message {i}")
+
+        r = client.get("/jobs/admin/chat-quality-sample", params={"x_admin_secret": ADMIN_SECRET, "limit": 2})
+
+        assert len(r.json()["messages"]) <= 2
 
 
 class TestMemoryLesson:

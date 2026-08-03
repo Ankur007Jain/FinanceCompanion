@@ -1,0 +1,99 @@
+name: Production Fix Agent
+
+# Triggered when one of the standing sentinels (Data Quality, Verdict Scorecard, Chat
+# Quality) files an issue. Investigates root cause and either opens a PR against main
+# (never merges it — a human gates the merge, same as every other workflow in this repo)
+# or, if it can't confidently pin down a scoped fix, posts its diagnosis as a comment
+# and stops rather than guessing. Only acts on the three sentinel labels — never on a
+# human-filed issue, so it can't wander into "fixing" an unrelated feature request.
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: write   # pushes a new fix branch
+  issues: write
+  pull-requests: write
+  id-token: write   # claude-code-action exchanges an OIDC token for its GitHub credentials
+
+jobs:
+  investigate-and-fix:
+    name: "Investigate and fix production issue"
+    # The three sentinel labels are only ever meant to be applied by the sentinel
+    # workflows themselves (github-actions[bot], via GH_TOKEN) — this agent has Bash/
+    # Edit/Write tool access and pull-requests:write, and the issue title/body get
+    # interpolated directly into its prompt, so it must never act on a label a human
+    # applied manually (even by accident) to an arbitrary issue.
+    if: contains(fromJson('["data-quality", "scorecard", "chat-quality"]'), github.event.label.name) && github.event.sender.login == 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    environment: Production
+    env:
+      DATABASE_URL: sqlite:///./test.db
+      GOOGLE_CLIENT_ID: test-client-id
+      FINNHUB_API_KEY: test-key
+      JOB_SECRET: test-job-secret
+      ADMIN_SECRET: test-admin-secret
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r backend/requirements.txt
+
+      - name: Investigate and fix
+        uses: anthropics/claude-code-action@beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+        with:
+          mode: agent
+          model: claude-sonnet-5
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_tools: "Bash,Read,Write,Edit,Glob,Grep,LS"
+          direct_prompt: |
+            You are FinanceCompanion's Production Fix Agent. A sentinel workflow just
+            filed issue #${{ github.event.issue.number }} (label: ${{ github.event.label.name }}):
+
+            Title: ${{ github.event.issue.title }}
+            Body:
+            ${{ github.event.issue.body }}
+
+            ## Step 1 — Investigate read-only first
+            Do not edit anything yet. Find the actual root cause: read the relevant
+            script/router/service the issue points at, check `git log` for recent related
+            commits, and confirm the failure mode before touching any code. Wrong advice is
+            worse than no advice here — the same standard this app already holds its
+            verdict agent to applies to you.
+
+            ## Step 2 — Confidence gate
+            Decide: can you identify a specific, scoped root cause with a fix you're
+            confident in?
+
+            **If NO** (unclear cause, or the fix would be broad/risky — touches auth,
+            payment-adjacent code, or the verdict-generation prompt logic itself):
+            ```bash
+            gh issue comment ${{ github.event.issue.number }} --body "<your diagnosis: what you found, what you're unsure about, and what a human should check next>"
+            gh label create needs-human --color FBCA04 --description "Needs human judgment, not auto-fixed" 2>/dev/null || true
+            gh issue edit ${{ github.event.issue.number }} --add-label needs-human
+            ```
+            Then stop. A clear diagnosis without a guessed fix is still real time saved —
+            do not force a fix you are not sure of.
+
+            **If YES**:
+            1. `git checkout -b fix/prod-issue-${{ github.event.issue.number }}`
+            2. Implement the fix. Edit source files only — do not weaken or delete a test
+               to make it pass.
+            3. Run the relevant tests, and the full suite before finishing:
+               `cd backend && pytest tests/ -v --tb=short 2>&1 | tail -30`
+            4. `git add` the changed files, commit with a message describing the fix and
+               referencing the issue (e.g. "fix: <description> (fixes #${{ github.event.issue.number }})").
+            5. `git push -u origin fix/prod-issue-${{ github.event.issue.number }}`
+            6. `gh pr create --title "<specific>" --body "Fixes #${{ github.event.issue.number }}. <what was wrong, what changed, how it was verified>"`
+            7. `gh issue comment ${{ github.event.issue.number }} --body "Opened <PR URL> — awaiting review, not merged automatically."`
+
+            **Never run `gh pr merge`.** This agent opens PRs for a human to review and
+            merge — it does not merge its own changes, no matter how confident it is.

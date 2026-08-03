@@ -1,0 +1,83 @@
+name: Chat Quality Sentinel
+
+on:
+  schedule:
+    - cron: "0 10 * * *"   # daily 10:00 UTC — after Data Quality Sentinel (9:00 UTC weekdays)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+  id-token: write   # claude-code-action exchanges an OIDC token for its GitHub credentials
+
+jobs:
+  sentinel:
+    name: "Daily chat quality check"
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check chat quality
+        uses: anthropics/claude-code-action@beta
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          GH_TOKEN: ${{ github.token }}
+        with:
+          mode: agent
+          model: claude-sonnet-5
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_tools: "Bash,Read,Write,Glob,Grep,LS"
+          direct_prompt: |
+            You are FinanceCompanion's Chat Quality Sentinel. Today is $(date +%Y-%m-%d).
+            Your job: catch real chatbot quality problems — hallucinated numbers and
+            genuinely broken/unhelpful answers — without being alarmist about normal
+            conversational variance.
+
+            ## Step 1 — Fetch stats + raw sample (deterministic)
+            ```bash
+            python3 scripts/chat_quality_stats.py
+            ```
+            Prints aggregate stats (message volume, empty-response count, model usage,
+            avg response length) and writes the raw message sample to
+            /tmp/chat_quality_sample.json — read that file directly for Step 2, it is not
+            printed to stdout because it can be large. Each message has: ticker, role,
+            content, model_used, created_at. No user identifiers are included by design —
+            do not attempt to identify or address individual users in your report.
+
+            ## Step 2 — Spot-check ~15-20 assistant messages for real problems
+            For each ticker mentioned, any specific price, percentage, or date the
+            assistant stated should trace back to real data. Cross-check a sample against
+            actual analysis data:
+            ```bash
+            curl -s "$BACKEND_URL/jobs/admin/verdict-history?x_admin_secret=$ADMIN_SECRET&days=7" | head -c 3000
+            ```
+            Flag a message only if a stated number clearly does not match any real recent
+            value for that ticker (not just "seems off" — confirm it against the data).
+            Also flag: empty/error responses, answers unrelated to the user's apparent
+            question, or repeated identical canned responses suggesting a broken tool call.
+            Do NOT flag: terse-but-correct answers, appropriate refusals ("I don't have
+            data on that"), or normal variance in response length/style.
+
+            ## Step 3 — Report ONLY if something is wrong
+            First dedupe against open issues:
+            ```bash
+            gh issue list --label chat-quality --state open
+            ```
+            If an open issue already covers the same pattern, comment on it with today's
+            findings instead of filing a duplicate. Otherwise:
+            ```bash
+            gh label create chat-quality --color 0E8A16 --description "Chatbot response quality issue" 2>/dev/null || true
+            gh issue create --label chat-quality --title "<specific: 'Chatbot stated wrong RSI for NVDA in N conversations'>" --body "<markdown>"
+            ```
+            Body: the specific bad example(s) with the mismatched number vs the real
+            value, how many occurrences, and — if you can tell from the code — the likely
+            cause (e.g. a tool-calling bug in routers/streaming.py) and which file to check.
+
+            If everything is healthy, print a one-line all-clear and exit — do NOT create
+            an issue to say things are fine.
