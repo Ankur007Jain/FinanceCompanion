@@ -207,10 +207,16 @@ def _migrate_db():
                     history_json TEXT,
                     news_json TEXT,
                     calendar_json TEXT,
+                    cashflow_json TEXT,
                     created_at TIMESTAMP,
                     PRIMARY KEY (ticker, cache_date)
                 )
             """))
+            conn.commit()
+        else:
+            mdc_cols = {c["name"] for c in inspector.get_columns("market_data_cache")}
+            if "cashflow_json" not in mdc_cols:
+                conn.execute(text("ALTER TABLE market_data_cache ADD COLUMN cashflow_json TEXT"))  # nosemgrep
             conn.commit()
 
         is_pg = str(engine.url).startswith("postgresql")
