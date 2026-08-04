@@ -243,7 +243,9 @@ class TestPromptCaching:
         # No learnings saved for this user -> the 3rd block is conditionally absent
         assert len(system) == 2
         assert system[0]["cache_control"] == {"type": "ephemeral"}
-        assert system[1]["cache_control"] == {"type": "ephemeral"}
+        # dynamic_context: 1h TTL — it's the largest block and only changes with the
+        # underlying data, so there's no reason to let it cold-write on a 5-min gap.
+        assert system[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
 
     def test_learnings_are_merged_into_the_static_block(self, client: TestClient, db_session):
         """Learnings used to be their own breakpoint; merged into the static block to
@@ -263,7 +265,8 @@ class TestPromptCaching:
         assert r.status_code == 200
         system = mock_client.messages.stream.call_args.kwargs["system"]
         assert len(system) == 2
-        assert all(block["cache_control"] == {"type": "ephemeral"} for block in system)
+        assert system[0]["cache_control"] == {"type": "ephemeral"}
+        assert system[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
         assert "THINGS TO REMEMBER ABOUT THIS USER" in system[0]["text"]
         assert "Keeps answers short." in system[0]["text"]
         # Not duplicated into the dynamic_context block
@@ -296,7 +299,10 @@ class TestMessageHistoryCaching:
         # prefix boundary — must carry the breakpoint, converted to content-block form.
         second_to_last = messages[-2]
         assert isinstance(second_to_last["content"], list)
-        assert second_to_last["content"][0]["cache_control"] == {"type": "ephemeral"}
+        # 1h TTL — an active conversation with gaps under an hour now stays on one
+        # write for its whole lifetime instead of re-writing the growing history
+        # every time a gap exceeds the old 5-minute default.
+        assert second_to_last["content"][0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
         assert second_to_last["content"][0]["text"] == "First reply."
 
     def test_first_message_in_conversation_has_no_history_to_cache(self, client: TestClient):
