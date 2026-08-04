@@ -19,18 +19,16 @@
 │  PostgreSQL (Railway)                                        │
 └─────────────────────────────────────────────────────────────┘
 
-Nightly (Railway Cron → POST /jobs/nightly):
-  For each ticker (all in parallel):
-    Price Agent  ─┐
-    News Agent   ─┤── asyncio.gather ──► Ripple Agent (Haiku)
-    Event Agent  ─┤
-    Analyst Agent─┘
+Nightly (GitHub Actions "Nightly Stock Analysis", 4x/weekday):
+  For each batch of 5 tickers (parallel GHA jobs; already-analyzed tickers skipped):
+    scripts/nightly_fetch.py  ← yfinance + Finnhub, per ticker
           ↓
-    _build_performance_retrospective()   ← factual, no LLM
+    Verdict A: Claude Sonnet (reasoning runs inside the GHA agent itself)
+    Verdict B: Gemini (scripts/nightly_verdict_b.py)
           ↓
-    Verdict Agent (Sonnet) ← receives all above + retrospective + StockMemory
+    Judge — reconciles A vs B into final_verdict + verdict_agreement
           ↓
-    persist StockAnalysis (with token cost)
+    POST /jobs/ingest-analysis  ← persists StockAnalysis
           ↓
     maybe_update_stock_memory() (Haiku, fire-and-forget)
 ```
@@ -228,8 +226,9 @@ Standard chatbot schema with token tracking per message (`input_tokens`, `output
 ### Jobs (protected by JOB_SECRET)
 | Method | Path | Notes |
 |--------|------|-------|
-| POST | `/jobs/nightly` | Trigger nightly analysis |
+| POST | `/jobs/ingest-analysis` | Called by the GHA nightly workflow to persist a finished verdict |
 | GET | `/jobs/admin/tickers` | All watchlisted tickers (used by nightly GHA workflow) |
+| GET | `/jobs/admin/analyzed-today` | Already-analyzed tickers today (used by nightly GHA workflow to skip) |
 
 ---
 
@@ -460,7 +459,9 @@ The LLM's original, uncalibrated number is preserved in `conviction_score_raw` f
 ### Railway (Backend)
 - Python 3.12 service: `uvicorn main:app --host 0.0.0.0 --port 8001`
 - PostgreSQL plugin attached
-- Cron: `POST /jobs/nightly` at 11 PM ET (`0 4 * * * UTC`)
+- No Railway-level cron — the nightly pipeline is scheduled entirely by the GitHub
+  Actions "Nightly Stock Analysis" workflow (`0 4,9,14,19 * * 1-5` UTC), which posts
+  results to `/jobs/ingest-analysis`
 - Env vars: `GOOGLE_CLIENT_ID`, `ANTHROPIC_API_KEY`, `FINNHUB_API_KEY`, `DATABASE_URL`, `FRONTEND_URL`, `JOB_SECRET`, `ADMIN_SECRET`
 
 ### DB Migrations

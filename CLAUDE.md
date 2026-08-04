@@ -69,10 +69,11 @@ cp .env.local.example .env.local   # fill in your keys
 npm install
 npm run dev -- --port 3000
 
-# Trigger nightly analysis manually (test with NFLX)
-curl -X POST http://localhost:8001/jobs/nightly \
-  -H "Content-Type: application/json" \
-  -d '{"secret": "your-job-secret", "tickers": ["NFLX"]}'
+# Trigger the real nightly pipeline manually (test with NFLX)
+# The actual verdict logic runs inside the GitHub Actions workflow itself
+# (Claude Code + Gemini cross-check), not a local backend endpoint — there is no
+# local equivalent to test against. Trigger the real thing on a single ticker:
+gh workflow run nightly.yml -f tickers=NFLX
 ```
 
 ---

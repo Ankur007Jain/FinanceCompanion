@@ -1,8 +1,10 @@
 """
-Nightly Runner — orchestrates the multi-agent pipeline per ticker.
-All data agents (Price, News, Event, Analyst) run in parallel.
-Ripple and Verdict run after, in sequence.
-Analysis is global per ticker — not per user.
+Single-ticker analysis pipeline — Price/News/Event/Analyst run in parallel, then
+Ripple, then Verdict. Used for the instant one-off analysis when a user adds a new
+ticker (AUTO_ANALYZE_ON_ADD, see routers/watchlist.py) — the routine nightly batch
+across the whole watchlist runs separately via the GitHub Actions workflow
+(.github/workflows/nightly.yml), not through this module. Analysis is global per
+ticker — not per user.
 """
 import asyncio
 import json
@@ -19,7 +21,7 @@ from agents.yf_fetcher import fetch_yf_data
 from agents.ripple_agent import analyze_ripple
 from agents.verdict_agent import generate_verdict
 from services.conviction import calibrate_conviction
-from models import StockAnalysis, WatchlistItem
+from models import StockAnalysis
 from services.stock_memory import get_stock_memory, maybe_update_stock_memory
 from services.simple_fields import generate_simple_fields
 
@@ -379,35 +381,3 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
     await generate_simple_fields(analysis, db)
 
 
-async def run_nightly_analysis(db: Session, tickers: list[str] | None = None) -> dict:
-    if tickers is None:
-        rows = db.query(
-            WatchlistItem.ticker,
-            WatchlistItem.is_leveraged,
-            WatchlistItem.sector,
-            WatchlistItem.company_name,
-        ).distinct(WatchlistItem.ticker).all()
-    else:
-        rows = db.query(
-            WatchlistItem.ticker,
-            WatchlistItem.is_leveraged,
-            WatchlistItem.sector,
-            WatchlistItem.company_name,
-        ).filter(WatchlistItem.ticker.in_(tickers)).distinct(WatchlistItem.ticker).all()
-
-    if not rows:
-        return {"status": "no_tickers", "processed": 0}
-
-    logger.info(f"Nightly run starting for {len(rows)} ticker(s)...")
-    tasks = [
-        _analyze_single_ticker(r.ticker, r.is_leveraged or False, r.sector or "", r.company_name or r.ticker, db)
-        for r in rows
-    ]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
-    errors = [str(r) for r in results if isinstance(r, Exception)]
-
-    return {
-        "status": "complete",
-        "processed": len(rows),
-        "errors": errors,
-    }

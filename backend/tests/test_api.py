@@ -138,13 +138,3 @@ class TestConversations:
         with _mock_google_token("del@example.com"):
             r2 = client.delete(f"/conversations/{conv_id}", params={"id_token": "fake"})
         assert r2.status_code == 200
-
-
-class TestJobs:
-    def test_nightly_bad_secret(self, client: TestClient):
-        r = client.post("/jobs/nightly", json={"secret": "wrong", "tickers": ["NFLX"]})
-        assert r.status_code == 401
-
-    def test_nightly_good_secret(self, client: TestClient):
-        r = client.post("/jobs/nightly", json={"secret": "test-job-secret", "tickers": ["NFLX"]})
-        assert r.status_code == 200
