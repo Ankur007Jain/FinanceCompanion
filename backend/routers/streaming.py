@@ -317,10 +317,15 @@ async def stream_message(
         # being resent as fresh input tokens every time. The new user message below stays
         # OUTSIDE this block deliberately: it's exactly the part that changes every
         # request, and a breakpoint on a block that changes every call never gets a hit.
+        # 1h TTL (was the 5m default): real conversations have gaps well under an hour but
+        # often over 5 minutes, so the default was rewriting the whole growing history on
+        # most turns instead of reading it — confirmed via cache_write_tokens dwarfing
+        # cache_read_tokens on multi-message days in production. A read refreshes the TTL,
+        # so an active conversation now stays on one write for its entire lifetime.
         last = history[-1]
         history[-1] = {
             "role": last["role"],
-            "content": [{"type": "text", "text": last["content"], "cache_control": {"type": "ephemeral"}}],
+            "content": [{"type": "text", "text": last["content"], "cache_control": {"type": "ephemeral", "ttl": "1h"}}],
         }
     # This message was never going to be part of the cached prefix anyway (it's brand
     # new every request), so unlike every message above, its gap is safe to compute
@@ -358,7 +363,10 @@ async def stream_message(
         # this block no longer contains the focus ticker's dossier — it's the same content
         # regardless of which ticker is in focus, so it stays cache-shareable across every
         # ticker-scoped conversation this user has, not just repeated turns in one.
-        api_system.append({"type": "text", "text": dynamic_context, "cache_control": {"type": "ephemeral"}})
+        # 1h TTL — this is the largest block (~28k+ tokens observed) and only changes when
+        # the underlying data does, so there's no reason to let it cold-write on a 5-minute
+        # gap between messages.
+        api_system.append({"type": "text", "text": dynamic_context, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
     if conv.ticker:
         # The focus ticker's full dossier — deliberately the LAST block in the array,
@@ -376,7 +384,9 @@ async def stream_message(
             f"they mean {conv.ticker} — not any other ticker listed above. Lead your answer with "
             f"{conv.ticker}; only bring in other tickers if the user explicitly asks about them.\n\n"
         ) + build_ticker_dossier(conv.ticker, db, user.email)
-        api_system.append({"type": "text", "text": focus_dossier, "cache_control": {"type": "ephemeral"}})
+        # 1h TTL — a read refreshes it, so bouncing between a few tickers within the hour
+        # keeps hitting each one's own cache entry instead of re-writing on every switch.
+        api_system.append({"type": "text", "text": focus_dossier, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
     max_tokens = _estimate_max_tokens(body.content)
     use_thinking = _should_use_extended_thinking(body.content)
