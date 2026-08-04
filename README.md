@@ -69,16 +69,12 @@ Open [http://localhost:3000](http://localhost:3000) and sign in with Google.
 
 ### Test the Nightly Pipeline
 
-```bash
-# Run analysis for NFLX only
-curl -X POST http://localhost:8001/jobs/nightly \
-  -H "Content-Type: application/json" \
-  -d '{"secret": "your-job-secret", "tickers": ["NFLX"]}'
+The verdict logic runs inside the GitHub Actions workflow itself (Claude Code +
+Gemini cross-check), not a local backend endpoint — there's no local server to hit.
+Trigger the real pipeline on a single ticker via `workflow_dispatch`:
 
-# Run for all watchlisted tickers
-curl -X POST http://localhost:8001/jobs/nightly \
-  -H "Content-Type: application/json" \
-  -d '{"secret": "your-job-secret"}'
+```bash
+gh workflow run nightly.yml -f tickers=NFLX
 ```
 
 ---
@@ -87,21 +83,20 @@ curl -X POST http://localhost:8001/jobs/nightly \
 
 ```
 Browser → Next.js (Vercel) → FastAPI (Railway) → PostgreSQL
-                                    ↓
-                     Nightly Agent Pipeline (11 PM ET)
-                     ├── Price Agent    (yfinance + Finnhub, cross-validated)
-                     ├── News Agent     (yfinance + Finnhub → Haiku summary)
-                     ├── Event Agent    (earnings dates + Fed calendar)
-                     ├── Analyst Agent  (consensus, cross-validated)
-                     ├── Ripple Agent   (Haiku — 2nd/3rd order effects)
-                     └── Verdict Agent  (Sonnet — synthesizes all signals)
+                                    ↑
+                     GitHub Actions "Nightly Stock Analysis" (4x/weekday)
+                     ├── scripts/nightly_fetch.py   (yfinance + Finnhub data, per ticker)
+                     ├── Claude Sonnet (Verdict A)  (run inside the GHA agent itself)
+                     ├── Gemini (Verdict B)         (second opinion, scripts/nightly_verdict_b.py)
+                     ├── Judge — reconciles A vs B into the final verdict
+                     └── POST /jobs/ingest-analysis (writes StockAnalysis)
                               ↓
                      Performance Retrospective (factual — what happened after past verdicts)
                               ↓
-                     StockMemory update (Haiku — nightly + after report generation)
+                     StockMemory update (Haiku, triggered from ingest-analysis)
 ```
 
-All 4 data agents run in parallel per ticker. All tickers run in parallel. Results are saved as `StockAnalysis` (global per ticker, not per user). Last 5 analyses + performance retrospective are fed into the Verdict Agent each night.
+Batches of 5 tickers run in parallel GitHub Actions jobs; already-analyzed tickers are skipped. Results are saved as `StockAnalysis` (global per ticker, not per user). Last 5 analyses + performance retrospective are fed into the verdict each night.
 
 ---
 

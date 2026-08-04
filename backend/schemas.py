@@ -253,11 +253,6 @@ class ReportDayOut(BaseModel):
     important_flags: list[ImportantFlag]
 
 
-class NightlyJobRequest(BaseModel):
-    secret: str
-    tickers: Optional[list[str]] = None  # None = run all watchlisted tickers
-
-
 class IngestSnapshotRequest(BaseModel):
     ticker: str
     cache_date: date

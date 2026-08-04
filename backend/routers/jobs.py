@@ -7,8 +7,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db, SessionLocal
 from models import StockAnalysis, MarketDataCache
-from schemas import NightlyJobRequest, IngestAnalysisRequest, IngestSnapshotRequest, IngestCorrelationsRequest
-from services.nightly_runner import run_nightly_analysis
+from schemas import IngestAnalysisRequest, IngestSnapshotRequest, IngestCorrelationsRequest
 from services.stock_memory import maybe_update_stock_memory
 from services.conviction import calibrate_conviction
 from services.price_history_sync import sync_and_get_bars
@@ -31,23 +30,6 @@ def get_price_series(ticker: str, x_job_secret: str = "", db: Session = Depends(
         raise HTTPException(status_code=401, detail="Invalid job secret.")
     bars = sync_and_get_bars(ticker, db)
     return {"symbol": ticker, "bars": bars}
-
-
-@router.post("/nightly")
-async def trigger_nightly(body: NightlyJobRequest, background_tasks: BackgroundTasks):
-    if body.secret != os.getenv("JOB_SECRET", ""):
-        raise HTTPException(status_code=401, detail="Invalid job secret.")
-
-    async def _run():
-        session = SessionLocal()
-        try:
-            result = await run_nightly_analysis(session, body.tickers)
-            return result
-        finally:
-            session.close()
-
-    background_tasks.add_task(_run)
-    return {"status": "started", "tickers": body.tickers or "all"}
 
 
 def _run_memory_update(ticker: str, verdict: str, reasoning: str, news_summary: str, events_json: str):

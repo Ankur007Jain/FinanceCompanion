@@ -128,9 +128,13 @@ def add_to_watchlist(
     # Auto-analyze on add — controlled by AUTO_ANALYZE_ON_ADD env var (default: off)
     import os
     if os.getenv("AUTO_ANALYZE_ON_ADD", "false").lower() == "true":
+        # item.is_leveraged is always False at this point — the real leveraged-ETF
+        # check runs in the background task queued above and updates the DB row
+        # after this returns, not before. Fine: the verdict agent's leveraged-ETF
+        # rules kick in on the *next* analysis, not this one.
         background_tasks.add_task(
             _run_analysis_for_ticker,
-            ticker, is_leveraged, body.sector or "", body.company_name or ticker,
+            ticker, item.is_leveraged, body.sector or "", body.company_name or ticker,
         )
         logger.info(f"[{ticker}] Added to watchlist — background analysis queued.")
     return item
