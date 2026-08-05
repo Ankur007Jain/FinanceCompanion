@@ -361,19 +361,23 @@ def get_closes(x_admin_secret: str = "", days: int = 300, db: Session = Depends(
 
 
 @router.get("/admin/last-horizon")
-def last_horizon(x_admin_secret: str = "", db: Session = Depends(get_db)):
+def last_horizon(x_admin_secret: str = "", tickers: str = "", db: Session = Depends(get_db)):
     """Per-ticker snapshot of the most recent long-term/short-term horizon judgment
     (time_horizon_fit) plus the fundamentals it was based on. Feeds
     scripts/should_recompute_horizon.py so the nightly run only pays for fresh LLM
     horizon reasoning when fundamentals have materially moved since that snapshot,
-    instead of every night."""
+    instead of every night. `tickers` (comma-separated) scopes the query to one batch
+    — each nightly matrix job only needs its own ~5 tickers, not the whole watchlist."""
     if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
         raise HTTPException(status_code=401, detail="Invalid admin secret.")
     from models import WatchlistItem
 
-    tickers = {t[0] for t in db.query(WatchlistItem.ticker).distinct().all()}
+    if tickers:
+        ticker_set = {t.strip().upper() for t in tickers.split(",") if t.strip()}
+    else:
+        ticker_set = {t[0] for t in db.query(WatchlistItem.ticker).distinct().all()}
     result: dict[str, dict] = {}
-    for ticker in tickers:
+    for ticker in ticker_set:
         row = (
             db.query(StockAnalysis)
             .filter(StockAnalysis.ticker == ticker, StockAnalysis.time_horizon_fit.isnot(None))

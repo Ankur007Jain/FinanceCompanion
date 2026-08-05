@@ -35,7 +35,11 @@ def _pct_moved(prior: dict, now: dict, field: str, threshold_abs: float, label: 
 
 def _relative_moved(prior: dict, now: dict, field: str, threshold_rel: float, label: str, reasons: list[str]) -> None:
     old, new = prior.get(field), now.get(field)
-    if not old or new is None:
+    if old is None or new is None:
+        return
+    if old == 0:
+        if new != 0:
+            reasons.append(f"{label} moved {old:.2f} -> {new:.2f} (from a zero baseline).")
         return
     rel = abs(new - old) / abs(old)
     if rel >= threshold_rel:

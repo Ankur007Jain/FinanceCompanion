@@ -131,7 +131,13 @@ class TestFundamentalsThresholds:
         assert result["should_recompute"] is False
 
     def test_zero_prior_value_does_not_divide_by_zero(self):
+        # Regression: a naive `rel = abs(new-old)/abs(old)` would ZeroDivisionError here.
         result = should_recompute(_now(debt_to_equity=10.0), _prior(debt_to_equity=0.0), today=TODAY)
+        assert result["should_recompute"] is True
+        assert "zero baseline" in result["reason"]
+
+    def test_zero_to_zero_does_not_force_recompute(self):
+        result = should_recompute(_now(debt_to_equity=0.0), _prior(debt_to_equity=0.0), today=TODAY)
         assert result["should_recompute"] is False
 
 

@@ -13,7 +13,7 @@ tickers = sys.argv[1]
 backend = os.environ["BACKEND_URL"]
 secret = os.environ["ADMIN_SECRET"]
 
-url = f"{backend}/jobs/admin/last-horizon?x_admin_secret={urllib.parse.quote(secret)}"
+url = f"{backend}/jobs/admin/last-horizon?x_admin_secret={urllib.parse.quote(secret)}&tickers={urllib.parse.quote(tickers)}"
 try:
     with urllib.request.urlopen(url, timeout=15) as r:
         horizons = json.loads(r.read().decode()).get("horizons", {})
