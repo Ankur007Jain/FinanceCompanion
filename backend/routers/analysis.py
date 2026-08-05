@@ -7,12 +7,31 @@ from sqlalchemy.orm import Session
 import anthropic
 
 from database import get_db
-from models import StockAnalysis, TickerControl, WatchlistItem, MarketDataCache, StockReport
+from models import StockAnalysis, TickerControl, TickerHorizon, WatchlistItem, MarketDataCache, StockReport
 from routers.auth import get_current_user
 from schemas import DigestItem, StockAnalysisOut, ImportantFlag, ReportDayOut, StockReportOut
 from services.stock_memory import update_memory_from_report
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+
+
+def _fetch_horizons(tickers: set[str], db: Session) -> dict[str, TickerHorizon]:
+    """Batched TickerHorizon lookup — call once per request, not per ticker, to avoid N+1."""
+    if not tickers:
+        return {}
+    return {h.ticker: h for h in db.query(TickerHorizon).filter(TickerHorizon.ticker.in_(tickers)).all()}
+
+
+def _with_horizon(analysis: StockAnalysis, horizon: TickerHorizon | None) -> StockAnalysisOut:
+    """StockAnalysis and TickerHorizon are separate tables on separate cadences (nightly
+    Mon-Fri verdict vs. weekly horizon judgment) — merge them into one response shape so
+    the frontend doesn't need to know they're stored separately."""
+    out = StockAnalysisOut.model_validate(analysis)
+    if horizon:
+        out.time_horizon_fit = horizon.time_horizon_fit
+        out.time_horizon_reasoning = horizon.time_horizon_reasoning
+        out.time_horizon_last_computed = horizon.time_horizon_last_computed
+    return out
 
 
 def _change_summary(cur: StockAnalysis, prev: StockAnalysis) -> tuple[bool, str]:
@@ -58,6 +77,7 @@ def get_digest(id_token: str, db: Session = Depends(get_db)):
     disabled_tickers = {
         c.ticker for c in db.query(TickerControl).filter(TickerControl.analysis_enabled.is_(False)).all()
     }
+    horizons = _fetch_horizons({item.ticker for item in watchlist}, db)
     result = []
     for item in watchlist:
         analysis = (
@@ -117,7 +137,7 @@ def get_digest(id_token: str, db: Session = Depends(get_db)):
             is_leveraged=item.is_leveraged or False,
             shares=item.shares,
             avg_cost=item.avg_cost,
-            analysis=StockAnalysisOut.model_validate(analysis) if analysis else None,
+            analysis=_with_horizon(analysis, horizons.get(item.ticker)) if analysis else None,
             has_unread=has_unread,
             change_summary=change_summary,
             days_since_read=days_since_read,
@@ -185,7 +205,8 @@ def get_latest(ticker: str, id_token: str, db: Session = Depends(get_db)):
     ).order_by(StockAnalysis.analysis_date.desc()).first()
     if not analysis:
         raise HTTPException(status_code=404, detail="No analysis found for this ticker.")
-    return analysis
+    horizon = db.query(TickerHorizon).filter(TickerHorizon.ticker == ticker.upper()).first()
+    return _with_horizon(analysis, horizon)
 
 
 @router.get("/important", response_model=list[StockAnalysisOut])
@@ -200,7 +221,7 @@ def get_important(id_token: str, days: int = 30, db: Session = Depends(get_db)):
         return []
     from datetime import timedelta
     cutoff = date.today() - timedelta(days=days)
-    return (
+    rows = (
         db.query(StockAnalysis)
         .filter(
             StockAnalysis.ticker.in_(tickers),
@@ -211,6 +232,8 @@ def get_important(id_token: str, days: int = 30, db: Session = Depends(get_db)):
         .limit(50)
         .all()
     )
+    horizons = _fetch_horizons({r.ticker for r in rows}, db)
+    return [_with_horizon(r, horizons.get(r.ticker)) for r in rows]
 
 
 @router.get("/{ticker}/history", response_model=list[StockAnalysisOut])
@@ -223,7 +246,8 @@ def get_history(ticker: str, id_token: str, days: int = 30, db: Session = Depend
         .limit(days)
         .all()
     )
-    return rows
+    horizon = db.query(TickerHorizon).filter(TickerHorizon.ticker == ticker.upper()).first()
+    return [_with_horizon(r, horizon) for r in rows]
 
 
 @router.get("/{ticker}/report", response_model=StockReportOut | None)

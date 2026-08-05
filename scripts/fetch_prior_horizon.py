@@ -1,7 +1,7 @@
 """
-Nightly pipeline — fetch each ticker's last-computed long-term/short-term horizon
-judgment + the fundamentals it was based on.
-Usage: python3 scripts/nightly_fetch_horizon.py TICKER1,TICKER2,...
+Horizon weekly pipeline — fetch each ticker's last-computed long-term/short-term horizon
+judgment + the fundamentals/trend behind it.
+Usage: python3 scripts/fetch_prior_horizon.py TICKER1,TICKER2,...
 Writes /tmp/horizon_prior_{ticker}.json for each ticker that has a prior judgment;
 tickers with no prior judgment (never computed) get no file — should_recompute_horizon.py
 treats a missing file as "always recompute."

@@ -1,15 +1,20 @@
 """
-Nightly pipeline — deterministic skip-check for the long-term/short-term horizon judgment.
-Usage: python3 scripts/should_recompute_horizon.py TICKER
-Reads /tmp/summary_{ticker}.json (tonight's fundamentals, from nightly_fetch.py) and
-/tmp/horizon_prior_{ticker}.json (last computed judgment + the fundamentals it was based
-on, from nightly_fetch_horizon.py — absent if never computed). Writes
+Horizon weekly pipeline — deterministic skip-check for the long-term/short-term horizon
+judgment. Usage: python3 scripts/should_recompute_horizon.py TICKER
+Reads /tmp/summary_{ticker}.json (this week's fundamentals snapshot, written by
+nightly_fetch.py — reused as-is, same fields), /tmp/horizon_prior_{ticker}.json (the
+fundamentals + trend behind the last computed judgment — absent if never computed), and
+/tmp/fundamentals_trend_{ticker}.json (this week's self-derived trend, from
+compute_fundamentals_trend.py). Writes
 /tmp/horizon_skip_{ticker}.json: {"should_recompute": bool, "reason": "..."}.
 
-Mirrors compute_signal_convergence.py's pattern: a cheap, deterministic pre-check so the
-LLM only pays for fresh horizon reasoning (a 401k/retirement-fund-style 1-5yr holding
-judgment) when something that would actually change that judgment has moved — not every
-night just because the nightly run happened to touch this ticker.
+Two trigger families:
+- Snapshot deltas (revenue/earnings growth, margin, valuation, leverage, market cap,
+  analyst consensus) — the original design, mirrors compute_signal_convergence.py.
+- Trend STATE CHANGES (e.g. institutional ownership flips from STABLE to DISTRIBUTING).
+  Deliberately keyed on change-of-state, not "is currently trending" — a steady
+  multi-week trend would otherwise force a recompute every single week, defeating the
+  whole point of the skip-check.
 """
 import json
 import os
@@ -23,6 +28,14 @@ PROFIT_MARGIN_THRESHOLD = 0.05
 PE_FORWARD_RELATIVE_THRESHOLD = 0.20
 DEBT_TO_EQUITY_RELATIVE_THRESHOLD = 0.20
 MARKET_CAP_RELATIVE_THRESHOLD = 0.20
+
+_TREND_FIELDS = [
+    ("revenue_growth_trend", "Revenue growth"),
+    ("earnings_growth_trend", "Earnings growth"),
+    ("margin_trend_recent", "Margin"),
+    ("inst_ownership_trend", "Institutional ownership"),
+    ("insider_ownership_trend", "Insider ownership"),
+]
 
 
 def _pct_moved(prior: dict, now: dict, field: str, threshold_abs: float, label: str, reasons: list[str]) -> None:
@@ -46,11 +59,23 @@ def _relative_moved(prior: dict, now: dict, field: str, threshold_rel: float, la
         reasons.append(f"{label} moved {old:.2f} -> {new:.2f} ({rel:.0%} relative change, >= {threshold_rel:.0%} threshold).")
 
 
-def should_recompute(now: dict, prior: dict | None, today: date | None = None) -> dict:
-    """Pure decision function — `now` is tonight's summary JSON dict (nightly_fetch.py
-    shape: keys like revenue_growth, pe_forward, analyst, ...), `prior` is the last
-    computed horizon snapshot (GET /jobs/admin/last-horizon shape) or None if never
-    computed."""
+def _trend_changed(prior: dict, trend: dict, field: str, label: str, reasons: list[str]) -> None:
+    new_val = trend.get(field)
+    if new_val is None:
+        return  # not enough self-derived history yet to say anything new
+    old_val = prior.get(field)
+    if new_val != old_val:
+        reasons.append(f"{label} trend changed: {old_val or 'unknown'} -> {new_val}.")
+
+
+def should_recompute(now: dict, prior: dict | None, trend: dict, today: date | None = None) -> dict:
+    """Pure decision function.
+    `now`: this week's cheap fundamentals snapshot (nightly_fetch.py summary shape).
+    `prior`: last computed judgment's snapshot (GET /jobs/admin/last-horizon shape), or
+             None if never computed.
+    `trend`: this week's self-derived trend classification (compute_fundamentals_trend.py
+             output) — always available, independent of `prior`.
+    """
     today = today or date.today()
 
     if not prior:
@@ -75,9 +100,12 @@ def should_recompute(now: dict, prior: dict | None, today: date | None = None) -
     _relative_moved(prior, now, "debt_to_equity", DEBT_TO_EQUITY_RELATIVE_THRESHOLD, "Debt/equity", reasons)
     _relative_moved(prior, now, "market_cap", MARKET_CAP_RELATIVE_THRESHOLD, "Market cap", reasons)
 
+    for field, label in _TREND_FIELDS:
+        _trend_changed(prior, trend, field, label, reasons)
+
     result = {
         "should_recompute": bool(reasons),
-        "reason": " ".join(reasons) if reasons else "No material fundamentals change since last computed judgment — reused prior.",
+        "reason": " ".join(reasons) if reasons else "No material change since last computed judgment — reused prior.",
     }
     if not result["should_recompute"]:
         result["reused_fit"] = prior.get("time_horizon_fit")
@@ -97,7 +125,13 @@ if __name__ == "__main__":
         with open(prior_path) as f:
             prior = json.load(f)
 
-    result = should_recompute(now, prior)
+    trend = {}
+    trend_path = f"/tmp/fundamentals_trend_{ticker}.json"
+    if os.path.exists(trend_path):
+        with open(trend_path) as f:
+            trend = json.load(f)
+
+    result = should_recompute(now, prior, trend)
 
     with open(f"/tmp/horizon_skip_{ticker}.json", "w") as f:
         json.dump(result, f)

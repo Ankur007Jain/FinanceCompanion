@@ -293,78 +293,64 @@ class TestIngestSimpleFields:
             gen.assert_not_called()
 
 
-class TestTimeHorizonIngest:
-    """time_horizon_last_computed must only advance on nights should_recompute_horizon.py
-    flagged a real recompute (time_horizon_recomputed=True) — reuse nights carry the
-    original computation date forward instead of stamping today's date."""
+class TestIngestHorizon:
+    """TickerHorizon is ticker-keyed, not date-keyed — horizon-weekly.yml only calls
+    ingest-horizon for tickers it actually recomputed; reuse weeks don't call it at all,
+    and the existing row (untouched) still merges correctly into analysis responses."""
 
-    def test_first_computation_sets_last_computed_to_analysis_date(self, client: TestClient):
+    def test_bad_secret_returns_401(self, client: TestClient):
+        r = client.post("/jobs/ingest-horizon", params={"x_job_secret": "wrong"},
+                         json={"ticker": "THZ1", "computed_date": str(date.today()),
+                               "time_horizon_fit": "LONG_TERM_HOLD"})
+        assert r.status_code == 401
+
+    def test_creates_new_horizon_and_merges_into_latest_analysis(self, client: TestClient):
         from unittest.mock import patch
 
         today = str(date.today())
-        payload = {**_BASE, "ticker": "THZ1", "analysis_date": today,
-                   "time_horizon_fit": "LONG_TERM_HOLD",
-                   "time_horizon_reasoning": "Durable moat.",
-                   "time_horizon_recomputed": True}
-        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
+                    json={**_BASE, "ticker": "THZ1", "analysis_date": today})
+        r = client.post("/jobs/ingest-horizon", params={"x_job_secret": GOOD_SECRET},
+                         json={"ticker": "THZ1", "computed_date": today,
+                               "time_horizon_fit": "LONG_TERM_HOLD",
+                               "time_horizon_reasoning": "Durable moat."})
+        assert r.status_code == 200
+        assert r.json() == {"status": "saved", "ticker": "THZ1"}
 
         with patch("routers.auth.id_token.verify_oauth2_token",
                    return_value={"email": "thz1@example.com", "name": "T"}):
-            r = client.get("/analysis/THZ1/latest", params={"id_token": "fake"})
-        data = r.json()
+            resp = client.get("/analysis/THZ1/latest", params={"id_token": "fake"})
+        data = resp.json()
         assert data["time_horizon_fit"] == "LONG_TERM_HOLD"
         assert data["time_horizon_reasoning"] == "Durable moat."
         assert data["time_horizon_last_computed"] == today
 
-    def test_reuse_night_carries_forward_original_computed_date(self, client: TestClient):
+    def test_reingest_updates_existing_row_not_a_duplicate(self, client: TestClient):
         from unittest.mock import patch
 
         day1 = str(date.today() - timedelta(days=10))
-        day2 = str(date.today())
+        today = str(date.today())
         client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
-                    json={**_BASE, "ticker": "THZ2", "analysis_date": day1,
+                    json={**_BASE, "ticker": "THZ2", "analysis_date": today})
+        client.post("/jobs/ingest-horizon", params={"x_job_secret": GOOD_SECRET},
+                    json={"ticker": "THZ2", "computed_date": day1,
+                          "time_horizon_fit": "SHORT_TERM_TRADE_ONLY",
+                          "time_horizon_reasoning": "Weak balance sheet."})
+        client.post("/jobs/ingest-horizon", params={"x_job_secret": GOOD_SECRET},
+                    json={"ticker": "THZ2", "computed_date": today,
                           "time_horizon_fit": "LONG_TERM_HOLD",
-                          "time_horizon_reasoning": "Durable moat.",
-                          "time_horizon_recomputed": True})
-
-        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
-                    json={**_BASE, "ticker": "THZ2", "analysis_date": day2,
-                          "time_horizon_fit": "LONG_TERM_HOLD",
-                          "time_horizon_reasoning": "Durable moat.",
-                          "time_horizon_recomputed": False})
+                          "time_horizon_reasoning": "Debt paid down, margins recovered."})
 
         with patch("routers.auth.id_token.verify_oauth2_token",
                    return_value={"email": "thz2@example.com", "name": "T"}):
-            r = client.get("/analysis/THZ2/latest", params={"id_token": "fake"})
-        data = r.json()
+            resp = client.get("/analysis/THZ2/latest", params={"id_token": "fake"})
+        data = resp.json()
         assert data["time_horizon_fit"] == "LONG_TERM_HOLD"
-        assert data["time_horizon_last_computed"] == day1  # not day2
+        assert data["time_horizon_last_computed"] == today
 
-    def test_recompute_night_advances_last_computed(self, client: TestClient):
-        from unittest.mock import patch
-
-        day1 = str(date.today() - timedelta(days=10))
-        day2 = str(date.today())
-        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
-                    json={**_BASE, "ticker": "THZ3", "analysis_date": day1,
-                          "time_horizon_fit": "SHORT_TERM_TRADE_ONLY",
-                          "time_horizon_reasoning": "Weak balance sheet.",
-                          "time_horizon_recomputed": True})
-
-        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
-                    json={**_BASE, "ticker": "THZ3", "analysis_date": day2,
-                          "time_horizon_fit": "LONG_TERM_HOLD",
-                          "time_horizon_reasoning": "Debt paid down, margins recovered.",
-                          "time_horizon_recomputed": True})
-
-        with patch("routers.auth.id_token.verify_oauth2_token",
-                   return_value={"email": "thz3@example.com", "name": "T"}):
-            r = client.get("/analysis/THZ3/latest", params={"id_token": "fake"})
-        data = r.json()
-        assert data["time_horizon_fit"] == "LONG_TERM_HOLD"
-        assert data["time_horizon_last_computed"] == day2
-
-    def test_omitted_time_horizon_fields_leave_columns_null(self, client: TestClient):
+    def test_no_ingest_call_means_horizon_fields_stay_null(self, client: TestClient):
+        """A reuse week: horizon-weekly.yml simply never calls ingest-horizon for this
+        ticker. Confirms absence (not a resend) is the correct no-op."""
         from unittest.mock import patch
 
         payload = {**_BASE, "ticker": "THZ4", "analysis_date": str(date.today())}
@@ -377,27 +363,46 @@ class TestTimeHorizonIngest:
         assert data["time_horizon_fit"] is None
         assert data["time_horizon_last_computed"] is None
 
+    def test_horizon_persists_across_new_nightly_analysis_rows(self, client: TestClient):
+        """The whole point of decoupling onto its own table: a new StockAnalysis row from
+        the next Mon-Fri nightly run must still carry the existing horizon judgment via
+        the join, even though horizon-weekly.yml did nothing that day."""
+        from unittest.mock import patch
+
+        day1 = str(date.today() - timedelta(days=1))
+        today = str(date.today())
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
+                    json={**_BASE, "ticker": "THZ9", "analysis_date": day1})
+        client.post("/jobs/ingest-horizon", params={"x_job_secret": GOOD_SECRET},
+                    json={"ticker": "THZ9", "computed_date": day1,
+                          "time_horizon_fit": "BOTH", "time_horizon_reasoning": "Fine either way."})
+
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
+                    json={**_BASE, "ticker": "THZ9", "analysis_date": today, "verdict": "SELL"})
+
+        with patch("routers.auth.id_token.verify_oauth2_token",
+                   return_value={"email": "thz9@example.com", "name": "T"}):
+            r = client.get("/analysis/THZ9/latest", params={"id_token": "fake"})
+        data = r.json()
+        assert data["verdict"] == "SELL"
+        assert data["time_horizon_fit"] == "BOTH"          # still there
+        assert data["time_horizon_last_computed"] == day1  # unchanged — no recompute happened
+
 
 class TestLastHorizonEndpoint:
     def test_bad_admin_secret_returns_401(self, client: TestClient):
         r = client.get("/jobs/admin/last-horizon", params={"x_admin_secret": "bad"})
         assert r.status_code == 401
 
-    def test_returns_last_computed_snapshot_for_watchlisted_ticker(self, client: TestClient):
+    def test_returns_horizon_snapshot_for_requested_ticker(self, client: TestClient):
         import os
-        from unittest.mock import patch
         os.environ["ADMIN_SECRET"] = "test-admin-secret"
 
-        with patch("routers.auth.id_token.verify_oauth2_token",
-                   return_value={"email": "lh1@example.com", "name": "T"}):
-            client.post("/watchlist", params={"id_token": "fake"},
-                        json={"ticker": "THZ5", "is_leveraged": False})
-
-        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
-                    json={**_BASE, **_FUNDAMENTALS, "ticker": "THZ5", "analysis_date": str(date.today()),
-                          "time_horizon_fit": "AVOID",
-                          "time_horizon_reasoning": "Structural decline.",
-                          "time_horizon_recomputed": True})
+        client.post("/jobs/ingest-horizon", params={"x_job_secret": GOOD_SECRET},
+                    json={"ticker": "THZ5", "computed_date": str(date.today()),
+                          "time_horizon_fit": "AVOID", "time_horizon_reasoning": "Structural decline.",
+                          "pe_forward": 30.1, "revenue_cagr_3y": -0.05, "margin_trend_3y": "CONTRACTING",
+                          "inst_ownership_trend": "DISTRIBUTING"})
 
         r = client.get("/jobs/admin/last-horizon",
                         params={"x_admin_secret": "test-admin-secret", "tickers": "THZ5"})
@@ -405,22 +410,17 @@ class TestLastHorizonEndpoint:
         horizons = r.json()["horizons"]
         assert horizons["THZ5"]["time_horizon_fit"] == "AVOID"
         assert horizons["THZ5"]["pe_forward"] == pytest.approx(30.1, rel=1e-3)
+        assert horizons["THZ5"]["margin_trend_3y"] == "CONTRACTING"
+        assert horizons["THZ5"]["inst_ownership_trend"] == "DISTRIBUTING"
 
     def test_tickers_filter_scopes_query(self, client: TestClient):
         import os
-        from unittest.mock import patch
         os.environ["ADMIN_SECRET"] = "test-admin-secret"
 
-        with patch("routers.auth.id_token.verify_oauth2_token",
-                   return_value={"email": "lh2@example.com", "name": "T"}):
-            client.post("/watchlist", params={"id_token": "fake"}, json={"ticker": "THZ6", "is_leveraged": False})
-            client.post("/watchlist", params={"id_token": "fake"}, json={"ticker": "THZ7", "is_leveraged": False})
-
         for t in ("THZ6", "THZ7"):
-            client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
-                        json={**_BASE, "ticker": t, "analysis_date": str(date.today()),
-                              "time_horizon_fit": "BOTH", "time_horizon_reasoning": "Fine either way.",
-                              "time_horizon_recomputed": True})
+            client.post("/jobs/ingest-horizon", params={"x_job_secret": GOOD_SECRET},
+                        json={"ticker": t, "computed_date": str(date.today()),
+                              "time_horizon_fit": "BOTH", "time_horizon_reasoning": "Fine either way."})
 
         r = client.get("/jobs/admin/last-horizon",
                         params={"x_admin_secret": "test-admin-secret", "tickers": "THZ6"})
@@ -430,16 +430,66 @@ class TestLastHorizonEndpoint:
 
     def test_ticker_never_judged_is_omitted(self, client: TestClient):
         import os
-        from unittest.mock import patch
         os.environ["ADMIN_SECRET"] = "test-admin-secret"
-
-        with patch("routers.auth.id_token.verify_oauth2_token",
-                   return_value={"email": "lh3@example.com", "name": "T"}):
-            client.post("/watchlist", params={"id_token": "fake"}, json={"ticker": "THZ8", "is_leveraged": False})
-
-        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
-                    json={**_BASE, "ticker": "THZ8", "analysis_date": str(date.today())})
 
         r = client.get("/jobs/admin/last-horizon",
                         params={"x_admin_secret": "test-admin-secret", "tickers": "THZ8"})
         assert "THZ8" not in r.json()["horizons"]
+
+
+class TestFundamentalsHistoryEndpoint:
+    """Feeds scripts/compute_fundamentals_trend.py — self-derived trend from a ticker's
+    own accumulated stock_analyses rows, zero new external API cost."""
+
+    def test_bad_admin_secret_returns_401(self, client: TestClient):
+        r = client.get("/jobs/admin/fundamentals-history", params={"x_admin_secret": "bad"})
+        assert r.status_code == 401
+
+    def test_no_tickers_param_returns_empty(self, client: TestClient):
+        import os
+        os.environ["ADMIN_SECRET"] = "test-admin-secret"
+        r = client.get("/jobs/admin/fundamentals-history", params={"x_admin_secret": "test-admin-secret"})
+        assert r.json() == {"fundamentals": {}}
+
+    def test_returns_dated_series_for_requested_ticker(self, client: TestClient):
+        import os
+        os.environ["ADMIN_SECRET"] = "test-admin-secret"
+
+        day1 = str(date.today() - timedelta(days=30))
+        today = str(date.today())
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
+                    json={**_BASE, "ticker": "FHIST1", "analysis_date": day1, "revenue_growth": 0.10})
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
+                    json={**_BASE, "ticker": "FHIST1", "analysis_date": today, "revenue_growth": 0.18})
+
+        r = client.get("/jobs/admin/fundamentals-history",
+                        params={"x_admin_secret": "test-admin-secret", "tickers": "FHIST1"})
+        series = r.json()["fundamentals"]["FHIST1"]
+        assert series[day1]["revenue_growth"] == pytest.approx(0.10, rel=1e-3)
+        assert series[today]["revenue_growth"] == pytest.approx(0.18, rel=1e-3)
+
+    def test_tickers_filter_scopes_query(self, client: TestClient):
+        import os
+        os.environ["ADMIN_SECRET"] = "test-admin-secret"
+
+        for t in ("FHIST2", "FHIST3"):
+            client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
+                        json={**_BASE, "ticker": t, "analysis_date": str(date.today())})
+
+        r = client.get("/jobs/admin/fundamentals-history",
+                        params={"x_admin_secret": "test-admin-secret", "tickers": "FHIST2"})
+        fundamentals = r.json()["fundamentals"]
+        assert "FHIST2" in fundamentals
+        assert "FHIST3" not in fundamentals
+
+    def test_days_window_excludes_old_rows(self, client: TestClient):
+        import os
+        os.environ["ADMIN_SECRET"] = "test-admin-secret"
+
+        old = str(date.today() - timedelta(days=200))
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET},
+                    json={**_BASE, "ticker": "FHIST4", "analysis_date": old})
+
+        r = client.get("/jobs/admin/fundamentals-history",
+                        params={"x_admin_secret": "test-admin-secret", "tickers": "FHIST4", "days": 30})
+        assert "FHIST4" not in r.json()["fundamentals"]

@@ -373,14 +373,33 @@ class IngestAnalysisRequest(BaseModel):
     # counts (routers/jobs.py) rather than trusting the agent to also do that arithmetic.
     gemini_tokens_input: Optional[int] = None
     gemini_tokens_output: Optional[int] = None
-    # Long-term/short-term holding fit. time_horizon_fit/reasoning are sent every night
-    # (either freshly reasoned or the prior night's judgment resent as-is);
-    # time_horizon_recomputed distinguishes the two so the backend only advances
-    # time_horizon_last_computed on nights real LLM reasoning happened (see
-    # scripts/should_recompute_horizon.py).
-    time_horizon_fit: Optional[str] = None
+
+
+class IngestHorizonRequest(BaseModel):
+    """POST /jobs/ingest-horizon — .github/workflows/horizon-weekly.yml only calls this
+    for tickers should_recompute_horizon.py flagged; on reuse weeks it simply doesn't
+    call it at all, since TickerHorizon is ticker-keyed and the existing row already
+    holds the right value (no daily-row carry-forward needed, unlike the old design)."""
+    ticker: str
+    computed_date: date
+    time_horizon_fit: str
     time_horizon_reasoning: Optional[str] = None
-    time_horizon_recomputed: Optional[bool] = None
+    analyst_consensus: Optional[str] = None
+    pe_forward: Optional[float] = None
+    revenue_growth: Optional[float] = None
+    earnings_growth: Optional[float] = None
+    profit_margin: Optional[float] = None
+    debt_to_equity: Optional[float] = None
+    market_cap: Optional[float] = None
+    revenue_growth_trend: Optional[str] = None
+    earnings_growth_trend: Optional[str] = None
+    margin_trend_recent: Optional[str] = None
+    inst_ownership_trend: Optional[str] = None
+    insider_ownership_trend: Optional[str] = None
+    revenue_cagr_3y: Optional[float] = None
+    margin_trend_3y: Optional[str] = None
+    interest_coverage_ratio: Optional[float] = None
+    analyst_rating_changes_90d: Optional[int] = None
 
 
 class FeedbackCreate(BaseModel):

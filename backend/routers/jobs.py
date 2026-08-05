@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from database import get_db, SessionLocal
 from models import StockAnalysis, MarketDataCache
-from schemas import IngestAnalysisRequest, IngestSnapshotRequest, IngestCorrelationsRequest
+from schemas import IngestAnalysisRequest, IngestSnapshotRequest, IngestCorrelationsRequest, IngestHorizonRequest
 from services.stock_memory import maybe_update_stock_memory
 from services.conviction import calibrate_conviction
 from services.price_history_sync import sync_and_get_bars
@@ -180,24 +180,6 @@ def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTas
         ) if body.gemini_tokens_input is not None and body.gemini_tokens_output is not None else None,
     }
 
-    # Long-term/short-term horizon fit — only advance time_horizon_last_computed on
-    # nights the agent actually recomputed it (should_recompute_horizon.py flagged a
-    # material change); on reuse nights, carry the original computation date forward
-    # instead of stamping today's date on an unchanged judgment.
-    if body.time_horizon_fit:
-        mapped["time_horizon_fit"] = body.time_horizon_fit
-        mapped["time_horizon_reasoning"] = body.time_horizon_reasoning
-        if body.time_horizon_recomputed:
-            mapped["time_horizon_last_computed"] = body.analysis_date
-        else:
-            mapped["time_horizon_last_computed"] = (
-                db.query(StockAnalysis.time_horizon_last_computed)
-                .filter(StockAnalysis.ticker == body.ticker, StockAnalysis.time_horizon_last_computed.isnot(None))
-                .order_by(StockAnalysis.analysis_date.desc())
-                .limit(1)
-                .scalar()
-            )
-
     # Synthesize events_json from earnings_date when the agent sends it but not events_json
     if not mapped.get("events_json") and body.earnings_date:
         mapped["events_json"] = json.dumps([{"date": body.earnings_date, "description": "Earnings"}])
@@ -362,31 +344,23 @@ def get_closes(x_admin_secret: str = "", days: int = 300, db: Session = Depends(
 
 @router.get("/admin/last-horizon")
 def last_horizon(x_admin_secret: str = "", tickers: str = "", db: Session = Depends(get_db)):
-    """Per-ticker snapshot of the most recent long-term/short-term horizon judgment
-    (time_horizon_fit) plus the fundamentals it was based on. Feeds
-    scripts/should_recompute_horizon.py so the nightly run only pays for fresh LLM
-    horizon reasoning when fundamentals have materially moved since that snapshot,
-    instead of every night. `tickers` (comma-separated) scopes the query to one batch
-    — each nightly matrix job only needs its own ~5 tickers, not the whole watchlist."""
+    """Per-ticker snapshot of the current long-term/short-term horizon judgment
+    (TickerHorizon — one row per ticker, updated weekly) plus the fundamentals it was
+    based on. Feeds scripts/should_recompute_horizon.py so horizon-weekly.yml only pays
+    for fresh LLM reasoning when fundamentals have materially moved since that snapshot.
+    `tickers` (comma-separated) scopes the query to one batch of the weekly run."""
     if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
         raise HTTPException(status_code=401, detail="Invalid admin secret.")
-    from models import WatchlistItem
+    from models import TickerHorizon, WatchlistItem
 
     if tickers:
         ticker_set = {t.strip().upper() for t in tickers.split(",") if t.strip()}
     else:
         ticker_set = {t[0] for t in db.query(WatchlistItem.ticker).distinct().all()}
-    result: dict[str, dict] = {}
-    for ticker in ticker_set:
-        row = (
-            db.query(StockAnalysis)
-            .filter(StockAnalysis.ticker == ticker, StockAnalysis.time_horizon_fit.isnot(None))
-            .order_by(StockAnalysis.analysis_date.desc())
-            .first()
-        )
-        if not row:
-            continue
-        result[ticker] = {
+
+    rows = db.query(TickerHorizon).filter(TickerHorizon.ticker.in_(ticker_set)).all()
+    return {"horizons": {
+        row.ticker: {
             "time_horizon_fit": row.time_horizon_fit,
             "time_horizon_reasoning": row.time_horizon_reasoning,
             "time_horizon_last_computed": row.time_horizon_last_computed.isoformat() if row.time_horizon_last_computed else None,
@@ -397,8 +371,89 @@ def last_horizon(x_admin_secret: str = "", tickers: str = "", db: Session = Depe
             "profit_margin": row.profit_margin,
             "debt_to_equity": row.debt_to_equity,
             "market_cap": row.market_cap,
+            "revenue_growth_trend": row.revenue_growth_trend,
+            "earnings_growth_trend": row.earnings_growth_trend,
+            "margin_trend_recent": row.margin_trend_recent,
+            "inst_ownership_trend": row.inst_ownership_trend,
+            "insider_ownership_trend": row.insider_ownership_trend,
+            "revenue_cagr_3y": row.revenue_cagr_3y,
+            "margin_trend_3y": row.margin_trend_3y,
+            "interest_coverage_ratio": row.interest_coverage_ratio,
+            "analyst_rating_changes_90d": row.analyst_rating_changes_90d,
         }
-    return {"horizons": result}
+        for row in rows
+    }}
+
+
+@router.get("/admin/fundamentals-history")
+def fundamentals_history(x_admin_secret: str = "", tickers: str = "", days: int = 180, db: Session = Depends(get_db)):
+    """Each ticker's own revenue_growth/earnings_growth/profit_margin/ownership history
+    from stock_analyses — feeds scripts/compute_fundamentals_trend.py so the horizon
+    judgment can see a trajectory (accelerating/decelerating growth, expanding/
+    contracting margin, accumulating/distributing ownership) instead of one snapshot
+    number. Zero new external API cost — this data is already in Postgres from the
+    Mon-Fri nightly runs."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    if not tickers:
+        return {"fundamentals": {}}
+    from datetime import timedelta
+    ticker_set = {t.strip().upper() for t in tickers.split(",") if t.strip()}
+    cutoff = date.today() - timedelta(days=days)
+    rows = (
+        db.query(StockAnalysis)
+        .filter(StockAnalysis.ticker.in_(ticker_set), StockAnalysis.analysis_date >= cutoff)
+        .order_by(StockAnalysis.analysis_date.asc())
+        .all()
+    )
+    result: dict[str, dict] = {}
+    for r in rows:
+        result.setdefault(r.ticker, {})[r.analysis_date.isoformat()] = {
+            "revenue_growth": r.revenue_growth,
+            "earnings_growth": r.earnings_growth,
+            "profit_margin": r.profit_margin,
+            "inst_ownership_pct": r.inst_ownership_pct,
+            "insider_ownership_pct": r.insider_ownership_pct,
+        }
+    return {"fundamentals": result}
+
+
+@router.post("/ingest-horizon")
+def ingest_horizon(body: IngestHorizonRequest, x_job_secret: str = "", db: Session = Depends(get_db)):
+    """Called by horizon-weekly.yml — only for tickers should_recompute_horizon.py
+    flagged. Upserts by ticker (not by date): TickerHorizon has no daily-row concept,
+    so reuse weeks simply don't call this at all and the existing row stays valid."""
+    if x_job_secret != os.getenv("JOB_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid job secret.")
+    from models import TickerHorizon
+
+    ticker = body.ticker.upper()
+    row = db.query(TickerHorizon).filter(TickerHorizon.ticker == ticker).first()
+    if not row:
+        row = TickerHorizon(ticker=ticker)
+        db.add(row)
+
+    row.time_horizon_fit = body.time_horizon_fit
+    row.time_horizon_reasoning = body.time_horizon_reasoning
+    row.time_horizon_last_computed = body.computed_date
+    row.analyst_consensus = body.analyst_consensus
+    row.pe_forward = body.pe_forward
+    row.revenue_growth = body.revenue_growth
+    row.earnings_growth = body.earnings_growth
+    row.profit_margin = body.profit_margin
+    row.debt_to_equity = body.debt_to_equity
+    row.market_cap = body.market_cap
+    row.revenue_growth_trend = body.revenue_growth_trend
+    row.earnings_growth_trend = body.earnings_growth_trend
+    row.margin_trend_recent = body.margin_trend_recent
+    row.inst_ownership_trend = body.inst_ownership_trend
+    row.insider_ownership_trend = body.insider_ownership_trend
+    row.revenue_cagr_3y = body.revenue_cagr_3y
+    row.margin_trend_3y = body.margin_trend_3y
+    row.interest_coverage_ratio = body.interest_coverage_ratio
+    row.analyst_rating_changes_90d = body.analyst_rating_changes_90d
+    db.commit()
+    return {"status": "saved", "ticker": ticker}
 
 
 @router.get("/admin/memories")
