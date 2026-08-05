@@ -123,6 +123,43 @@ describe("52-week range position", () => {
   });
 });
 
+describe("TH_META (long-term vs short-term horizon badge)", () => {
+  const TH_META: Record<string, { label: string; color: string; bg: string; bd: string }> = {
+    LONG_TERM_HOLD:        { label: "Long-Term Hold",  color: "var(--t-green)", bg: "var(--t-green-bg)", bd: "var(--t-green-mid)" },
+    BOTH:                  { label: "Long & Short",    color: "var(--t-green)", bg: "var(--t-green-bg)", bd: "var(--t-green-mid)" },
+    SHORT_TERM_TRADE_ONLY: { label: "Short-Term Only", color: "var(--t-yellow)", bg: "var(--t-yellow-bg)", bd: "var(--t-yellow-border)" },
+    AVOID:                 { label: "Avoid",           color: "var(--t-red)", bg: "var(--t-red-bg)", bd: "var(--t-red-border)" },
+  };
+
+  it("has all four valid horizon fits", () => {
+    expect(Object.keys(TH_META)).toEqual(["LONG_TERM_HOLD", "BOTH", "SHORT_TERM_TRADE_ONLY", "AVOID"]);
+  });
+
+  it("LONG_TERM_HOLD and BOTH are both green (both compatible with a 1-5yr hold)", () => {
+    expect(TH_META.LONG_TERM_HOLD.color).toBe("var(--t-green)");
+    expect(TH_META.BOTH.color).toBe("var(--t-green)");
+  });
+
+  it("SHORT_TERM_TRADE_ONLY is amber, not red — it's a caution, not a rejection", () => {
+    expect(TH_META.SHORT_TERM_TRADE_ONLY.color).toBe("var(--t-yellow)");
+  });
+
+  it("AVOID is red", () => {
+    expect(TH_META.AVOID.color).toBe("var(--t-red)");
+  });
+
+  it("unknown/unexpected fit value returns undefined — badge must not render, not crash", () => {
+    expect(TH_META["HOLD_FOREVER"]).toBeUndefined();
+  });
+
+  it("every entry has a label distinct from the raw enum value", () => {
+    for (const [key, meta] of Object.entries(TH_META)) {
+      expect(meta.label).not.toBe(key);
+      expect(meta.label.length).toBeGreaterThan(0);
+    }
+  });
+});
+
 describe("RSI classification", () => {
   const classify = (rsi: number) =>
     rsi >= 70 ? "Overbought" : rsi <= 30 ? "Oversold" : "Neutral";

@@ -225,6 +225,49 @@ class StockMemory(Base):
     update_count = Column(Integer, default=0)
 
 
+class TickerHorizon(Base):
+    """Long-term (1-5yr) vs short-term holding fit — one row per ticker, not per day.
+
+    Deliberately NOT columns on StockAnalysis: this is computed weekly
+    (.github/workflows/horizon-weekly.yml), independent of the Mon-Fri nightly
+    verdict cadence, so it needs the same "ticker-keyed, updated only when
+    something changed" shape as StockMemory rather than a daily-row shape."""
+    __tablename__ = "ticker_horizons"
+    ticker = Column(String, primary_key=True)
+
+    time_horizon_fit = Column(String)        # LONG_TERM_HOLD / SHORT_TERM_TRADE_ONLY / BOTH / AVOID
+    time_horizon_reasoning = Column(Text)    # one-sentence rationale
+    time_horizon_last_computed = Column(Date)  # distinct from updated_at — tracks skip-reuse
+
+    # Fundamentals snapshot behind the last computed judgment — what
+    # scripts/should_recompute_horizon.py diffs this week's fundamentals against.
+    analyst_consensus = Column(String)
+    pe_forward = Column(Float)
+    revenue_growth = Column(Float)
+    earnings_growth = Column(Float)
+    profit_margin = Column(Float)
+    debt_to_equity = Column(Float)
+    market_cap = Column(Float)
+
+    # Phase A trend classification as of the last computation (compute_fundamentals_trend.py,
+    # self-derived from our own stock_analyses history, zero new API cost). Stored so
+    # should_recompute_horizon.py can trigger on a CHANGE of trend state, not just "is
+    # trending" — otherwise a steady multi-week trend would force a recompute every week.
+    revenue_growth_trend = Column(String)     # ACCELERATING / STABLE / DECELERATING
+    earnings_growth_trend = Column(String)
+    margin_trend_recent = Column(String)      # EXPANDING / STABLE / CONTRACTING (180d self-derived)
+    inst_ownership_trend = Column(String)     # ACCUMULATING / STABLE / DISTRIBUTING
+    insider_ownership_trend = Column(String)  # INCREASING / STABLE / DECREASING
+
+    # Deeper long-term signals, fetched only on recompute weeks (Phase B).
+    revenue_cagr_3y = Column(Float)          # 3yr revenue CAGR from income_stmt
+    margin_trend_3y = Column(String)         # EXPANDING / STABLE / CONTRACTING (multi-year, from income_stmt)
+    interest_coverage_ratio = Column(Float)  # EBIT / interest expense
+    analyst_rating_changes_90d = Column(Integer)  # net upgrades minus downgrades, trailing 90d
+
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class StockReport(Base):
     """On-demand AI-generated report synthesizing past analyses for a ticker. One per ticker per day."""
     __tablename__ = "stock_reports"

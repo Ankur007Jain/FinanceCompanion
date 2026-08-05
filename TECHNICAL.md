@@ -127,6 +127,22 @@ Nightly (GitHub Actions "Nightly Stock Analysis", 4x/weekday):
 | cost_usd | FLOAT | USD cost for this analysis |
 | created_at | DATETIME | |
 
+**`ticker_horizons`** — one row per ticker (not per day, unlike `stock_analyses` above).
+Long-term (1-5yr) vs short-term holding fit, updated by the separate weekly pipeline
+described below and merged into `stock_analyses`-shaped API responses via a join in
+`routers/analysis.py` (`_with_horizon` / `_fetch_horizons`).
+
+| Field | Type | Notes |
+|-------|------|-------|
+| ticker | VARCHAR PK | |
+| time_horizon_fit | VARCHAR | LONG_TERM_HOLD/SHORT_TERM_TRADE_ONLY/BOTH/AVOID — distinct from the nightly verdict's near-term timing |
+| time_horizon_reasoning | TEXT | one sentence, cites specific figures |
+| time_horizon_last_computed | DATE | last time this was actually re-reasoned by the LLM — most weeks it's reused, not recomputed |
+| analyst_consensus / pe_forward / revenue_growth / earnings_growth / profit_margin / debt_to_equity / market_cap | | fundamentals snapshot behind the last judgment — what the skip-check diffs against |
+| revenue_growth_trend / earnings_growth_trend / margin_trend_recent / inst_ownership_trend / insider_ownership_trend | VARCHAR | self-derived trend classification as of the last computation (Phase A, see below) |
+| revenue_cagr_3y / margin_trend_3y / interest_coverage_ratio / analyst_rating_changes_90d | | deeper fundamentals, fetched only on recompute weeks (Phase B, see below) |
+| updated_at | DATETIME | |
+
 ### `stock_memories` ← global per ticker
 | Column | Type | Notes |
 |--------|------|-------|
@@ -406,6 +422,44 @@ self-reported by the LLM:
 
 - **Local/manual path** (`backend/services/nightly_runner.py::_compute_signal_convergence`) — computes a 7-signal subset (the first 7 above) directly from ORM objects, before calling `generate_verdict()`.
 - **Production path** (GHA `nightly.yml`) — `scripts/compute_signal_convergence.py TICKER` computes the full 10-signal score from `/tmp/summary_TICKER.json` (written by Step 1) and writes `/tmp/convergence_TICKER.json`, which Step 3a's prompt reads as fixed, read-only context. **Until this fix, production had the LLM self-report this score in the same JSON response as `conviction_score` — which meant it could inflate both together and the score couldn't act as an independent check.** This was the root cause of the conviction-inversion bug found in the weekly scorecard (issue #100, PR #104): 70+ conviction BUYs underperformed 50-69 conviction BUYs.
+
+### Long-Term/Short-Term Horizon Fit
+
+A second, independent judgment alongside the nightly verdict: whether a ticker is suited to a
+1-5yr buy-and-hold position (`time_horizon_fit`), distinct from the verdict's near-term
+entry/exit timing. A stock can be `SHORT_TERM_TRADE_ONLY` while tonight's verdict is BUY (e.g.
+leveraged ETFs), and vice versa.
+
+**Runs on its own weekly pipeline** (`.github/workflows/horizon-weekly.yml`, Saturdays),
+separate from the Mon-Fri nightly verdict — this judgment is about slow-moving structural
+quality, not daily noise, and running it off-schedule avoids contending with the nightly runs
+for the shared Claude Code subscription usage pool. Because the cadence differs from the
+nightly verdict, the result lives in its own table, `ticker_horizons` (one row per ticker, not
+per day — same shape as `stock_memories`), rather than as columns on `stock_analyses`; a join in
+`routers/analysis.py` (`_with_horizon`) merges it into `stock_analyses`-shaped API responses so
+the frontend doesn't need to know they're stored separately.
+
+Even weekly, most tickers most weeks don't need fresh LLM reasoning — fundamentals that would
+change a 1-5yr judgment don't meaningfully move week to week. `scripts/should_recompute_horizon.py`
+is a deterministic (non-LLM) skip-check, same pattern as signal convergence, with two trigger
+families:
+- **Snapshot deltas** — this week's fundamentals vs. the fundamentals behind the last computed
+  judgment (`GET /jobs/admin/last-horizon`): revenue/earnings growth ±5-10pp, forward P/E or
+  debt/equity or market cap ±20% relative, analyst consensus flip, or a 90-day staleness safety net.
+- **Trend state changes** (Phase A) — `scripts/compute_fundamentals_trend.py` derives a trend
+  classification (accelerating/decelerating growth, expanding/contracting margin,
+  accumulating/distributing institutional or insider ownership) purely from the ticker's own
+  accumulated `stock_analyses` history, zero new external API cost. The skip-check triggers only
+  on a *change* of trend state (e.g. institutional ownership flipping from stable to
+  distributing) — not on "currently trending," since a steady trend would otherwise force a
+  recompute every week and defeat the point of the skip-check.
+
+Only tickers the skip-check flags get the heavier Phase B pull —
+`scripts/fetch_deep_fundamentals.py` (3yr revenue CAGR and margin trend from `income_stmt`,
+interest coverage ratio, net analyst rating changes from `upgrades_downgrades`) — before the LLM
+reasons and `POST /jobs/ingest-horizon` upserts the ticker's row. Reuse weeks call nothing at
+all: the existing `ticker_horizons` row is already correct, so there's no "resend to carry
+forward" step the way `stock_analyses`' daily-row model would have required.
 
 ### Conviction Calibration
 

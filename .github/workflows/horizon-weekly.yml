@@ -1,0 +1,242 @@
+name: Horizon Weekly (Long-Term vs Short-Term Fit)
+
+on:
+  schedule:
+    # Saturday, well clear of the Mon-Fri nightly cron (0 4,9,14,19 * * 1-5) — no
+    # contention for the shared Claude Code subscription usage pool, and this judgment
+    # is explicitly NOT meant to react to daily noise (see should_recompute_horizon.py).
+    - cron: "0 10 * * 6"
+  workflow_dispatch:
+    inputs:
+      tickers:
+        description: "Comma-separated tickers to test (e.g. NVDA,MSFT) — leave empty for the full watchlist"
+        required: false
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  # ── Job 1: compute batches of 5 across the full watchlist ──────────────────
+  split:
+    name: "Split tickers into batches"
+    runs-on: ubuntu-latest
+    environment: Production
+    outputs:
+      batches: ${{ steps.compute.outputs.batches }}
+      has_work: ${{ steps.compute.outputs.has_work }}
+    steps:
+      - name: Compute ticker batches
+        id: compute
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+          TICKERS_OVERRIDE: ${{ github.event.inputs.tickers }}
+        run: |
+          python3 << 'PYEOF'
+          import json, subprocess, os
+
+          backend = os.environ['BACKEND_URL']
+          secret  = os.environ['ADMIN_SECRET']
+          override = os.environ.get('TICKERS_OVERRIDE', '').strip()
+
+          if override:
+              all_tickers = [t.strip().upper() for t in override.split(',') if t.strip()]
+              print(f"Manual override — testing only: {all_tickers}")
+          else:
+              r = subprocess.run(
+                  ['curl', '-sf', f"{backend}/jobs/admin/tickers?x_admin_secret={secret}"],
+                  capture_output=True, text=True, timeout=15,
+              )
+              try:
+                  all_tickers = json.loads(r.stdout).get('tickers', [])
+              except Exception:
+                  all_tickers = []
+
+          print(f"Watchlist: {len(all_tickers)} tickers — {all_tickers}")
+
+          BATCH = 5
+          if all_tickers:
+              batches  = [','.join(all_tickers[i:i+BATCH]) for i in range(0, len(all_tickers), BATCH)]
+              has_work = 'true'
+          else:
+              batches  = ['__SKIP__']
+              has_work = 'false'
+          print(f"Batches ({len(batches)}): {batches}")
+
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+              f.write(f"batches={json.dumps(batches)}\n")
+              f.write(f"has_work={has_work}\n")
+          PYEOF
+
+  # ── Job 2: one parallel job per batch of 5 ──────────────────────────────────
+  analyze:
+    name: "Horizon [${{ matrix.batch }}]"
+    needs: split
+    if: needs.split.outputs.has_work == 'true'
+    runs-on: ubuntu-latest
+    environment: Production
+    strategy:
+      matrix:
+        batch: ${{ fromJson(needs.split.outputs.batches) }}
+      fail-fast: false
+      max-parallel: 6   # shares the same Claude Code subscription usage pool as nightly.yml
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install data deps
+        run: pip install yfinance pandas requests
+
+      - name: Analyze batch
+        uses: anthropics/claude-code-action@beta
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          JOB_SECRET: ${{ secrets.JOB_SECRET }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+        with:
+          mode: agent
+          model: claude-sonnet-5
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          allowed_tools: "Bash,Edit,Read,Write,Glob,Grep,LS"
+          direct_prompt: |
+            You are FinanceCompanion's weekly long-term/short-term horizon agent. Today is $(date +%Y-%m-%d).
+
+            This is a DIFFERENT judgment from the nightly BUY/HOLD/SELL/WATCH verdict — you are not
+            producing a verdict here. You are answering one question per ticker: is this a
+            1-5yr buy-and-hold position, a short-term-only trade, both, or something to avoid
+            entirely? Think like a 401k/retirement-fund portfolio manager responsible for growing
+            a client's long-term wealth, not a swing trader. A ticker can be SHORT_TERM_TRADE_ONLY
+            here while also being tonight's BUY verdict (e.g. leveraged ETFs), and vice versa.
+
+            ## Your assigned tickers
+
+            ${{ matrix.batch }}
+
+            Work through every ticker below. On any per-ticker error, log it and continue —
+            never abort the batch.
+
+            ## Step 1 — Fetch current fundamentals for each ticker
+
+            ```bash
+            python3 scripts/nightly_fetch.py TICKER
+            ```
+            Writes /tmp/summary_TICKER.json. Same script and field shapes the nightly pipeline
+            uses — reused here so there's one source of truth for fundamentals extraction.
+
+            ## Step 2 — Fetch each ticker's prior horizon judgment
+
+            Run ONCE for the whole batch (comma-separated, no spaces):
+            ```bash
+            python3 scripts/fetch_ticker_horizon.py TICKER1,TICKER2,...
+            ```
+            Writes /tmp/horizon_prior_TICKER.json for tickers with a previously computed judgment.
+
+            ## Step 3 — Fetch each ticker's own fundamentals history
+
+            Run ONCE for the whole batch:
+            ```bash
+            python3 scripts/fetch_fundamentals_history.py TICKER1,TICKER2,...
+            ```
+            Writes /tmp/fundamentals_history_TICKER.json — zero new external API cost, this is
+            our own accumulated stock_analyses data.
+
+            ## Step 4 — Compute self-derived fundamentals trend (deterministic, read-only)
+
+            Per ticker:
+            ```bash
+            python3 scripts/compute_fundamentals_trend.py TICKER
+            ```
+            Writes /tmp/fundamentals_trend_TICKER.json.
+
+            ## Step 5 — Skip-check (deterministic, read-only)
+
+            Per ticker:
+            ```bash
+            python3 scripts/should_recompute_horizon.py TICKER
+            ```
+            Writes /tmp/horizon_skip_TICKER.json: {"should_recompute": bool, "reason": "...",
+            "reused_fit": "...", "reused_reasoning": "..."} (last two only present when false).
+            Read this as fixed, read-only context — do not recompute or second-guess it.
+
+            **If should_recompute=false: do nothing further for this ticker.** Do not call
+            ingest-horizon, do not re-derive a judgment, do not resend the reused one — the
+            existing TickerHorizon row is already correct and stays as-is. Move to the next ticker.
+
+            ## Step 6 — For tickers where should_recompute=true only
+
+            ### 6a — Fetch deeper fundamentals
+
+            ```bash
+            python3 scripts/fetch_deep_fundamentals.py TICKER
+            ```
+            Writes /tmp/deep_fundamentals_TICKER.json: revenue_cagr_3y, margin_trend_3y,
+            interest_coverage_ratio, analyst_rating_changes_90d. This is the heavier
+            income_stmt/balance_sheet/upgrades_downgrades pull — that's exactly why it's gated
+            behind the skip-check and not run for every ticker every week.
+
+            ### 6b — Produce the judgment
+
+            Weigh, from /tmp/summary_TICKER.json, /tmp/fundamentals_trend_TICKER.json, and
+            /tmp/deep_fundamentals_TICKER.json:
+            - 3yr revenue CAGR and margin trend (revenue_cagr_3y, margin_trend_3y) — durable
+              growth vs. a business that's structurally decelerating or margin-compressing.
+            - Self-derived trend signals (revenue_growth_trend, earnings_growth_trend,
+              margin_trend_recent, inst_ownership_trend, insider_ownership_trend) from Step 4 —
+              this is YOUR OWN accumulated tracking of this ticker, trust it as real signal.
+              inst_ownership_trend=DISTRIBUTING or insider_ownership_trend=DECREASING is a real
+              red flag even if every other number looks fine — smart money leaving is smart money
+              leaving.
+            - interest_coverage_ratio — a low ratio (roughly <3x) paired with real debt means the
+              business may not survive a prolonged downturn; weigh this heavily against any
+              "it's cheap" narrative. Null means undeterminable from available data, not "fine."
+            - analyst_rating_changes_90d — net upgrades minus downgrades over the trailing
+              quarter; a run of downgrades is a real signal even if the stock hasn't moved yet.
+            - Valuation (pe_trailing/pe_forward) sanity-checked against the growth/margin
+              trajectory above, not read in isolation.
+            - 5yr trend vs S&P (stock_5y_change vs sp500_5y_change) and balance sheet
+              (debt_to_equity, free_cashflow) from the summary JSON.
+
+            Any field can be null (small caps, recent IPOs, insufficient trend history) — treat
+            null as "unknown," never as zero or a green light. Never invent a number — every
+            figure you cite must come from one of the JSON files above.
+
+            **Produce:**
+            - time_horizon_fit: one of LONG_TERM_HOLD (quality compounder, hold through
+              volatility) / SHORT_TERM_TRADE_ONLY (structurally weak or too volatile to hold
+              unmonitored for years) / BOTH (works for either) / AVOID (don't hold at any horizon).
+            - time_horizon_reasoning: one sentence, citing specific figures from the JSON files
+              above.
+
+            ### 6c — POST to the backend
+
+            ```bash
+            curl -s -X POST "${{ secrets.BACKEND_URL }}/jobs/ingest-horizon?x_job_secret=${{ secrets.JOB_SECRET }}" \
+              -H "Content-Type: application/json" \
+              -d '<JSON body>'
+            ```
+            Body: ticker, computed_date (today, YYYY-MM-DD), time_horizon_fit,
+            time_horizon_reasoning, plus pass through as-is (null if missing) from the summary/
+            trend/deep-fundamentals JSON files: analyst_consensus (from summary's "analyst"
+            field), pe_forward, revenue_growth, earnings_growth, profit_margin, debt_to_equity,
+            market_cap, revenue_growth_trend, earnings_growth_trend, margin_trend_recent,
+            inst_ownership_trend, insider_ownership_trend, revenue_cagr_3y, margin_trend_3y,
+            interest_coverage_ratio, analyst_rating_changes_90d.
+
+            Only call this for tickers where should_recompute=true. Do not call it for reused
+            tickers (Step 5).
+
+            ## Step 7 — Print summary
+
+            ```
+            === Horizon batch complete — <date> ===
+            TICKER   RECOMPUTED  FIT                    REASON
+            ```
+            One row per ticker — RECOMPUTED is yes/no (Step 5's decision), FIT is the resulting
+            time_horizon_fit (freshly judged or reused), REASON is Step 5's skip-check reason.

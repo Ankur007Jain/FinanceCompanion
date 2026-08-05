@@ -135,6 +135,9 @@ class StockAnalysisOut(BaseModel):
     bear_case_simple: Optional[str] = None
     thesis_invalidation_simple: Optional[str] = None
     news_summary_simple: Optional[str] = None
+    time_horizon_fit: Optional[str] = None
+    time_horizon_reasoning: Optional[str] = None
+    time_horizon_last_computed: Optional[date] = None
     created_at: datetime
 
     class Config:
@@ -370,6 +373,33 @@ class IngestAnalysisRequest(BaseModel):
     # counts (routers/jobs.py) rather than trusting the agent to also do that arithmetic.
     gemini_tokens_input: Optional[int] = None
     gemini_tokens_output: Optional[int] = None
+
+
+class IngestHorizonRequest(BaseModel):
+    """POST /jobs/ingest-horizon — .github/workflows/horizon-weekly.yml only calls this
+    for tickers should_recompute_horizon.py flagged; on reuse weeks it simply doesn't
+    call it at all, since TickerHorizon is ticker-keyed and the existing row already
+    holds the right value (no daily-row carry-forward needed, unlike the old design)."""
+    ticker: str
+    computed_date: date
+    time_horizon_fit: str
+    time_horizon_reasoning: Optional[str] = None
+    analyst_consensus: Optional[str] = None
+    pe_forward: Optional[float] = None
+    revenue_growth: Optional[float] = None
+    earnings_growth: Optional[float] = None
+    profit_margin: Optional[float] = None
+    debt_to_equity: Optional[float] = None
+    market_cap: Optional[float] = None
+    revenue_growth_trend: Optional[str] = None
+    earnings_growth_trend: Optional[str] = None
+    margin_trend_recent: Optional[str] = None
+    inst_ownership_trend: Optional[str] = None
+    insider_ownership_trend: Optional[str] = None
+    revenue_cagr_3y: Optional[float] = None
+    margin_trend_3y: Optional[str] = None
+    interest_coverage_ratio: Optional[float] = None
+    analyst_rating_changes_90d: Optional[int] = None
 
 
 class FeedbackCreate(BaseModel):

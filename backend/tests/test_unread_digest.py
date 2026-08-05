@@ -137,6 +137,47 @@ class TestDigestUnreadFields:
         assert item["days_since_read"] >= 0
 
 
+class TestDigestHorizonMerge:
+    """/analysis/digest merges TickerHorizon (its own table, weekly cadence) into each
+    item's `analysis` via a single batched query (_fetch_horizons) — separate code path
+    from /analysis/{ticker}/latest's single-ticker lookup, so it needs its own coverage.
+
+    Tickers must be pure letters (watchlist ticker validation: ^[A-Z]{1,5}([.\\-][A-Z]{1,2})?$,
+    no digits) — unlike test_ingest.py's THZn/FHISTn tickers, which never go through the
+    /watchlist endpoint and so never hit that validator."""
+
+    def test_horizon_fields_present_when_ticker_has_a_horizon_row(self, client: TestClient):
+        e = _email()
+        _add(client, e, "UDHZA")
+        _ingest(client, "UDHZA")
+        client.post("/jobs/ingest-horizon", params={"x_job_secret": GOOD_SECRET},
+                    json={"ticker": "UDHZA", "computed_date": str(date.today()),
+                          "time_horizon_fit": "LONG_TERM_HOLD", "time_horizon_reasoning": "Durable moat."})
+        item = _digest(client, e).json()[0]
+        assert item["analysis"]["time_horizon_fit"] == "LONG_TERM_HOLD"
+        assert item["analysis"]["time_horizon_reasoning"] == "Durable moat."
+
+    def test_horizon_fields_null_when_never_computed(self, client: TestClient):
+        e = _email()
+        _add(client, e, "UDHZB")
+        _ingest(client, "UDHZB")
+        item = _digest(client, e).json()[0]
+        assert item["analysis"]["time_horizon_fit"] is None
+
+    def test_multiple_watchlist_items_get_their_own_horizon_not_cross_contaminated(self, client: TestClient):
+        e = _email()
+        _add(client, e, "UDHZC")
+        _add(client, e, "UDHZD")
+        _ingest(client, "UDHZC")
+        _ingest(client, "UDHZD")
+        client.post("/jobs/ingest-horizon", params={"x_job_secret": GOOD_SECRET},
+                    json={"ticker": "UDHZC", "computed_date": str(date.today()),
+                          "time_horizon_fit": "AVOID", "time_horizon_reasoning": "Structural decline."})
+        by_ticker = {i["ticker"]: i for i in _digest(client, e).json()}
+        assert by_ticker["UDHZC"]["analysis"]["time_horizon_fit"] == "AVOID"
+        assert by_ticker["UDHZD"]["analysis"]["time_horizon_fit"] is None
+
+
 class TestChangeSummary:
     """Unit tests for _change_summary() — each of the 7 signal triggers."""
 

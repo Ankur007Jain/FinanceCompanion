@@ -155,6 +155,31 @@ jobs:
             analyses and reports (e.g. "Past mistakes to avoid: stale analyst targets as validation").
             Tickers without a memory file are fine — just skip that context for them.
 
+            ## Step 1d — Fetch each ticker's own fundamentals history
+
+            Run ONCE for the whole batch (comma-separated tickers, no spaces):
+            ```bash
+            python3 scripts/fetch_fundamentals_history.py TICKER1,TICKER2,...
+            ```
+            Writes /tmp/fundamentals_history_TICKER.json — revenue_growth/earnings_growth/
+            profit_margin/ownership over the trailing days, from stock_analyses (zero new
+            external API cost, this is our own accumulated data). Feeds Step 2b below.
+
+            ## Step 1e — Fetch each ticker's current weekly horizon snapshot
+
+            Run ONCE for the whole batch:
+            ```bash
+            python3 scripts/fetch_ticker_horizon.py TICKER1,TICKER2,...
+            ```
+            Writes /tmp/horizon_prior_TICKER.json for tickers with a computed long-term/
+            short-term horizon judgment (from the separate weekly pipeline,
+            .github/workflows/horizon-weekly.yml) — time_horizon_fit, interest_coverage_ratio,
+            revenue_cagr_3y, margin_trend_3y, analyst_rating_changes_90d. Read this as fixed,
+            read-only background context in Step 3a — never recompute or refetch these deeper
+            fundamentals yourself, that's specifically what the weekly pipeline is for. Tickers
+            without a file yet (no weekly judgment on record, e.g. before that pipeline's first
+            run) are fine — treat as unknown, not as a red flag.
+
             ## Step 2 — Signal convergence score (precomputed, read-only)
 
             ```bash
@@ -166,6 +191,18 @@ jobs:
             Step 3a; do not recompute, restate a different value, or adjust these flags yourself.
 
             CONVICTION FLOOR: signal_convergence_score < 5 → verdict MUST be WATCH.
+
+            ## Step 2b — Self-derived fundamentals trend (precomputed, read-only)
+
+            ```bash
+            python3 scripts/compute_fundamentals_trend.py TICKER
+            ```
+            Writes /tmp/fundamentals_trend_TICKER.json: revenue_growth_trend, earnings_growth_trend,
+            margin_trend_recent, inst_ownership_trend, insider_ownership_trend — each
+            ACCELERATING/STABLE/DECELERATING (growth), EXPANDING/STABLE/CONTRACTING (margin), or
+            ACCUMULATING/STABLE/DISTRIBUTING (ownership), derived from Step 1d's history. Computed
+            fresh every night (unlike Step 1e's weekly snapshot) since this has zero external API
+            cost. Read as fixed, read-only context — do not recompute.
 
             ## Step 3a — Your verdict: Claude Sonnet 4.6 (Verdict A)
 
@@ -212,6 +249,39 @@ jobs:
             - Any of these fields can be null (small caps, recent IPOs, data gaps) — treat null as
               "unknown," never as zero or as a green light. Lower conviction_score when long-term trend
               and fundamentals contradict a purely technical setup; this is a judgment call, not a hard rule.
+
+            **Growth/ownership trend** (from /tmp/fundamentals_trend_TICKER.json, Step 2b — fixed,
+            read-only, computed fresh tonight):
+            - revenue_growth_trend / earnings_growth_trend: ACCELERATING vs DECELERATING is a real
+              distinction a single snapshot number can't make — "15% growth" reads very differently
+              if it was 40% a year ago (DECELERATING) vs 5% a year ago (ACCELERATING). Weigh
+              accordingly; don't just re-read the snapshot number and ignore the trend label.
+            - inst_ownership_trend / insider_ownership_trend: ACCUMULATING/INCREASING is real
+              conviction; DISTRIBUTING/DECREASING is a real caution even when the technical setup
+              looks fine — smart money quietly leaving during an oversold bounce is a classic trap
+              setup, not a buying opportunity. Weigh this into conviction_score and entry_quality.
+            - null means insufficient history yet (a new ticker, or too few nightly runs so far) —
+              treat as unknown, not as a green or red light.
+
+            **Weekly horizon snapshot** (from /tmp/horizon_prior_TICKER.json, Step 1e — fixed,
+            read-only; may be from up to ~90 days ago, that staleness is expected and fine for
+            these fields since they're inherently slow-moving):
+            - time_horizon_fit: if AVOID, this ticker is structurally weak enough that even a
+              near-term hold carries real risk — factor this into risk_level and position_size_pct,
+              not just a long-term-only concern. If LONG_TERM_HOLD, that's a mild positive signal
+              about business quality but should NOT by itself justify a BUY if tonight's technical/
+              near-term setup doesn't support one — these are different questions.
+            - interest_coverage_ratio: low (roughly <3x) paired with real debt means the business
+              may not survive a prolonged downturn — tighten stop_loss and lower position_size_pct
+              regardless of how attractive tonight's entry looks.
+            - analyst_rating_changes_90d: a negative run (net downgrades) is a real near-term
+              caution even if price action looks constructive; a positive run supports conviction.
+            - revenue_cagr_3y / margin_trend_3y: background context on long-run business quality —
+              weigh lightly, this doesn't change night to night and is already partially reflected
+              in the 5yr-return field above.
+            - If /tmp/horizon_prior_TICKER.json doesn't exist for this ticker, skip this section
+              entirely — no weekly judgment exists yet (this is expected before
+              horizon-weekly.yml's first run), not a data quality problem.
 
             **Past lessons (stock memory):** if /tmp/memory_TICKER.txt exists (from Step 1c), read it
             before deciding. It contains lessons extracted from this ticker's own past analyses and

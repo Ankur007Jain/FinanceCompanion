@@ -68,6 +68,38 @@ export async function ingestSnapshot(
   );
 }
 
+export async function addToWatchlist(
+  request: APIRequestContext,
+  ticker: string,
+  email: string = TEST_EMAIL
+) {
+  return request.post(
+    `${BACKEND}/watchlist?id_token=test-token-${email}`,
+    { data: { ticker, is_leveraged: false } }
+  );
+}
+
+export async function ingestHorizon(
+  request: APIRequestContext,
+  ticker: string,
+  fit: string,
+  reasoning: string,
+  extra: Record<string, unknown> = {}
+) {
+  return request.post(
+    `${BACKEND}/jobs/ingest-horizon?x_job_secret=${JOB_SECRET}`,
+    {
+      data: {
+        ticker,
+        computed_date: new Date().toISOString().split("T")[0],
+        time_horizon_fit: fit,
+        time_horizon_reasoning: reasoning,
+        ...extra,
+      },
+    }
+  );
+}
+
 export async function seedUserLearning(
   request: APIRequestContext,
   userEmail: string,

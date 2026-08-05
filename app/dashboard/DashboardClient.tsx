@@ -6,7 +6,7 @@ import { signOut } from "next-auth/react";
 import ThemeToggle from "@/app/components/ThemeToggle";
 import Logo from "@/app/components/Logo";
 
-import { API, MONO, SANS, SERIF, VERDICT_META, ExpandedDetail } from "@/app/components/StockDetail";
+import { API, MONO, SANS, SERIF, VERDICT_META, TH_META, ExpandedDetail } from "@/app/components/StockDetail";
 import type { Analysis } from "@/app/components/StockDetail";
 
 
@@ -1200,6 +1200,11 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                       {sa.position_size_pct && (
                         <span style={{ fontSize: 12, fontFamily: MONO, padding: "3px 10px", borderRadius: 20, color: "var(--t-accent)", background: "var(--t-accent-bg)", border: "1px solid var(--t-accent-border)" }}>
                           {sa.position_size_pct} of portfolio
+                        </span>
+                      )}
+                      {sa.time_horizon_fit && TH_META[sa.time_horizon_fit] && (
+                        <span title={sa.time_horizon_reasoning || undefined} style={{ fontSize: 12, fontFamily: MONO, padding: "3px 10px", borderRadius: 20, color: TH_META[sa.time_horizon_fit].color, background: TH_META[sa.time_horizon_fit].bg, border: `1px solid ${TH_META[sa.time_horizon_fit].bd}` }}>
+                          1-5yr: {TH_META[sa.time_horizon_fit].label}
                         </span>
                       )}
                     </div>
