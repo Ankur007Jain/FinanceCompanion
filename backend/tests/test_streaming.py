@@ -242,7 +242,12 @@ class TestPromptCaching:
         system = mock_client.messages.stream.call_args.kwargs["system"]
         # No learnings saved for this user -> the 3rd block is conditionally absent
         assert len(system) == 2
-        assert system[0]["cache_control"] == {"type": "ephemeral"}
+        # 1h here too, even though this block never actually caches (it's under the
+        # 1024-token minimum) — required so this block's TTL isn't "lower" than the
+        # ones that follow it (system.1, system.2), which the real API rejects with
+        # a 400. The mock client here doesn't enforce that, which is exactly how this
+        # broke in production without a failing test catching it first.
+        assert system[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
         # dynamic_context: 1h TTL — it's the largest block and only changes with the
         # underlying data, so there's no reason to let it cold-write on a 5-min gap.
         assert system[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
@@ -265,7 +270,12 @@ class TestPromptCaching:
         assert r.status_code == 200
         system = mock_client.messages.stream.call_args.kwargs["system"]
         assert len(system) == 2
-        assert system[0]["cache_control"] == {"type": "ephemeral"}
+        # 1h here too, even though this block never actually caches (it's under the
+        # 1024-token minimum) — required so this block's TTL isn't "lower" than the
+        # ones that follow it (system.1, system.2), which the real API rejects with
+        # a 400. The mock client here doesn't enforce that, which is exactly how this
+        # broke in production without a failing test catching it first.
+        assert system[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
         assert system[1]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
         assert "THINGS TO REMEMBER ABOUT THIS USER" in system[0]["text"]
         assert "Keeps answers short." in system[0]["text"]
