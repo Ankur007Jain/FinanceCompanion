@@ -88,6 +88,9 @@ export interface Analysis {
   verdict_b: string | null;
   verdict_agreement: boolean | null;
   split_reason: string | null;
+  time_horizon_fit: string | null;
+  time_horizon_reasoning: string | null;
+  time_horizon_last_computed: string | null;
 }
 
 export interface StockReport {
@@ -238,8 +241,16 @@ export function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idTo
     WATCH_CLOSELY:   { label: "Watch Closely",   color: "var(--t-red)", bg: "var(--t-red-bg)", bd: "var(--t-red-border)" },
   };
 
+  const TH_META: Record<string, { label: string; color: string; bg: string; bd: string }> = {
+    LONG_TERM_HOLD:        { label: "Long-Term Hold",  color: "var(--t-green)", bg: "var(--t-green-bg)", bd: "var(--t-green-mid)" },
+    BOTH:                  { label: "Long & Short",    color: "var(--t-green)", bg: "var(--t-green-bg)", bd: "var(--t-green-mid)" },
+    SHORT_TERM_TRADE_ONLY: { label: "Short-Term Only", color: "var(--t-yellow)", bg: "var(--t-yellow-bg)", bd: "var(--t-yellow-border)" },
+    AVOID:                 { label: "Avoid",           color: "var(--t-red)", bg: "var(--t-red-bg)", bd: "var(--t-red-border)" },
+  };
+
   const eqMeta  = a.entry_quality         ? EQ_META[a.entry_quality]                : null;
   const hfMeta  = a.hold_and_forget_rating ? HF_META[a.hold_and_forget_rating]       : null;
+  const thMeta  = a.time_horizon_fit      ? TH_META[a.time_horizon_fit]             : null;
   const hasScenarios = a.scenario_bull_prob != null && a.scenario_base_prob != null && a.scenario_bear_prob != null;
 
   return (
@@ -257,7 +268,7 @@ export function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idTo
       )}
 
       {/* ── Conviction Hero Strip ── */}
-      {(a.conviction_score != null || a.risk_level || a.hold_period || eqMeta || hfMeta) && (
+      {(a.conviction_score != null || a.risk_level || a.hold_period || eqMeta || hfMeta || thMeta) && (
         <div style={{ padding: "16px 20px", borderBottom: "1px solid var(--t-border-light)", display: "flex", alignItems: "flex-start", gap: "2rem", flexWrap: "wrap", background: "var(--t-surface)" }}>
           {a.conviction_score != null && (
             <div>
@@ -296,6 +307,12 @@ export function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idTo
             <div>
               <div style={{ fontSize: "1rem", fontWeight: 700, fontFamily: MONO, color: "var(--t-accent)" }}>{a.position_size_pct}</div>
               <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>Position Size</div>
+            </div>
+          )}
+          {thMeta && (
+            <div title={a.time_horizon_reasoning || undefined}>
+              <div style={{ fontSize: "1rem", fontWeight: 600, fontFamily: SANS, color: thMeta.color }}>{thMeta.label}</div>
+              <div style={{ fontSize: "0.6rem", color: "var(--t-text-dim)", fontFamily: MONO, letterSpacing: "0.1em", textTransform: "uppercase", marginTop: 3 }}>1-5yr Fit</div>
             </div>
           )}
         </div>
@@ -425,6 +442,12 @@ export function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idTo
                   <span>{thesis_invalidation}</span>
                 </div>
               )}
+            </div>
+          )}
+          {a.time_horizon_reasoning && (
+            <div style={{ borderTop: "1px solid var(--t-border-light)", paddingTop: "1rem" }}>
+              <div style={secLabel}>1-5yr Outlook{thMeta ? ` — ${thMeta.label}` : ""}</div>
+              <div style={{ fontSize: "0.86rem", lineHeight: 1.65, color: "var(--t-text-dark)" }}>{a.time_horizon_reasoning}</div>
             </div>
           )}
           {news_summary && (

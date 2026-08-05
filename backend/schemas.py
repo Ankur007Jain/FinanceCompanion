@@ -135,6 +135,9 @@ class StockAnalysisOut(BaseModel):
     bear_case_simple: Optional[str] = None
     thesis_invalidation_simple: Optional[str] = None
     news_summary_simple: Optional[str] = None
+    time_horizon_fit: Optional[str] = None
+    time_horizon_reasoning: Optional[str] = None
+    time_horizon_last_computed: Optional[date] = None
     created_at: datetime
 
     class Config:
@@ -370,6 +373,14 @@ class IngestAnalysisRequest(BaseModel):
     # counts (routers/jobs.py) rather than trusting the agent to also do that arithmetic.
     gemini_tokens_input: Optional[int] = None
     gemini_tokens_output: Optional[int] = None
+    # Long-term/short-term holding fit. time_horizon_fit/reasoning are sent every night
+    # (either freshly reasoned or the prior night's judgment resent as-is);
+    # time_horizon_recomputed distinguishes the two so the backend only advances
+    # time_horizon_last_computed on nights real LLM reasoning happened (see
+    # scripts/should_recompute_horizon.py).
+    time_horizon_fit: Optional[str] = None
+    time_horizon_reasoning: Optional[str] = None
+    time_horizon_recomputed: Optional[bool] = None
 
 
 class FeedbackCreate(BaseModel):

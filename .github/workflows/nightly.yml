@@ -155,6 +155,15 @@ jobs:
             analyses and reports (e.g. "Past mistakes to avoid: stale analyst targets as validation").
             Tickers without a memory file are fine — just skip that context for them.
 
+            ## Step 1d — Fetch prior long-term/short-term horizon judgments
+
+            Run ONCE for the whole batch (comma-separated tickers, no spaces):
+            ```bash
+            python3 scripts/nightly_fetch_horizon.py TICKER1,TICKER2,...
+            ```
+            Writes /tmp/horizon_prior_TICKER.json for each ticker that has a previously computed
+            long-term/short-term holding judgment. Tickers without one (never computed) get no file.
+
             ## Step 2 — Signal convergence score (precomputed, read-only)
 
             ```bash
@@ -166,6 +175,18 @@ jobs:
             Step 3a; do not recompute, restate a different value, or adjust these flags yourself.
 
             CONVICTION FLOOR: signal_convergence_score < 5 → verdict MUST be WATCH.
+
+            ## Step 2b — Horizon judgment skip-check (precomputed, read-only)
+
+            ```bash
+            python3 scripts/should_recompute_horizon.py TICKER
+            ```
+            Writes /tmp/horizon_skip_TICKER.json: {"should_recompute": bool, "reason": "...",
+            "reused_fit": "...", "reused_reasoning": "..."} (the last two only present when
+            should_recompute=false). This deterministically compares tonight's fundamentals
+            (revenue/earnings growth, margins, P/E, debt/equity, market cap, analyst consensus)
+            against the fundamentals behind the last computed judgment — read it as fixed,
+            read-only context; do not recompute or second-guess this decision.
 
             ## Step 3a — Your verdict: Claude Sonnet 4.6 (Verdict A)
 
@@ -212,6 +233,28 @@ jobs:
             - Any of these fields can be null (small caps, recent IPOs, data gaps) — treat null as
               "unknown," never as zero or as a green light. Lower conviction_score when long-term trend
               and fundamentals contradict a purely technical setup; this is a judgment call, not a hard rule.
+
+            **Long-term (1-5yr) vs short-term holding fit:** read /tmp/horizon_skip_TICKER.json
+            (Step 2b) first.
+            - If should_recompute=false: use reused_fit and reused_reasoning as-is for
+              time_horizon_fit/time_horizon_reasoning below — do not re-derive them — and set
+              time_horizon_recomputed=false.
+            - If should_recompute=true (or the file/reused fields are absent — first time this
+              ticker has been judged): set time_horizon_recomputed=true and produce a fresh
+              judgment. Think like a 401k/retirement-fund portfolio manager responsible for
+              growing a client's long-term wealth, not a swing trader — this is a distinct axis
+              from the verdict/hold_period above (which governs near-term entry/exit timing).
+              Weigh the 5yr trend vs S&P, revenue/earnings growth durability, profit margin and
+              balance sheet health, competitive moat, and dividend/buyback discipline. A stock
+              can be SHORT_TERM_TRADE_ONLY (e.g. leveraged ETFs, or a structural decliner good
+              only for a technical bounce) while also being BUY on tonight's verdict, and vice
+              versa — a HOLD verdict tonight doesn't preclude LONG_TERM_HOLD.
+              - time_horizon_fit: one of LONG_TERM_HOLD (quality compounder, hold through
+                volatility) / SHORT_TERM_TRADE_ONLY (structurally weak or too volatile to hold
+                unmonitored for years) / BOTH (works for either) / AVOID (don't hold at any
+                horizon).
+              - time_horizon_reasoning: one sentence, citing specific 5yr/growth/margin/balance
+                sheet figures from the summary JSON — never invent a number here either.
 
             **Past lessons (stock memory):** if /tmp/memory_TICKER.txt exists (from Step 1c), read it
             before deciding. It contains lessons extracted from this ticker's own past analyses and
@@ -263,7 +306,10 @@ jobs:
               "scenario_bear": "<one sentence>",
               "scenario_bear_pct": <negative float>,
               "scenario_bear_prob": <0-100>,
-              "dont_panic_note": "<address >15% drop from prior BUY; otherwise empty string>"
+              "dont_panic_note": "<address >15% drop from prior BUY; otherwise empty string>",
+              "time_horizon_fit": "LONG_TERM_HOLD|SHORT_TERM_TRADE_ONLY|BOTH|AVOID",
+              "time_horizon_reasoning": "<one sentence>",
+              "time_horizon_recomputed": <true|false — per Step 2b>
             }
             ```
             Do NOT include signal_convergence_score or convergence_details in this JSON — those
@@ -366,6 +412,10 @@ jobs:
             dollar cost — the backend derives that from these raw counts.
 
             Also include earnings_date (the raw string from yfinance, e.g. "2026-07-15") if available, else omit it.
+
+            Include time_horizon_fit, time_horizon_reasoning, time_horizon_recomputed from Step 3a
+            as-is (whether reused from Step 2b or freshly judged) — send them every night for every
+            ticker, never omit them.
 
             ## Step 5 — Print summary
 

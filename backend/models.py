@@ -213,6 +213,12 @@ class StockAnalysis(Base):
     simple_fields_tokens_output = Column(Integer)
     simple_fields_cost_usd = Column(Float)
 
+    # Long-term vs short-term holding fit — recomputed only when fundamentals
+    # materially change (see scripts/should_recompute_horizon.py), not nightly.
+    time_horizon_fit = Column(String)        # LONG_TERM_HOLD / SHORT_TERM_TRADE_ONLY / BOTH / AVOID
+    time_horizon_reasoning = Column(Text)    # one-sentence rationale
+    time_horizon_last_computed = Column(Date)  # distinct from analysis_date — tracks skip-reuse
+
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

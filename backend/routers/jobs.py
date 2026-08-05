@@ -180,6 +180,24 @@ def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTas
         ) if body.gemini_tokens_input is not None and body.gemini_tokens_output is not None else None,
     }
 
+    # Long-term/short-term horizon fit — only advance time_horizon_last_computed on
+    # nights the agent actually recomputed it (should_recompute_horizon.py flagged a
+    # material change); on reuse nights, carry the original computation date forward
+    # instead of stamping today's date on an unchanged judgment.
+    if body.time_horizon_fit:
+        mapped["time_horizon_fit"] = body.time_horizon_fit
+        mapped["time_horizon_reasoning"] = body.time_horizon_reasoning
+        if body.time_horizon_recomputed:
+            mapped["time_horizon_last_computed"] = body.analysis_date
+        else:
+            mapped["time_horizon_last_computed"] = (
+                db.query(StockAnalysis.time_horizon_last_computed)
+                .filter(StockAnalysis.ticker == body.ticker, StockAnalysis.time_horizon_last_computed.isnot(None))
+                .order_by(StockAnalysis.analysis_date.desc())
+                .limit(1)
+                .scalar()
+            )
+
     # Synthesize events_json from earnings_date when the agent sends it but not events_json
     if not mapped.get("events_json") and body.earnings_date:
         mapped["events_json"] = json.dumps([{"date": body.earnings_date, "description": "Earnings"}])
@@ -340,6 +358,43 @@ def get_closes(x_admin_secret: str = "", days: int = 300, db: Session = Depends(
             result[ticker] = closes
 
     return {"closes": result}
+
+
+@router.get("/admin/last-horizon")
+def last_horizon(x_admin_secret: str = "", db: Session = Depends(get_db)):
+    """Per-ticker snapshot of the most recent long-term/short-term horizon judgment
+    (time_horizon_fit) plus the fundamentals it was based on. Feeds
+    scripts/should_recompute_horizon.py so the nightly run only pays for fresh LLM
+    horizon reasoning when fundamentals have materially moved since that snapshot,
+    instead of every night."""
+    if x_admin_secret != os.getenv("ADMIN_SECRET", ""):
+        raise HTTPException(status_code=401, detail="Invalid admin secret.")
+    from models import WatchlistItem
+
+    tickers = {t[0] for t in db.query(WatchlistItem.ticker).distinct().all()}
+    result: dict[str, dict] = {}
+    for ticker in tickers:
+        row = (
+            db.query(StockAnalysis)
+            .filter(StockAnalysis.ticker == ticker, StockAnalysis.time_horizon_fit.isnot(None))
+            .order_by(StockAnalysis.analysis_date.desc())
+            .first()
+        )
+        if not row:
+            continue
+        result[ticker] = {
+            "time_horizon_fit": row.time_horizon_fit,
+            "time_horizon_reasoning": row.time_horizon_reasoning,
+            "time_horizon_last_computed": row.time_horizon_last_computed.isoformat() if row.time_horizon_last_computed else None,
+            "analyst_consensus": row.analyst_consensus,
+            "pe_forward": row.pe_forward,
+            "revenue_growth": row.revenue_growth,
+            "earnings_growth": row.earnings_growth,
+            "profit_margin": row.profit_margin,
+            "debt_to_equity": row.debt_to_equity,
+            "market_cap": row.market_cap,
+        }
+    return {"horizons": result}
 
 
 @router.get("/admin/memories")

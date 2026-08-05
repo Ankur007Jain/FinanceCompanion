@@ -1202,6 +1202,11 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                           {sa.position_size_pct} of portfolio
                         </span>
                       )}
+                      {sa.time_horizon_fit && (
+                        <span title={sa.time_horizon_reasoning || undefined} style={{ fontSize: 12, fontFamily: MONO, padding: "3px 10px", borderRadius: 20, color: sa.time_horizon_fit === "LONG_TERM_HOLD" || sa.time_horizon_fit === "BOTH" ? "var(--t-green)" : sa.time_horizon_fit === "SHORT_TERM_TRADE_ONLY" ? "var(--t-yellow)" : "var(--t-red)", background: sa.time_horizon_fit === "LONG_TERM_HOLD" || sa.time_horizon_fit === "BOTH" ? "var(--t-green-bg)" : sa.time_horizon_fit === "SHORT_TERM_TRADE_ONLY" ? "var(--t-yellow-bg)" : "var(--t-red-bg)", border: `1px solid ${sa.time_horizon_fit === "LONG_TERM_HOLD" || sa.time_horizon_fit === "BOTH" ? "var(--t-green-mid)" : sa.time_horizon_fit === "SHORT_TERM_TRADE_ONLY" ? "var(--t-yellow-border)" : "var(--t-red-border)"}` }}>
+                          {sa.time_horizon_fit === "LONG_TERM_HOLD" ? "1-5yr: Long-Term Hold" : sa.time_horizon_fit === "BOTH" ? "1-5yr: Long & Short" : sa.time_horizon_fit === "SHORT_TERM_TRADE_ONLY" ? "1-5yr: Short-Term Only" : "1-5yr: Avoid"}
+                        </span>
+                      )}
                     </div>
 
                     {/* Why now — convergence signals */}
