@@ -134,7 +134,7 @@ jobs:
 
             Run ONCE for the whole batch (comma-separated, no spaces):
             ```bash
-            python3 scripts/fetch_prior_horizon.py TICKER1,TICKER2,...
+            python3 scripts/fetch_ticker_horizon.py TICKER1,TICKER2,...
             ```
             Writes /tmp/horizon_prior_TICKER.json for tickers with a previously computed judgment.
 
