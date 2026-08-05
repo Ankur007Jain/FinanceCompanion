@@ -351,7 +351,13 @@ async def stream_message(
     # mid-conversation now busts this whole block instead of just its own — cheap either
     # way at this size, so an acceptable tradeoff for getting message-history caching.
     static_block = base_prompt + (f"\n\n{learnings_block}" if learnings_block else "")
-    api_system = [{"type": "text", "text": static_block, "cache_control": {"type": "ephemeral"}}]
+    # ttl:"1h" here too — not because this block is big enough to benefit (it's ~500
+    # tokens, under Sonnet 5's 1024-token cache minimum, so it never actually caches
+    # either way), but because the API requires TTLs to be non-increasing across the
+    # whole request (tools -> system -> messages): a 1h block is not allowed to follow
+    # a 5m one. Leaving this on the 5m default while every later block is 1h made
+    # every single chat request 400 in production.
+    api_system = [{"type": "text", "text": static_block, "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
     if dynamic_context:
         # Also cacheable: rebuilt fresh from the DB every call, so this only ever changes
         # when the underlying data actually changes (new nightly run, watchlist edit) — never
