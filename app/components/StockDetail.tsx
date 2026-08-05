@@ -111,6 +111,16 @@ export const VERDICT_META: Record<string, { color: string; bg: string; bd: strin
   WATCH: { color: "var(--t-text-muted)", bg: "var(--t-surface-warm)", bd: "var(--t-border)", label: "WATCH" },
 };
 
+// Long-term (1-5yr) vs short-term holding fit — exported (not local to ExpandedDetail)
+// so DashboardClient's spotlight card can reuse the same label/color mapping instead of
+// re-deriving it inline.
+export const TH_META: Record<string, { label: string; color: string; bg: string; bd: string }> = {
+  LONG_TERM_HOLD:        { label: "Long-Term Hold",  color: "var(--t-green)", bg: "var(--t-green-bg)", bd: "var(--t-green-mid)" },
+  BOTH:                  { label: "Long & Short",    color: "var(--t-green)", bg: "var(--t-green-bg)", bd: "var(--t-green-mid)" },
+  SHORT_TERM_TRADE_ONLY: { label: "Short-Term Only", color: "var(--t-yellow)", bg: "var(--t-yellow-bg)", bd: "var(--t-yellow-border)" },
+  AVOID:                 { label: "Avoid",           color: "var(--t-red)", bg: "var(--t-red-bg)", bd: "var(--t-red-border)" },
+};
+
 
 export function RangeBar({ lo, hi, pct }: { lo: number; hi: number; pct: number }) {
   const clamp = Math.max(0, Math.min(100, pct));
@@ -239,13 +249,6 @@ export function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idTo
     HOLD_AND_FORGET: { label: "Hold & Forget ✓", color: "var(--t-green)", bg: "var(--t-green-bg)", bd: "var(--t-green-mid)" },
     CHECK_MONTHLY:   { label: "Check Monthly",   color: "var(--t-yellow)", bg: "var(--t-yellow-bg)", bd: "var(--t-yellow-border)" },
     WATCH_CLOSELY:   { label: "Watch Closely",   color: "var(--t-red)", bg: "var(--t-red-bg)", bd: "var(--t-red-border)" },
-  };
-
-  const TH_META: Record<string, { label: string; color: string; bg: string; bd: string }> = {
-    LONG_TERM_HOLD:        { label: "Long-Term Hold",  color: "var(--t-green)", bg: "var(--t-green-bg)", bd: "var(--t-green-mid)" },
-    BOTH:                  { label: "Long & Short",    color: "var(--t-green)", bg: "var(--t-green-bg)", bd: "var(--t-green-mid)" },
-    SHORT_TERM_TRADE_ONLY: { label: "Short-Term Only", color: "var(--t-yellow)", bg: "var(--t-yellow-bg)", bd: "var(--t-yellow-border)" },
-    AVOID:                 { label: "Avoid",           color: "var(--t-red)", bg: "var(--t-red-bg)", bd: "var(--t-red-border)" },
   };
 
   const eqMeta  = a.entry_quality         ? EQ_META[a.entry_quality]                : null;

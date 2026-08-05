@@ -176,6 +176,22 @@ class TestHistory:
                            params={"id_token": "fake", "days": 3})
         assert len(r.json()) == 3
 
+    def test_history_merges_same_horizon_into_every_row(self, client: TestClient):
+        """TickerHorizon is one row per ticker, not per day — every row in a ticker's
+        history should carry the same current horizon judgment via the join, a single
+        lookup shared across all rows (not looked up per-row)."""
+        for days_ago in (2, 1, 0):
+            d = str(date.today() - timedelta(days=days_ago))
+            _ingest(client, "HHORZ1", analysis_date=d, verdict="HOLD")
+        client.post("/jobs/ingest-horizon", params={"x_job_secret": GOOD_SECRET},
+                    json={"ticker": "HHORZ1", "computed_date": str(date.today()),
+                          "time_horizon_fit": "BOTH", "time_horizon_reasoning": "Fine either way."})
+        with _mock_user():
+            r = client.get("/analysis/HHORZ1/history", params={"id_token": "fake"})
+        rows = r.json()
+        assert len(rows) == 3
+        assert all(row["time_horizon_fit"] == "BOTH" for row in rows)
+
 
 class TestAdminTickers:
     def test_bad_secret_returns_401(self, client: TestClient):

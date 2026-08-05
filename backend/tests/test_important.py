@@ -93,3 +93,22 @@ def test_important_returns_200_no_important_days(client):
         r = client.get("/analysis/important", params={"id_token": "tok"})
     assert r.status_code == 200
     assert r.json() == []
+
+
+def test_important_merges_horizon_per_ticker(client):
+    """/important spans multiple watchlist tickers in one query — _fetch_horizons must
+    batch-lookup and attribute each row's TickerHorizon correctly, not just pass through
+    a single lookup like /latest does."""
+    e = _email()
+    _add_watchlist(client, e, "AMDX")
+    _add_watchlist(client, e, "INTX")
+    _ingest(client, "AMDX", important=True)
+    _ingest(client, "INTX", important=True)
+    client.post("/jobs/ingest-horizon", params={"x_job_secret": GOOD_SECRET},
+                json={"ticker": "AMDX", "computed_date": str(date.today()),
+                      "time_horizon_fit": "SHORT_TERM_TRADE_ONLY", "time_horizon_reasoning": "High beta."})
+    with _mock_user(e):
+        r = client.get("/analysis/important", params={"id_token": "tok"})
+    by_ticker = {x["ticker"]: x for x in r.json()}
+    assert by_ticker["AMDX"]["time_horizon_fit"] == "SHORT_TERM_TRADE_ONLY"
+    assert by_ticker["INTX"]["time_horizon_fit"] is None
