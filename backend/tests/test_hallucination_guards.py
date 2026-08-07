@@ -44,3 +44,19 @@ class TestDataConflictsSurfacedToAskAI:
         content = (REPO_ROOT / "backend" / "services" / "prompt_builder.py").read_text()
         assert "data_conflicts" in content
         assert "Data caution" in content
+
+
+class TestHardFinancialFigureGrounding:
+    """Regression for the MSFT $331B fabricated-revenue incident: the chat system prompt
+    must explicitly warn that absolute dollar figures (revenue/earnings/market cap) are
+    not in the dossier and require a web_search citation, and must include an
+    order-of-magnitude sanity-check instruction."""
+
+    def test_absolute_dollar_figures_require_websearch_citation(self):
+        content = (REPO_ROOT / "backend" / "services" / "prompt_builder.py").read_text()
+        # Must call out that absolute revenue/earnings are not in the dossier.
+        assert "revenue" in content.lower()
+        assert "web_search" in content
+        # Must instruct the model to sanity-check magnitudes rather than parroting a
+        # confidently-wrong figure.
+        assert "sanity-check" in content.lower() or "order of magnitude" in content.lower()
