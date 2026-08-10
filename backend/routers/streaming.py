@@ -36,6 +36,49 @@ router = APIRouter(prefix="/conversations", tags=["streaming"])
 # whatever this trims off (see below) — verbatim retrieval, not silent data loss.
 _MAX_LIVE_HISTORY = 20
 
+# A real production conversation (94-ticker watchlist, ~40k-token system prompt) showed
+# Sonnet 5 spending the large majority of its output budget on its own unprompted
+# reasoning before ever producing visible text — even for a plain "hi", even with
+# use_thinking=False and no thinking param sent at all. With the old floor (1024 for a
+# short message), that meant ZERO text ever got out; the whole exchange silently
+# vanished (full_text stayed empty, so persist()'s `if not full_text: return` guard
+# meant nothing was even saved). Raised as cheap insurance, not a behavior change for
+# the common case: max_tokens is a ceiling the model rarely hits when it isn't fighting
+# a wall of context, so a higher ceiling costs nothing for a normal exchange and only
+# matters for the tail this was built to survive.
+_MIN_MAX_TOKENS_FLOOR = 2048
+
+# Bounded auto-continuation for a genuine mid-prose max_tokens cutoff (Claude was still
+# writing the answer, not paused for a tool call). Cost/quality reasoning, written down
+# because it's easy to get backwards:
+# - Zero added cost for the normal case: this path only ever runs when stop_reason is
+#   already "max_tokens" with no tool call pending — every conversation that finishes
+#   within budget (the vast majority) never touches this code at all.
+# - Not "extra" spend for the case it DOES run: the continuation's output tokens are
+#   exactly what the user asked for and would otherwise never arrive — today, without
+#   this, the alternative is either total silence (nothing generated) or a reply cut off
+#   mid-sentence, and in production this specific failure mode led to the user retrying
+#   the same doomed request nine times, which is real spend for zero delivered value.
+#   One bounded continuation replacing nine blind retries is a net cost reduction, not
+#   an increase.
+# - Repeated system-prompt/history tokens on the continuation call are the same content
+#   already inside this conversation's 1h prompt-cache window (see the cache_control
+#   comments below) — a cache-read re-send, not a fresh full-price one.
+# - Bounded at 2 attempts (3 total API calls max for one user turn) specifically so a
+#   pathological case that keeps hitting the ceiling can't spiral into unbounded spend;
+#   Fix 1 (compact-format threshold) and the raised floor above should make actually
+#   reaching this rare to begin with.
+# - Only triggers when the cut content's LAST block is plain text (see the isinstance
+#   check below) — a truncated tool_use/server_tool_use block is a genuinely harder
+#   problem (resuming a half-issued tool call safely) that isn't attempted here; that
+#   case still falls through to the honest truncation marker instead.
+_MAX_CONTINUATION_ATTEMPTS = 2
+_CONTINUATION_PROMPT = (
+    "Continue your previous answer from exactly where it left off. Do not repeat "
+    "anything you already said and do not add a new greeting or preamble — just "
+    "continue the sentence/thought seamlessly, as if uninterrupted."
+)
+
 _WEB_SEARCH_TOOL = {
     "type": "web_search_20250305",
     "name": "web_search",
@@ -394,7 +437,7 @@ async def stream_message(
         # keeps hitting each one's own cache entry instead of re-writing on every switch.
         api_system.append({"type": "text", "text": focus_dossier, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
-    max_tokens = _estimate_max_tokens(body.content)
+    max_tokens = max(_estimate_max_tokens(body.content), _MIN_MAX_TOKENS_FLOOR)
     use_thinking = _should_use_extended_thinking(body.content)
     if use_thinking:
         # Adaptive thinking has no manual budget to add on top of — the model decides
@@ -470,6 +513,7 @@ async def stream_message(
 
             client = anthropic.AsyncAnthropic(api_key=api_key)
             messages = list(history)
+            continuation_attempts = 0
 
             while True:
                 current_tool_id = current_tool_name = current_tool_input = current_tool_type = ""
@@ -552,9 +596,30 @@ async def stream_message(
 
                 _log_web_searches(final, conversation_id, session)
 
-                if final.stop_reason == "end_turn" or not tool_uses:
+                if final.stop_reason == "end_turn":
                     reached_end_turn = True
                     break
+
+                if not tool_uses:
+                    # No client-side tool call to round-trip on this turn. Previously
+                    # this branch also caught stop_reason="max_tokens" and treated it as
+                    # a clean finish (reached_end_turn=True) just because there was no
+                    # tool_use — silently misclassifying an answer that got cut off
+                    # mid-sentence as a complete one. A genuine mid-prose cutoff gets one
+                    # bounded shot at finishing instead (see _MAX_CONTINUATION_ATTEMPTS'
+                    # comment for the cost/quality reasoning); anything else that reaches
+                    # here without a tool call falls through to the truncation marker.
+                    if (
+                        final.stop_reason == "max_tokens"
+                        and continuation_attempts < _MAX_CONTINUATION_ATTEMPTS
+                        and final.content
+                        and getattr(final.content[-1], "type", "") == "text"
+                    ):
+                        continuation_attempts += 1
+                        messages.append({"role": "assistant", "content": final.content})
+                        messages.append({"role": "user", "content": _CONTINUATION_PROMPT})
+                        continue
+                    break  # reached_end_turn stays False — persist() marks this interrupted
 
                 # Execute client-side tool calls. web_search is server-side and already
                 # resolved above; its result is already part of `final.content`, which

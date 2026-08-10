@@ -1200,3 +1200,181 @@ class TestTruncatedResponseMarker:
         assert msg is not None
         assert msg.content == "A complete reply."
         assert "[Response interrupted" not in msg.content
+
+
+class TestMaxTokensAutoContinuation:
+    """Regression, reproduced against real production data: a 94-ticker watchlist's
+    ~40k-token system prompt was large enough that Sonnet 5 spent the majority of
+    max_tokens on its own unprompted reasoning before any visible text — even for
+    messages that never requested thinking. A stop_reason=max_tokens response with no
+    tool call used to be silently misclassified as a clean finish (the old
+    `not tool_uses` check didn't distinguish it from a genuine end_turn), so a reply
+    cut off mid-sentence looked identical to a complete answer, or — when zero text
+    survived — vanished with nothing saved at all."""
+
+    def test_max_tokens_with_trailing_text_triggers_one_continuation(self, client: TestClient, db_session):
+        from models import Message
+
+        turn1_text = MagicMock(type="content_block_delta", delta=MagicMock(type="text_delta", text="This needs assumed rates of"))
+        turn1_block = MagicMock(type="text", text="This needs assumed rates of")
+        turn1_final = MagicMock(stop_reason="max_tokens", content=[turn1_block],
+                                 usage=MagicMock(input_tokens=100, output_tokens=50, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+
+        turn2_text = MagicMock(type="content_block_delta", delta=MagicMock(type="text_delta", text=" return, which I'll assume conservatively."))
+        turn2_final = MagicMock(stop_reason="end_turn", content=[],
+                                 usage=MagicMock(input_tokens=120, output_tokens=20, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+
+        turns = [([turn1_text], turn1_final), ([turn2_text], turn2_final)]
+        call_count = {"n": 0}
+
+        def _side_effect(**kwargs):
+            events, final_msg = turns[call_count["n"]]
+            call_count["n"] += 1
+            return _two_turn_stream_ctx(events, final_msg)
+
+        mock_client = MagicMock()
+        mock_client.messages.stream = MagicMock(side_effect=_side_effect)
+        mock_client.messages.create = AsyncMock(return_value=MagicMock(content=[MagicMock(text="Title")]))
+
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), patch("routers.streaming.anthropic.AsyncAnthropic", return_value=mock_client):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "predict my return", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+
+        assert r.status_code == 200
+        assert call_count["n"] == 2  # exactly one continuation — no more, no less
+        db_session.expire_all()
+        msg = db_session.query(Message).filter(Message.conversation_id == conv_id, Message.role == "assistant").first()
+        assert msg is not None
+        # Seamless — no "\n\n" turn-separator inserted mid-sentence, unlike the tool-use case
+        assert msg.content == "This needs assumed rates of return, which I'll assume conservatively."
+        assert "[Response interrupted" not in msg.content
+
+        second_call_messages = mock_client.messages.stream.call_args_list[1].kwargs["messages"]
+        assert second_call_messages[-2]["role"] == "assistant"
+        assert second_call_messages[-1]["role"] == "user"
+        assert "Continue your previous answer" in second_call_messages[-1]["content"]
+
+    def test_repeated_max_tokens_stops_after_bound_and_marks_interrupted(self, client: TestClient, db_session):
+        """Never loops forever — capped at _MAX_CONTINUATION_ATTEMPTS, then falls back
+        to the honest truncation marker rather than retrying indefinitely."""
+        from models import Message
+        from routers.streaming import _MAX_CONTINUATION_ATTEMPTS
+
+        def _make_turn(text):
+            delta = MagicMock(type="content_block_delta", delta=MagicMock(type="text_delta", text=text))
+            block = MagicMock(type="text", text=text)
+            final = MagicMock(stop_reason="max_tokens", content=[block],
+                               usage=MagicMock(input_tokens=100, output_tokens=50, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+            return ([delta], final)
+
+        # Every single turn hits max_tokens again — the pathological case.
+        turns = [_make_turn(f"chunk{i} ") for i in range(_MAX_CONTINUATION_ATTEMPTS + 5)]
+        call_count = {"n": 0}
+
+        def _side_effect(**kwargs):
+            events, final_msg = turns[call_count["n"]]
+            call_count["n"] += 1
+            return _two_turn_stream_ctx(events, final_msg)
+
+        mock_client = MagicMock()
+        mock_client.messages.stream = MagicMock(side_effect=_side_effect)
+        mock_client.messages.create = AsyncMock(return_value=MagicMock(content=[MagicMock(text="Title")]))
+
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), patch("routers.streaming.anthropic.AsyncAnthropic", return_value=mock_client):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+
+        assert r.status_code == 200
+        # Original attempt + exactly _MAX_CONTINUATION_ATTEMPTS retries, never more.
+        assert call_count["n"] == _MAX_CONTINUATION_ATTEMPTS + 1
+        db_session.expire_all()
+        msg = db_session.query(Message).filter(Message.conversation_id == conv_id, Message.role == "assistant").first()
+        assert msg is not None
+        assert "[Response interrupted" in msg.content
+
+    def test_max_tokens_ending_in_tool_use_does_not_attempt_continuation(self, client: TestClient, db_session):
+        """A truncated tool_use/server_tool_use block is a genuinely harder problem
+        (resuming a half-issued tool call safely) — deliberately out of scope here.
+        Must fall straight through to the truncation marker instead of guessing."""
+        from models import Message
+
+        text_delta = MagicMock(type="content_block_delta", delta=MagicMock(type="text_delta", text="Let me check that."))
+        text_block = MagicMock(type="text", text="Let me check that.")
+        tool_block = MagicMock(type="server_tool_use")
+        final = MagicMock(stop_reason="max_tokens", content=[text_block, tool_block],
+                           usage=MagicMock(input_tokens=100, output_tokens=50, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+
+        ctx = _two_turn_stream_ctx([text_delta], final)
+        mock_client = MagicMock()
+        mock_client.messages.stream = MagicMock(return_value=ctx)
+        mock_client.messages.create = AsyncMock(return_value=MagicMock(content=[MagicMock(text="Title")]))
+
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), patch("routers.streaming.anthropic.AsyncAnthropic", return_value=mock_client):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+
+        assert r.status_code == 200
+        assert mock_client.messages.stream.call_count == 1  # no continuation attempted
+        db_session.expire_all()
+        msg = db_session.query(Message).filter(Message.conversation_id == conv_id, Message.role == "assistant").first()
+        assert msg is not None
+        assert "[Response interrupted" in msg.content
+
+    def test_normal_end_turn_never_touches_continuation_logic(self, client: TestClient, db_session):
+        """The zero-added-cost claim for the common case: a normal reply makes exactly
+        one .stream() call, same as before this fix existed."""
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("Normal reply.") as mock_client:
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        assert mock_client.messages.stream.call_count == 1
+
+
+class TestMaxTokensFloor:
+    """Regression: _estimate_max_tokens('hi') alone returns 1024 — reproduced against
+    real production data to leave zero room once Sonnet 5 spends budget on its own
+    unprompted reasoning against a large system prompt, so nothing was ever saved. The
+    floor is layered on top of the existing estimate, not a change to
+    _estimate_max_tokens itself."""
+
+    def test_short_message_gets_the_floor_not_the_raw_estimate(self, client: TestClient, db_session):
+        from routers.streaming import _MIN_MAX_TOKENS_FLOOR
+        from services.model_router import _estimate_max_tokens
+        assert _estimate_max_tokens("hi") < _MIN_MAX_TOKENS_FLOOR  # sanity-check the premise
+
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("Hi there.") as mock_client:
+            client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        used_max_tokens = mock_client.messages.stream.call_args.kwargs["max_tokens"]
+        assert used_max_tokens == _MIN_MAX_TOKENS_FLOOR
+
+    def test_longer_message_above_the_floor_is_unaffected(self, client: TestClient, db_session):
+        """The floor is a floor, not a fixed override — a message whose own estimate
+        already clears it keeps its own (larger) value."""
+        from services.model_router import _estimate_max_tokens
+        message = "please explain this in detail"  # contains 'explain' -> 6000
+        assert _estimate_max_tokens(message) > 2048
+
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("Sure.") as mock_client:
+            client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": message, "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        used_max_tokens = mock_client.messages.stream.call_args.kwargs["max_tokens"]
+        assert used_max_tokens == _estimate_max_tokens(message)

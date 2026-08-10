@@ -361,6 +361,51 @@ class TestCompactOtherTickers:
         assert dynamic1 == dynamic2
 
 
+class TestLargeWatchlistCompactFallback:
+    """Regression: a real 94-ticker watchlist's general (no-focus) conversation had a
+    ~40k-token dynamic_context — full uncapped reasoning/memory/events per ticker,
+    unconditionally — large enough that Sonnet 5's own unprompted reasoning against
+    that context consumed the entire output budget before producing any visible text,
+    silently breaking chat for that user. Below _FULL_DETAIL_TICKER_THRESHOLD, general
+    chat keeps exactly the full-detail behavior TestCompactOtherTickers already covers
+    (that case is intentionally untouched) — this only covers the fallback above it."""
+
+    def test_general_chat_switches_to_compact_above_threshold(self, db_session):
+        from services.prompt_builder import _FULL_DETAIL_TICKER_THRESHOLD
+        for i in range(_FULL_DETAIL_TICKER_THRESHOLD + 1):
+            t = f"PBBIG{i}"
+            _seed_analysis(db_session, t)
+            db_session.add(WatchlistItem(user_email="u8@example.com", ticker=t))
+        db_session.commit()
+        _, dynamic = build_system_prompt("u8@example.com", db_session)
+        assert "ALL TRACKED TICKERS" in dynamic
+        assert "Reasoning:    Solid setup." not in dynamic  # full paragraph label absent
+        assert dynamic.count(": BUY") == _FULL_DETAIL_TICKER_THRESHOLD + 1  # one compact line each
+
+    def test_general_chat_stays_full_detail_at_exactly_the_threshold(self, db_session):
+        from services.prompt_builder import _FULL_DETAIL_TICKER_THRESHOLD
+        for i in range(_FULL_DETAIL_TICKER_THRESHOLD):
+            t = f"PBEDGE{i}"
+            _seed_analysis(db_session, t)
+            db_session.add(WatchlistItem(user_email="u9@example.com", ticker=t))
+        db_session.commit()
+        _, dynamic = build_system_prompt("u9@example.com", db_session)
+        assert "TONIGHT'S ANALYSIS" in dynamic
+        assert "Reasoning:    Solid setup." in dynamic
+
+    def test_focus_ticker_conversation_unaffected_by_threshold(self, db_session):
+        """A ticker-scoped conversation was already compact for every ticker regardless
+        of watchlist size — this fix only changes the no-focus case."""
+        for i in range(3):
+            t = f"PBSMALLFOCUS{i}"
+            _seed_analysis(db_session, t)
+            db_session.add(WatchlistItem(user_email="u10@example.com", ticker=t))
+        db_session.commit()
+        _, dynamic = build_system_prompt("u10@example.com", db_session, conversation_ticker="PBSMALLFOCUS0")
+        assert "ALL TRACKED TICKERS" in dynamic
+        assert "Reasoning:    Solid setup." not in dynamic
+
+
 class TestUserLearnings:
     """save_learning-sourced facts must appear in every future conversation for that
     user, regardless of ticker focus — that's the entire point of the feature.

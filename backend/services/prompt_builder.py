@@ -325,6 +325,21 @@ def build_user_learnings_block(user_email: str, db: Session) -> str:
     return "\n".join(lines)
 
 
+# Above this many tracked tickers, a no-focus (general) conversation switches to the
+# same compact per-ticker line a ticker-focused conversation already uses for every
+# ticker except the one in focus — full detail (reasoning paragraph + memory + events)
+# is uncapped prose per ticker, and reproduced against a real 94-ticker watchlist it
+# alone accounted for ~40k of the system prompt's tokens, which was large enough that
+# Sonnet 5's own unprompted reasoning against that context ate the entire output
+# budget before producing any visible text (issue: chat silently stopped responding
+# for that user). Below this threshold, full detail stays exactly as before — this
+# is the "general conversation is where full portfolio detail matters" case working
+# as intended, not something typical watchlists ever needed protecting against.
+# get_stock_analysis is a tool call away for full depth on any specific ticker either
+# way, so nothing is actually lost at the threshold — only how it's fetched changes.
+_FULL_DETAIL_TICKER_THRESHOLD = 15
+
+
 def build_system_prompt(
     user_email: str,
     db: Session,
@@ -381,13 +396,15 @@ def build_system_prompt(
         # focus ticker here (a small, ~150-char redundancy) so this block's content is
         # byte-identical regardless of which ticker is in focus — that's what makes it
         # cacheable across different ticker-scoped conversations for the same user.
-        # A general (non-ticker) conversation is the one place full per-ticker detail
-        # is genuinely the point — that stays exactly as before.
-        lines.append("=== TONIGHT'S ANALYSIS ===" if not focus else "=== ALL TRACKED TICKERS (compact — ask for detail on any of these) ===")
+        # A general (non-ticker) conversation with a normal-sized watchlist is where
+        # full per-ticker detail is genuinely the point and stays exactly as before —
+        # compact only kicks in above _FULL_DETAIL_TICKER_THRESHOLD (see its docstring).
+        use_compact = bool(focus) or len(analyses) > _FULL_DETAIL_TICKER_THRESHOLD
+        lines.append("=== ALL TRACKED TICKERS (compact — ask get_stock_analysis for full detail on any of these) ===" if use_compact else "=== TONIGHT'S ANALYSIS ===")
         for a in analyses:
             wl = watchlist_map.get(a.ticker)
             position_line = _format_position(wl, a.current_price) if wl else "Position:       Not in user's watchlist.\n"
-            if focus:
+            if use_compact:
                 lines.append(f"{a.ticker}: {_format_analysis_compact(a, position_line)}")
                 continue
             mem = memory_map.get(a.ticker, "")
