@@ -30,19 +30,17 @@ _THINKING_EFFORT = "high"
 _THINKING_MIN_MAX_TOKENS = 5000
 
 
-# The plain default used to be 4096 — reproduced live against a real production
-# message that doesn't match the keywords below ("acc to all the scenarios predict how
-# much i will have after 5 yr..."): Claude chose to run a web search before answering,
-# and thinking + the unfinished search alone consumed all 4096 tokens, leaving zero
-# room for the answer. Re-ran the same message at 8192/12000/16000 and actual usage
-# converged to ~3900-4500 output tokens every time regardless of ceiling — so 8192
-# comfortably covers a tool round-trip, and since Anthropic bills by tokens actually
-# generated (not the ceiling), this costs nothing for calls that don't need it. The
-# keyword check no longer changes the number, but stays as a readable marker of intent
-# (explicitly "this needs room to be thorough") separate from the short-message case.
+# Used to tier by message length (short message -> 1024, keyword match -> 6000, else
+# 4096) on the assumption that a short message means a short, simple reply. Reproduced
+# live against a real, heavily-loaded conversation (199 messages of financial planning)
+# and found that assumption false: a literal "hi" in that conversation made Claude
+# start a web search and burn through 2048 AND 4096 tokens of pure unprompted thinking
+# with zero visible text either time — how much a message needs is a function of the
+# conversation's complexity, which a per-message word count can't see. Only succeeded
+# once given 8192. Since Anthropic bills by tokens actually generated, not the ceiling,
+# a flat higher ceiling costs nothing for the (majority) of calls that don't need it —
+# there was never a real cost argument for the old tiers, only a truncation risk.
 def _estimate_max_tokens(message: str) -> int:
-    if len(message.split()) < 4:
-        return 1024
     return 8192
 
 

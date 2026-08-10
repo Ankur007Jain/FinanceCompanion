@@ -10,6 +10,7 @@ Tool use loop: stream → detect get_stock_analysis tool_use → execute → con
 """
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime
 
@@ -27,6 +28,7 @@ from services.prompt_builder import build_system_prompt, build_ticker_dossier, b
 from services.stock_memory import append_lesson
 
 router = APIRouter(prefix="/conversations", tags=["streaming"])
+logger = logging.getLogger(__name__)
 
 # Only the most recent messages are resent live each turn — a real production
 # conversation was found sending the ENTIRE history every turn with no cap: 68x cost
@@ -36,17 +38,15 @@ router = APIRouter(prefix="/conversations", tags=["streaming"])
 # whatever this trims off (see below) — verbatim retrieval, not silent data loss.
 _MAX_LIVE_HISTORY = 20
 
-# A real production conversation (94-ticker watchlist, ~40k-token system prompt) showed
-# Sonnet 5 spending the large majority of its output budget on its own unprompted
-# reasoning before ever producing visible text — even for a plain "hi", even with
-# use_thinking=False and no thinking param sent at all. With the old floor (1024 for a
-# short message), that meant ZERO text ever got out; the whole exchange silently
-# vanished (full_text stayed empty, so persist()'s `if not full_text: return` guard
-# meant nothing was even saved). Raised as cheap insurance, not a behavior change for
-# the common case: max_tokens is a ceiling the model rarely hits when it isn't fighting
-# a wall of context, so a higher ceiling costs nothing for a normal exchange and only
-# matters for the tail this was built to survive.
-_MIN_MAX_TOKENS_FLOOR = 2048
+# A real production conversation (94-ticker watchlist, ~40k-token system prompt, 199
+# messages of history) showed Sonnet 5 spending the large majority of its output budget
+# on its own unprompted reasoning before ever producing visible text — even for a plain
+# "hi", even with use_thinking=False and no thinking param sent at all. That's why
+# _estimate_max_tokens no longer tiers by message length (see its comment): the
+# reasoning load comes from the conversation, not the new message, so a short message
+# is no safer to under-provision than a long one. When full_text stays empty,
+# persist()'s `if not full_text: return` guard means nothing is even saved — the whole
+# exchange silently vanishes with no trace in the DB or the logs.
 
 # Bounded auto-continuation for a genuine mid-prose max_tokens cutoff (Claude was still
 # writing the answer, not paused for a tool call). Cost/quality reasoning, written down
@@ -437,7 +437,7 @@ async def stream_message(
         # keeps hitting each one's own cache entry instead of re-writing on every switch.
         api_system.append({"type": "text", "text": focus_dossier, "cache_control": {"type": "ephemeral", "ttl": "1h"}})
 
-    max_tokens = max(_estimate_max_tokens(body.content), _MIN_MAX_TOKENS_FLOOR)
+    max_tokens = _estimate_max_tokens(body.content)
     use_thinking = _should_use_extended_thinking(body.content)
     if use_thinking:
         # Adaptive thinking has no manual budget to add on top of — the model decides
@@ -470,7 +470,16 @@ async def stream_message(
             # doesn't silently lose an assistant reply that Claude already generated
             # (and that already cost tokens).
             nonlocal persisted
-            if persisted or not full_text:
+            # total_out > 0 means at least one real API turn happened and cost real
+            # tokens — reproduced live (a "hi" deep in a long conversation burning
+            # 2048+ tokens on unprompted thinking with zero visible text): full_text
+            # can stay empty even though a turn genuinely ran. Previously that meant
+            # persist() no-opped entirely — nothing in the DB, nothing in the logs,
+            # a real API call with nothing to show for it anywhere. Only a true no-op
+            # (nothing ever called, e.g. missing API key before the first request) has
+            # both full_text empty AND total_out == 0 — that's the one case worth
+            # skipping.
+            if persisted or (not full_text and total_out == 0):
                 return
             persisted = True
             # reached_end_turn only flips True at the loop's clean break (below) — if
@@ -497,6 +506,7 @@ async def stream_message(
                     db_user.tokens_used = (db_user.tokens_used or 0) + total_in + total_out
                 session.commit()
             except Exception:
+                logger.exception("persist() failed to save assistant message for conversation %s", conversation_id)
                 session.rollback()
 
         try:
@@ -735,6 +745,13 @@ async def stream_message(
             yield f"data: {json.dumps({'type': 'done', 'input_tokens': total_in, 'output_tokens': total_out})}\n\n"
 
         except Exception as e:
+            # Previously only sent to the client over SSE — an exception here never
+            # appeared in server-side logs at all, so a genuine backend failure looked
+            # identical to a client that just closed its browser tab. Confirmed live:
+            # investigating a real "no response" report required rebuilding the whole
+            # request from scratch via direct API calls, with nothing to go on from
+            # the logs, because nothing had ever been logged server-side.
+            logger.exception("Streaming chat turn failed for conversation %s", conversation_id)
             persist()
             yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
         finally:

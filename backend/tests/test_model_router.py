@@ -4,16 +4,18 @@ from services.model_router import _estimate_max_tokens, _should_use_extended_thi
 
 
 class TestEstimateMaxTokens:
-    def test_short_message_gets_small_budget(self):
-        assert _estimate_max_tokens("no") == 1024
+    # Reproduced live: a literal "hi" deep in a long, complex conversation triggered a
+    # web search and burned through thinking tokens with zero visible text — how much
+    # a turn needs depends on the conversation, not the new message's word count, so
+    # message length no longer changes the budget. See the comment on
+    # _estimate_max_tokens for the production case.
+    def test_short_message_gets_full_budget(self):
+        assert _estimate_max_tokens("no") == 8192
 
     def test_analytical_keyword_gets_full_budget(self):
         assert _estimate_max_tokens("can you analyze this") == 8192
 
     def test_default_budget_matches_full_budget(self):
-        # Reproduced live: a plain message with none of the "analyze"-style keywords
-        # can still trigger a web search + thinking round-trip that needs the same
-        # headroom — see the comment on _estimate_max_tokens for the production case.
         assert _estimate_max_tokens("what do you think about this stock") == 8192
 
 
