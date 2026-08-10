@@ -7,11 +7,14 @@ class TestEstimateMaxTokens:
     def test_short_message_gets_small_budget(self):
         assert _estimate_max_tokens("no") == 1024
 
-    def test_analytical_keyword_gets_large_budget(self):
-        assert _estimate_max_tokens("can you analyze this") == 6000
+    def test_analytical_keyword_gets_full_budget(self):
+        assert _estimate_max_tokens("can you analyze this") == 8192
 
-    def test_default_budget(self):
-        assert _estimate_max_tokens("what do you think about this stock") == 4096
+    def test_default_budget_matches_full_budget(self):
+        # Reproduced live: a plain message with none of the "analyze"-style keywords
+        # can still trigger a web search + thinking round-trip that needs the same
+        # headroom — see the comment on _estimate_max_tokens for the production case.
+        assert _estimate_max_tokens("what do you think about this stock") == 8192
 
 
 class TestShouldUseExtendedThinking:
