@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import ThemeToggle from "@/app/components/ThemeToggle";
 import Logo from "@/app/components/Logo";
+import { handleUnauthorized } from "@/app/components/authFetch";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 const SANS = "'IBM Plex Sans', sans-serif";
@@ -39,7 +40,7 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
       // A non-JSON body (e.g. an HTML error page from a gateway timeout) makes
       // .json() throw too — caught below, not just the fetch() call itself.
       setLearnings(r.ok ? await r.json() : []);
-      if (!r.ok) setLoadError(`Couldn't load your memory (${r.status}).`);
+      if (!r.ok && !handleUnauthorized(r.status)) setLoadError(`Couldn't load your memory (${r.status}).`);
     } catch {
       // Without this catch, a thrown fetch (network error, CORS, DNS) or a
       // thrown .json() parse left setLoading(false) never called — the page
@@ -73,7 +74,7 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
     setLearnings(learnings.filter(l => l.id !== id));
     try {
       const r = await fetch(`${API}/learnings/${id}?id_token=${encodeURIComponent(idToken)}`, { method: "DELETE" });
-      if (!r.ok) setLearnings(prev);
+      if (!r.ok) { setLearnings(prev); handleUnauthorized(r.status); }
     } catch {
       setLearnings(prev);
     }
@@ -96,7 +97,7 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
         setNewText("");
         setNewTicker("");
         setShowAddForm(false);
-      } else {
+      } else if (!handleUnauthorized(r.status)) {
         setAddError("Couldn't save that — try again.");
       }
     } catch {
@@ -125,6 +126,8 @@ export default function MemoryClient({ idToken }: { idToken: string }) {
         const updated = await r.json();
         setLearnings(learnings.map(l => l.id === id ? updated : l));
         setEditingId(null);
+      } else {
+        handleUnauthorized(r.status);
       }
     } catch {
       // Leave editingId set — the textarea stays open with the user's text intact,
