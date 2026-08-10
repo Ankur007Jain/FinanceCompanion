@@ -6,6 +6,7 @@ import remarkGfm from "remark-gfm";
 import Logo from "../components/Logo";
 import { ExpandedDetail, VERDICT_META, MONO } from "@/app/components/StockDetail";
 import type { Analysis } from "@/app/components/StockDetail";
+import { handleUnauthorized } from "@/app/components/authFetch";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 
@@ -128,6 +129,7 @@ export default function ChatClient({
   async function loadConversations() {
     const r = await fetch(`${API}/conversations?id_token=${encodeURIComponent(idToken)}`);
     if (r.ok) setConversations(await r.json());
+    else handleUnauthorized(r.status);
   }
 
   async function loadMessages(convId: string) {
@@ -139,6 +141,8 @@ export default function ChatClient({
       scrollOnNextRenderRef.current = true;
       stickToBottomRef.current = true;
       setMessages(msgs.map((m: { role: string; content: string; created_at?: string }) => ({ role: m.role, content: m.content, createdAt: m.created_at })));
+    } else {
+      handleUnauthorized(r.status);
     }
   }
 
@@ -226,12 +230,13 @@ export default function ChatClient({
       loadConversations();
       return conv.id;
     }
+    handleUnauthorized(r.status);
     return null;
   }
 
   async function deleteConversation(convId: string) {
     const r = await fetch(`${API}/conversations/${convId}?id_token=${encodeURIComponent(idToken)}`, { method: "DELETE" });
-    if (!r.ok) return;
+    if (!r.ok) { handleUnauthorized(r.status); return; }
     if (convId === activeConvId) {
       setActiveConvId(null);
       setMessages([]);
@@ -274,6 +279,7 @@ export default function ChatClient({
         // JSON, not an SSE stream — reading them as one would silently discard every line
         // (nothing starts with "data: ") and leave the UI stuck on "Analysing..." forever
         // with no error ever shown.
+        if (res.status === 401 && handleUnauthorized(res.status)) return;
         let detail = `Request failed (${res.status})`;
         try { detail = (await res.json())?.detail || detail; } catch {}
         throw new Error(detail);

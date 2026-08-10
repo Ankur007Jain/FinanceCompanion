@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import ThemeToggle from "@/app/components/ThemeToggle";
 import Logo from "@/app/components/Logo";
+import { handleUnauthorized } from "@/app/components/authFetch";
 import pkg from "../../package.json";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
@@ -40,11 +41,12 @@ export default function AdminClient({ idToken }: { idToken: string }) {
   async function loadAll() {
     setLoading(true);
     const q = `id_token=${encodeURIComponent(idToken)}`;
+    const orEmpty = (r: Response) => { if (r.ok) return r.json(); handleUnauthorized(r.status); return []; };
     const [u, t, f, c] = await Promise.all([
-      fetch(`${API}/admin/users?${q}`).then(r => r.ok ? r.json() : []),
-      fetch(`${API}/admin/tickers?${q}`).then(r => r.ok ? r.json() : []),
-      fetch(`${API}/admin/feedback?${q}`).then(r => r.ok ? r.json() : []),
-      fetch(`${API}/admin/costs?${q}`).then(r => r.ok ? r.json() : []),
+      fetch(`${API}/admin/users?${q}`).then(orEmpty),
+      fetch(`${API}/admin/tickers?${q}`).then(orEmpty),
+      fetch(`${API}/admin/feedback?${q}`).then(orEmpty),
+      fetch(`${API}/admin/costs?${q}`).then(orEmpty),
     ]);
     setUsers(u); setTickers(t); setFeedback(f); setCosts(c);
     setLoading(false);
@@ -54,12 +56,13 @@ export default function AdminClient({ idToken }: { idToken: string }) {
   useEffect(() => { loadAll(); }, []);
 
   async function toggleAdmin(email: string, is_admin: boolean) {
-    await fetch(`${API}/admin/users/${encodeURIComponent(email)}?id_token=${encodeURIComponent(idToken)}`, {
+    const r = await fetch(`${API}/admin/users/${encodeURIComponent(email)}?id_token=${encodeURIComponent(idToken)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ is_admin }),
     });
-    setUsers(prev => prev.map(u => u.email === email ? { ...u, is_admin } : u));
+    if (r.ok) setUsers(prev => prev.map(u => u.email === email ? { ...u, is_admin } : u));
+    else handleUnauthorized(r.status);
   }
 
   async function toggleTicker(ticker: string, analysis_enabled: boolean) {
@@ -69,6 +72,7 @@ export default function AdminClient({ idToken }: { idToken: string }) {
       body: JSON.stringify({ analysis_enabled }),
     });
     if (r.ok) setTickers(prev => prev.map(t => t.ticker === ticker ? { ...t, analysis_enabled, disabled_by: analysis_enabled ? null : t.disabled_by, disabled_at: analysis_enabled ? null : t.disabled_at } : t));
+    else handleUnauthorized(r.status);
   }
 
   const cardStyle: React.CSSProperties = {

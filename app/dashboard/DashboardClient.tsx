@@ -8,6 +8,7 @@ import Logo from "@/app/components/Logo";
 
 import { API, MONO, SANS, SERIF, VERDICT_META, TH_META, ExpandedDetail } from "@/app/components/StockDetail";
 import type { Analysis } from "@/app/components/StockDetail";
+import { handleUnauthorized } from "@/app/components/authFetch";
 
 
 interface DigestItem {
@@ -676,6 +677,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     try {
       const r = await fetch(`${API}/analysis/digest?id_token=${encodeURIComponent(idToken)}`);
       if (r.ok) setDigest(await r.json());
+      else handleUnauthorized(r.status);
     } finally { if (!silent) setLoading(false); }
   }
 
@@ -693,6 +695,8 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
       } else {
         setShowPortfolioPrompt(true);
       }
+    } else {
+      handleUnauthorized(r.status);
     }
   }
 
@@ -707,6 +711,8 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
       setFeedbackSent(true);
       setFeedbackText("");
       setTimeout(() => { setShowFeedbackModal(false); setFeedbackSent(false); }, 1500);
+    } else {
+      handleUnauthorized(r.status);
     }
   }
 
@@ -721,6 +727,8 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     if (r.ok) {
       setPortfolioSize(val);
       setShowPortfolioPrompt(false);
+    } else {
+      handleUnauthorized(r.status);
     }
   }
 
@@ -745,7 +753,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
       });
       if (r.ok) {
         fetchDigest(true); // silent refresh to pull in any existing analysis
-      } else {
+      } else if (!handleUnauthorized(r.status)) {
         // Revert on failure
         const d = await r.json();
         setDigest(prev => prev.filter(i => i.ticker !== effectiveTicker));
@@ -767,6 +775,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
       try {
         const r = await fetch(`${API}/watchlist/search?q=${encodeURIComponent(val)}&id_token=${encodeURIComponent(idToken)}`);
         if (r.ok) { setSuggestions(await r.json()); setShowSuggestions(true); }
+        else handleUnauthorized(r.status);
       } catch { /* ignore */ }
     }, 300);
   }
@@ -827,6 +836,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
       body: JSON.stringify({ ticker: t }),
     });
     if (r.ok) { const conv = await r.json(); router.push(`/chat?conv=${conv.id}`); }
+    else handleUnauthorized(r.status);
   }
 
   async function handleSetPortfolio(ticker: string) {
@@ -871,7 +881,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
         const { positions } = await r.json();
         setImportPositions(positions);
         setImportStep("review");
-      } else {
+      } else if (!handleUnauthorized(r.status)) {
         const d = await r.json();
         setImportError(d.detail || "Failed to parse file.");
       }
@@ -893,7 +903,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
         setImportPositions([]);
         fetchDigest(true);
         showToast(`${importPositions.length} position${importPositions.length !== 1 ? "s" : ""} imported to My Positions`);
-      } else {
+      } else if (!handleUnauthorized(r.status)) {
         setImportError("Failed to save positions.");
       }
     } catch { setImportError("Network error."); }

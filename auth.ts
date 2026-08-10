@@ -19,7 +19,13 @@ const testProviders = process.env.AUTH_TEST_MODE === "true"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
   providers: [
-    Google({ authorization: { params: { access_type: "offline" } } }),
+    // prompt: "consent" is required alongside access_type: "offline" — without it,
+    // Google only issues a refresh_token on a user's very FIRST consent. A returning
+    // user signing in again (the common case) gets no refresh_token at all, so their
+    // session silently goes dead ~1hr in with no way to recover short of manually
+    // signing out and back in. Confirmed in production logs: one user's session sat
+    // dead for 22+ hours, silently 401'ing on every request, before this was found.
+    Google({ authorization: { params: { access_type: "offline", prompt: "consent" } } }),
     ...testProviders,
   ],
   session: { maxAge: 60 * 60 * 24 * 30 },  // 30 days for the session cookie

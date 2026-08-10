@@ -7,6 +7,7 @@
 import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { handleUnauthorized } from "@/app/components/authFetch";
 
 export const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 
@@ -206,6 +207,8 @@ export function ExpandedDetail({ a, isMobile, changeSummary, daysSinceRead, idTo
         const { fields } = await r.json();
         setTxCache(prev => ({ ...prev, [key]: fields }));
         txCacheRef.current[`${a.id}:${key}`] = fields; // persist across collapse/re-expand
+      } else {
+        handleUnauthorized(r.status);
       }
     } finally {
       setTranslating(false);
@@ -601,6 +604,8 @@ export function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile, txCac
         setHistory(data.filter(h => h.id !== currentAnalysis.id));
         // also check if today's report already exists
         checkReport();
+      } else {
+        handleUnauthorized(r.status);
       }
     } finally { setLoadingHistory(false); }
   }
@@ -611,6 +616,7 @@ export function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile, txCac
     try {
       const r = await fetch(`${API}/analysis/${ticker}/report?id_token=${encodeURIComponent(idToken)}`);
       if (r.ok) { const d = await r.json(); if (d) setReport(d); }
+      else handleUnauthorized(r.status);
     } catch {}
   }
 
@@ -619,6 +625,7 @@ export function HistoryPanel({ ticker, idToken, currentAnalysis, isMobile, txCac
     try {
       const r = await fetch(`${API}/analysis/${ticker}/report?id_token=${encodeURIComponent(idToken)}`, { method: "POST" });
       if (r.ok) setReport(await r.json());
+      else handleUnauthorized(r.status);
     } finally { setLoadingReport(false); }
   }
 
