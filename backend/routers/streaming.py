@@ -419,6 +419,7 @@ async def stream_message(
         full_text = ""
         total_in = total_out = total_cr = total_cw = 0
         persisted = False
+        reached_end_turn = False
 
         def persist():
             # Saves whatever was generated so far. Called both on the happy path and
@@ -429,11 +430,19 @@ async def stream_message(
             if persisted or not full_text:
                 return
             persisted = True
+            # reached_end_turn only flips True at the loop's clean break (below) — if
+            # persist() fires from the except/finally path before that (an exception
+            # mid-turn, or the client disconnecting), full_text may be cut off
+            # mid-sentence. Without this, a partial reply was saved and later displayed
+            # identically to a complete one, with no indication anything was cut short.
+            content = full_text
+            if not reached_end_turn:
+                content += "\n\n_[Response interrupted before it finished — connection lost or an error occurred.]_"
             try:
                 session.add(Message(
                     conversation_id=conversation_id,
                     role="assistant",
-                    content=full_text,
+                    content=content,
                     model_used=model,
                     input_tokens=total_in,
                     output_tokens=total_out,
@@ -544,6 +553,7 @@ async def stream_message(
                 _log_web_searches(final, conversation_id, session)
 
                 if final.stop_reason == "end_turn" or not tool_uses:
+                    reached_end_turn = True
                     break
 
                 # Execute client-side tool calls. web_search is server-side and already
@@ -631,6 +641,16 @@ async def stream_message(
 
                 messages.append({"role": "assistant", "content": final.content})
                 messages.append({"role": "user", "content": tool_results})
+
+                # The loop is about to start a new turn — Claude's next text_delta chunks
+                # otherwise land directly against whatever full_text already ends with
+                # (e.g. "...one sec." immediately followed by "Only XLP is..." with zero
+                # separator), producing run-on text like "sec.Only". Insert a paragraph
+                # break in both what's persisted and what's actively streamed to the
+                # client, but only if this turn actually produced visible text.
+                if full_text:
+                    full_text += "\n\n"
+                    yield f"data: {json.dumps({'type': 'chunk', 'text': chr(10) + chr(10)})}\n\n"
 
             # Title
             nonlocal title_task
