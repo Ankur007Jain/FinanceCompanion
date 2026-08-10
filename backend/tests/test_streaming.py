@@ -4,6 +4,7 @@ Tests for the Ask AI streaming endpoint's cost/quality changes:
 - both system-prompt blocks marked cacheable
 - get_stock_analysis tool present and dispatched correctly
 """
+import json
 import os
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1024,3 +1025,178 @@ class TestFlagStockCorrectionTool:
         assert r.status_code == 200
         db_session.expire_all()
         assert db_session.get(StockMemory, "") is None
+
+
+def _two_turn_stream_ctx(events, final_msg):
+    ctx = MagicMock()
+    ctx.__aenter__ = AsyncMock(return_value=ctx)
+    ctx.__aexit__ = AsyncMock(return_value=False)
+
+    async def _aiter(_self):
+        for e in events:
+            yield e
+    ctx.__aiter__ = _aiter
+    ctx.get_final_message = AsyncMock(return_value=final_msg)
+    return ctx
+
+
+class TestTurnSeparator:
+    """Regression for issue #118: full_text += chunk never distinguished a turn
+    boundary (text -> tool_use -> tool_result -> more text) from a mid-sentence chunk
+    boundary, so two turns' text ran together with zero separator
+    ("...one sec.Only XLP..."). Full custom two-call mock — the shared
+    _mock_anthropic_stream helper only ever puts text in one branch (tool_use XOR
+    text), never both, so it can't represent a turn that has lead-in text before
+    calling a tool."""
+
+    def test_separator_inserted_between_tool_loop_turns(self, client: TestClient, db_session):
+        from models import Message
+
+        conv_id = _create_conversation(client)
+
+        turn1_text = MagicMock(type="content_block_delta", delta=MagicMock(type="text_delta", text="Yes — pulling now, one sec."))
+        tool_start = MagicMock(type="content_block_start")
+        # `name=` in the MagicMock() constructor sets the mock's own repr, not a real
+        # .name attribute — must assign it directly or current_tool_name never populates.
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "tu_1"
+        tool_block.name = "get_stock_analysis"
+        tool_start.content_block = tool_block
+        tool_input = MagicMock(type="content_block_delta", delta=MagicMock(type="input_json_delta", partial_json='{"ticker": "XLP"}'))
+        tool_stop = MagicMock(type="content_block_stop")
+        turn1_final = MagicMock(stop_reason="tool_use", content=[],
+                                 usage=MagicMock(input_tokens=50, output_tokens=10, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+
+        turn2_text = MagicMock(type="content_block_delta", delta=MagicMock(type="text_delta", text="Only XLP is in our own database."))
+        turn2_final = MagicMock(stop_reason="end_turn", content=[],
+                                 usage=MagicMock(input_tokens=20, output_tokens=8, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+
+        turns = [
+            ([turn1_text, tool_start, tool_input, tool_stop], turn1_final),
+            ([turn2_text], turn2_final),
+        ]
+        call_count = {"n": 0}
+
+        def _side_effect(**kwargs):
+            events, final_msg = turns[call_count["n"]]
+            call_count["n"] += 1
+            return _two_turn_stream_ctx(events, final_msg)
+
+        mock_client = MagicMock()
+        mock_client.messages.stream = MagicMock(side_effect=_side_effect)
+        mock_client.messages.create = AsyncMock(return_value=MagicMock(content=[MagicMock(text="Title")]))
+
+        with _mock_google_token(), \
+             patch("routers.streaming.anthropic.AsyncAnthropic", return_value=mock_client), \
+             patch("routers.streaming.build_ticker_dossier", return_value="dossier text"):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "compare sector ETFs", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+
+        assert r.status_code == 200
+        db_session.expire_all()
+        msg = db_session.query(Message).filter(Message.conversation_id == conv_id, Message.role == "assistant").first()
+        assert msg is not None
+        assert "one sec.\n\nOnly XLP" in msg.content
+        assert "sec.Only" not in msg.content  # the exact regression this guards against
+
+    def test_streamed_chunk_carries_the_separator_live(self, client: TestClient, db_session):
+        """Not just the persisted row — the client must also see the separator while
+        the response is actively streaming, since ChatClient accumulates chunks the
+        same concatenating way full_text does."""
+        turn1_text = MagicMock(type="content_block_delta", delta=MagicMock(type="text_delta", text="Lead-in."))
+        tool_start = MagicMock(type="content_block_start")
+        tool_block = MagicMock()
+        tool_block.type = "tool_use"
+        tool_block.id = "tu_1"
+        tool_block.name = "get_stock_analysis"
+        tool_start.content_block = tool_block
+        tool_input = MagicMock(type="content_block_delta", delta=MagicMock(type="input_json_delta", partial_json='{"ticker": "XLP"}'))
+        tool_stop = MagicMock(type="content_block_stop")
+        turn1_final = MagicMock(stop_reason="tool_use", content=[],
+                                 usage=MagicMock(input_tokens=50, output_tokens=10, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+        turn2_text = MagicMock(type="content_block_delta", delta=MagicMock(type="text_delta", text="Follow-up."))
+        turn2_final = MagicMock(stop_reason="end_turn", content=[],
+                                 usage=MagicMock(input_tokens=20, output_tokens=8, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+        turns = [([turn1_text, tool_start, tool_input, tool_stop], turn1_final), ([turn2_text], turn2_final)]
+        call_count = {"n": 0}
+
+        def _side_effect(**kwargs):
+            events, final_msg = turns[call_count["n"]]
+            call_count["n"] += 1
+            return _two_turn_stream_ctx(events, final_msg)
+
+        mock_client = MagicMock()
+        mock_client.messages.stream = MagicMock(side_effect=_side_effect)
+        mock_client.messages.create = AsyncMock(return_value=MagicMock(content=[MagicMock(text="Title")]))
+
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), \
+             patch("routers.streaming.anthropic.AsyncAnthropic", return_value=mock_client), \
+             patch("routers.streaming.build_ticker_dossier", return_value="dossier text"):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "compare sector ETFs", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+
+        chunks = [json.loads(line[6:])["text"] for line in r.text.splitlines()
+                  if line.startswith("data: ") and '"type": "chunk"' in line]
+        assert chunks == ["Lead-in.", "\n\n", "Follow-up."]
+
+
+class TestTruncatedResponseMarker:
+    """Regression for issue #118: persist() saved full_text unconditionally from the
+    except/finally paths, so a reply cut short mid-turn (dropped connection, API
+    error) was stored and later displayed identically to a genuinely complete one."""
+
+    def test_exception_mid_stream_persists_with_truncation_marker(self, client: TestClient, db_session):
+        from models import Message
+
+        text_delta = MagicMock(type="content_block_delta", delta=MagicMock(type="text_delta", text="Partial thought that never finishes"))
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=ctx)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        async def _aiter(_self):
+            yield text_delta
+            raise ConnectionError("simulated drop")
+        ctx.__aiter__ = _aiter
+        ctx.get_final_message = AsyncMock()  # never reached — the raise happens first
+
+        mock_client = MagicMock()
+        mock_client.messages.stream = MagicMock(return_value=ctx)
+        # Title generation kicks off as a background task before the stream errors —
+        # give it a real awaitable or it logs an unretrieved-exception warning.
+        mock_client.messages.create = AsyncMock(return_value=MagicMock(content=[MagicMock(text="Title")]))
+
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), patch("routers.streaming.anthropic.AsyncAnthropic", return_value=mock_client):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+
+        assert r.status_code == 200  # the SSE stream itself still opens fine
+        db_session.expire_all()
+        msg = db_session.query(Message).filter(Message.conversation_id == conv_id, Message.role == "assistant").first()
+        assert msg is not None
+        assert msg.content.startswith("Partial thought that never finishes")
+        assert "[Response interrupted" in msg.content
+
+    def test_clean_end_turn_gets_no_truncation_marker(self, client: TestClient, db_session):
+        from models import Message
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("A complete reply.") as _mc:
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        db_session.expire_all()
+        msg = db_session.query(Message).filter(Message.conversation_id == conv_id, Message.role == "assistant").first()
+        assert msg is not None
+        assert msg.content == "A complete reply."
+        assert "[Response interrupted" not in msg.content
