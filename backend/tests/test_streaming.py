@@ -1040,6 +1040,58 @@ def _two_turn_stream_ctx(events, final_msg):
     return ctx
 
 
+class TestHeartbeat:
+    """Regression, reproduced live: a genuine thinking phase left a 32.8s gap with only
+    one event fired at its very start — landing inside ChatClient.tsx's 30s no-event
+    watchdog and killing a request that was about to succeed. A slow-but-alive wait must
+    emit periodic heartbeat events so the frontend's watchdog (which resets on ANY event
+    type) never mistakes "still working" for "connection dropped"."""
+
+    def test_heartbeat_emitted_during_a_slow_gap_between_events(self, client: TestClient, db_session, monkeypatch):
+        import asyncio
+        monkeypatch.setattr("routers.streaming._HEARTBEAT_INTERVAL_SECONDS", 0.05)
+
+        text_delta = MagicMock(type="content_block_delta", delta=MagicMock(type="text_delta", text="Done thinking."))
+        final_msg = MagicMock(stop_reason="end_turn", content=[],
+                               usage=MagicMock(input_tokens=10, output_tokens=5, cache_read_input_tokens=0, cache_creation_input_tokens=0))
+
+        ctx = MagicMock()
+        ctx.__aenter__ = AsyncMock(return_value=ctx)
+        ctx.__aexit__ = AsyncMock(return_value=False)
+
+        async def _aiter(_self):
+            await asyncio.sleep(0.2)  # well past the patched 0.05s heartbeat interval
+            yield text_delta
+        ctx.__aiter__ = _aiter
+        ctx.get_final_message = AsyncMock(return_value=final_msg)
+
+        mock_client = MagicMock()
+        mock_client.messages.stream = MagicMock(return_value=ctx)
+        mock_client.messages.create = AsyncMock(return_value=MagicMock(content=[MagicMock(text="Title")]))
+
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), patch("routers.streaming.anthropic.AsyncAnthropic", return_value=mock_client):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+
+        assert r.status_code == 200
+        heartbeats = [line for line in r.text.splitlines() if '"type": "heartbeat"' in line]
+        assert len(heartbeats) >= 1
+
+    def test_no_heartbeats_when_events_arrive_quickly(self, client: TestClient, db_session):
+        """The common case — no artificial delay — must never emit a heartbeat."""
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("Quick reply.") as _mc:
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+        assert r.status_code == 200
+        assert '"type": "heartbeat"' not in r.text
+
+
 class TestTurnSeparator:
     """Regression for issue #118: full_text += chunk never distinguished a turn
     boundary (text -> tool_use -> tool_result -> more text) from a mid-sentence chunk

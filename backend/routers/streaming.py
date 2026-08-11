@@ -38,15 +38,15 @@ logger = logging.getLogger(__name__)
 # whatever this trims off (see below) — verbatim retrieval, not silent data loss.
 _MAX_LIVE_HISTORY = 20
 
-# A real production conversation (94-ticker watchlist, ~40k-token system prompt, 199
-# messages of history) showed Sonnet 5 spending the large majority of its output budget
-# on its own unprompted reasoning before ever producing visible text — even for a plain
-# "hi", even with use_thinking=False and no thinking param sent at all. That's why
-# _estimate_max_tokens no longer tiers by message length (see its comment): the
-# reasoning load comes from the conversation, not the new message, so a short message
-# is no safer to under-provision than a long one. When full_text stays empty,
-# persist()'s `if not full_text: return` guard means nothing is even saved — the whole
-# exchange silently vanishes with no trace in the DB or the logs.
+# How often to send a keep-alive SSE event while genuinely waiting on Anthropic mid-turn
+# (a long thinking phase, a slow web search) — distinct from having nothing to say.
+# Reproduced live: a real thinking phase left a 32.8s gap with only one event (a single
+# thinking_start signal at its very start — see the "thinking" branch below) fired the
+# whole time, landing ~3s inside ChatClient.tsx's 30s no-event watchdog and killing a
+# request that was otherwise about to succeed cleanly. That watchdog resets on ANY SSE
+# event type, so a periodic heartbeat with real margin below its 30s threshold is enough
+# on its own — no frontend change needed.
+_HEARTBEAT_INTERVAL_SECONDS = 8
 
 # Bounded auto-continuation for a genuine mid-prose max_tokens cutoff (Claude was still
 # writing the answer, not paused for a tool call). Cost/quality reasoning, written down
@@ -547,7 +547,25 @@ async def stream_message(
                     stream_kwargs["output_config"] = {"effort": _THINKING_EFFORT}
 
                 async with client.messages.stream(**stream_kwargs) as stream:
-                    async for event in stream:
+                    stream_iter = stream.__aiter__()
+                    while True:
+                        try:
+                            event = await asyncio.wait_for(stream_iter.__anext__(), timeout=_HEARTBEAT_INTERVAL_SECONDS)
+                        except asyncio.TimeoutError:
+                            # Anthropic hasn't sent an event in a while — genuinely still
+                            # working (a long thinking phase, a slow web search), not a
+                            # dead connection. Reproduced live: a real thinking phase left
+                            # a 32.8s silent gap with only a single thinking_start event
+                            # fired at its start, ~3s short of ChatClient.tsx's 30s
+                            # no-event watchdog — tripping it on a request that was
+                            # otherwise about to succeed cleanly. armWatchdog() resets on
+                            # ANY event type, so a heartbeat here is enough on its own —
+                            # no frontend change needed.
+                            yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                            continue
+                        except StopAsyncIteration:
+                            break
+
                         etype = getattr(event, "type", "")
 
                         if etype == "content_block_start":
