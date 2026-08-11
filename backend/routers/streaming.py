@@ -547,73 +547,111 @@ async def stream_message(
                     stream_kwargs["output_config"] = {"effort": _THINKING_EFFORT}
 
                 async with client.messages.stream(**stream_kwargs) as stream:
-                    stream_iter = stream.__aiter__()
-                    while True:
+                    # Heartbeats must never cancel the actual network read — reproduced
+                    # live and confirmed as a real regression: wrapping
+                    # stream_iter.__anext__() directly in asyncio.wait_for() cancels that
+                    # coroutine on timeout, and cancelling a live httpx read mid-flight
+                    # corrupts the underlying connection. Observed directly: a heartbeat
+                    # fired at t=4.7s, and the very next read immediately raised
+                    # StopAsyncIteration with stop_reason=None and zero text — the stream
+                    # was simply dead, not finished. So instead: a background task drains
+                    # the real stream into a queue at its own pace, completely
+                    # uninterrupted, and only the (safe, in-memory) queue read is ever
+                    # subject to the heartbeat timeout.
+                    event_queue: asyncio.Queue = asyncio.Queue()
+
+                    async def _pump():
                         try:
-                            event = await asyncio.wait_for(stream_iter.__anext__(), timeout=_HEARTBEAT_INTERVAL_SECONDS)
-                        except asyncio.TimeoutError:
-                            # Anthropic hasn't sent an event in a while — genuinely still
-                            # working (a long thinking phase, a slow web search), not a
-                            # dead connection. Reproduced live: a real thinking phase left
-                            # a 32.8s silent gap with only a single thinking_start event
-                            # fired at its start, ~3s short of ChatClient.tsx's 30s
-                            # no-event watchdog — tripping it on a request that was
-                            # otherwise about to succeed cleanly. armWatchdog() resets on
-                            # ANY event type, so a heartbeat here is enough on its own —
-                            # no frontend change needed.
-                            yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
-                            continue
-                        except StopAsyncIteration:
-                            break
+                            async for ev in stream:
+                                await event_queue.put(("event", ev))
+                        except Exception as pump_exc:
+                            await event_queue.put(("error", pump_exc))
+                        finally:
+                            await event_queue.put(("done", None))
 
-                        etype = getattr(event, "type", "")
+                    pump_task = asyncio.create_task(_pump())
+                    try:
+                        while True:
+                            try:
+                                kind, payload = await asyncio.wait_for(event_queue.get(), timeout=_HEARTBEAT_INTERVAL_SECONDS)
+                            except asyncio.TimeoutError:
+                                # Nothing drained from the real stream in a while — it's
+                                # still running in the background (a long thinking phase,
+                                # a slow web search), not a dead connection. Reproduced
+                                # live: a real thinking phase left a 32.8s silent gap with
+                                # only a single thinking_start event fired at its start,
+                                # ~3s short of ChatClient.tsx's 30s no-event watchdog —
+                                # tripping it on a request that was otherwise about to
+                                # succeed cleanly. armWatchdog() resets on ANY event type,
+                                # so a heartbeat here is enough on its own — no frontend
+                                # change needed.
+                                yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                                continue
+                            if kind == "done":
+                                break
+                            if kind == "error":
+                                raise payload
+                            event = payload
 
-                        if etype == "content_block_start":
-                            cb = getattr(event, "content_block", None)
-                            cb_type = getattr(cb, "type", "") if cb else ""
-                            # tool_use = client-side (get_stock_analysis), we execute and
-                            # round-trip below. server_tool_use = web_search, Anthropic
-                            # already executed it server-side by the time this stream
-                            # finishes — nothing for us to run, just stream the UI event.
-                            if cb_type in ("tool_use", "server_tool_use"):
-                                current_tool_id = cb.id
-                                current_tool_name = cb.name
-                                current_tool_input = ""
-                                current_tool_type = cb_type
-                                yield f"data: {json.dumps({'type': 'tool_start', 'tool': current_tool_name})}\n\n"
-                            elif cb_type == "thinking":
-                                # Extended thinking adds real latency before the first
-                                # visible text_delta — a silent gap that long otherwise
-                                # reads as a hang. Thinking content itself is never
-                                # streamed as chunks (content_block_delta below only
-                                # forwards text_delta), just this one signal that it's
-                                # in progress.
-                                yield f"data: {json.dumps({'type': 'thinking_start'})}\n\n"
+                            etype = getattr(event, "type", "")
 
-                        elif etype == "content_block_delta":
-                            delta = getattr(event, "delta", None)
-                            if delta:
-                                dtype = getattr(delta, "type", "")
-                                if dtype == "text_delta":
-                                    chunk = delta.text
-                                    full_text += chunk
-                                    yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
-                                elif dtype == "input_json_delta":
-                                    current_tool_input += getattr(delta, "partial_json", "")
+                            if etype == "content_block_start":
+                                cb = getattr(event, "content_block", None)
+                                cb_type = getattr(cb, "type", "") if cb else ""
+                                # tool_use = client-side (get_stock_analysis), we execute
+                                # and round-trip below. server_tool_use = web_search,
+                                # Anthropic already executed it server-side by the time
+                                # this stream finishes — nothing for us to run, just
+                                # stream the UI event.
+                                if cb_type in ("tool_use", "server_tool_use"):
+                                    current_tool_id = cb.id
+                                    current_tool_name = cb.name
+                                    current_tool_input = ""
+                                    current_tool_type = cb_type
+                                    yield f"data: {json.dumps({'type': 'tool_start', 'tool': current_tool_name})}\n\n"
+                                elif cb_type == "thinking":
+                                    # Extended thinking adds real latency before the first
+                                    # visible text_delta — a silent gap that long
+                                    # otherwise reads as a hang. Thinking content itself
+                                    # is never streamed as chunks (content_block_delta
+                                    # below only forwards text_delta), just this one
+                                    # signal that it's in progress.
+                                    yield f"data: {json.dumps({'type': 'thinking_start'})}\n\n"
 
-                        elif etype == "content_block_stop":
-                            if current_tool_name and current_tool_type == "tool_use":
-                                try:
-                                    parsed_input = json.loads(current_tool_input) if current_tool_input else {}
-                                except Exception:
-                                    parsed_input = {}
-                                tool_uses.append({
-                                    "id": current_tool_id,
-                                    "name": current_tool_name,
-                                    "input": parsed_input,
-                                })
-                            current_tool_name = ""
-                            current_tool_type = ""
+                            elif etype == "content_block_delta":
+                                delta = getattr(event, "delta", None)
+                                if delta:
+                                    dtype = getattr(delta, "type", "")
+                                    if dtype == "text_delta":
+                                        chunk = delta.text
+                                        full_text += chunk
+                                        yield f"data: {json.dumps({'type': 'chunk', 'text': chunk})}\n\n"
+                                    elif dtype == "input_json_delta":
+                                        current_tool_input += getattr(delta, "partial_json", "")
+
+                            elif etype == "content_block_stop":
+                                if current_tool_name and current_tool_type == "tool_use":
+                                    try:
+                                        parsed_input = json.loads(current_tool_input) if current_tool_input else {}
+                                    except Exception:
+                                        parsed_input = {}
+                                    tool_uses.append({
+                                        "id": current_tool_id,
+                                        "name": current_tool_name,
+                                        "input": parsed_input,
+                                    })
+                                current_tool_name = ""
+                                current_tool_type = ""
+                    finally:
+                        # The pump keeps consuming the real stream even after we stop
+                        # reading from the queue (an exception above, or the client
+                        # disconnecting) — cancel it so it doesn't keep calling Anthropic
+                        # for a response nobody's listening to anymore.
+                        pump_task.cancel()
+                        try:
+                            await pump_task
+                        except (asyncio.CancelledError, Exception):
+                            pass
 
                     final = await stream.get_final_message()
                     usage = final.usage
