@@ -1201,6 +1201,38 @@ class TestTruncatedResponseMarker:
         assert msg.content == "A complete reply."
         assert "[Response interrupted" not in msg.content
 
+    def test_max_tokens_with_zero_visible_text_still_persists(self, client: TestClient, db_session):
+        """Regression, reproduced live: a turn can hit max_tokens while still inside
+        thinking/an unfinished tool call, before any text_delta ever fires — full_text
+        stays "" even though the turn cost real tokens. persist() used to no-op
+        entirely on empty full_text, so this vanished with nothing in the DB and
+        nothing in the logs. A turn that spent tokens must always leave a trace."""
+        from models import Message
+
+        final = MagicMock(
+            stop_reason="max_tokens", content=[MagicMock(type="thinking")],
+            usage=MagicMock(input_tokens=9000, output_tokens=2048, cache_read_input_tokens=0, cache_creation_input_tokens=0),
+        )
+        ctx = _two_turn_stream_ctx([], final)  # no text_delta events at all
+
+        mock_client = MagicMock()
+        mock_client.messages.stream = MagicMock(return_value=ctx)
+        mock_client.messages.create = AsyncMock(return_value=MagicMock(content=[MagicMock(text="Title")]))
+
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), patch("routers.streaming.anthropic.AsyncAnthropic", return_value=mock_client):
+            r = client.post(
+                f"/conversations/{conv_id}/messages/stream",
+                json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
+            )
+
+        assert r.status_code == 200
+        db_session.expire_all()
+        msg = db_session.query(Message).filter(Message.conversation_id == conv_id, Message.role == "assistant").first()
+        assert msg is not None
+        assert "[Response interrupted" in msg.content
+        assert msg.output_tokens == 2048
+
 
 class TestMaxTokensAutoContinuation:
     """Regression, reproduced against real production data: a 94-ticker watchlist's
@@ -1342,17 +1374,15 @@ class TestMaxTokensAutoContinuation:
         assert mock_client.messages.stream.call_count == 1
 
 
-class TestMaxTokensFloor:
-    """Regression: _estimate_max_tokens('hi') alone returns 1024 — reproduced against
-    real production data to leave zero room once Sonnet 5 spends budget on its own
-    unprompted reasoning against a large system prompt, so nothing was ever saved. The
-    floor is layered on top of the existing estimate, not a change to
-    _estimate_max_tokens itself."""
+class TestMaxTokensFlatBudget:
+    """Regression: a literal "hi" deep in a real, heavily-loaded production
+    conversation burned through thinking tokens with zero visible text — the
+    reasoning load comes from the conversation, not the new message, so
+    _estimate_max_tokens no longer tiers by message length (see its comment).
+    Both a trivial and a substantive message must get the same full budget."""
 
-    def test_short_message_gets_the_floor_not_the_raw_estimate(self, client: TestClient, db_session):
-        from routers.streaming import _MIN_MAX_TOKENS_FLOOR
+    def test_short_message_gets_the_full_budget(self, client: TestClient, db_session):
         from services.model_router import _estimate_max_tokens
-        assert _estimate_max_tokens("hi") < _MIN_MAX_TOKENS_FLOOR  # sanity-check the premise
 
         conv_id = _create_conversation(client)
         with _mock_google_token(), _mock_anthropic_stream("Hi there.") as mock_client:
@@ -1361,14 +1391,11 @@ class TestMaxTokensFloor:
                 json={"content": "hi", "user_email": "streamtest@example.com", "id_token": "tok"},
             )
         used_max_tokens = mock_client.messages.stream.call_args.kwargs["max_tokens"]
-        assert used_max_tokens == _MIN_MAX_TOKENS_FLOOR
+        assert used_max_tokens == _estimate_max_tokens("hi") == 8192
 
-    def test_longer_message_above_the_floor_is_unaffected(self, client: TestClient, db_session):
-        """The floor is a floor, not a fixed override — a message whose own estimate
-        already clears it keeps its own (larger) value."""
+    def test_longer_message_gets_the_same_full_budget(self, client: TestClient, db_session):
         from services.model_router import _estimate_max_tokens
-        message = "please explain this in detail"  # contains 'explain' -> 6000
-        assert _estimate_max_tokens(message) > 2048
+        message = "please explain this in detail"
 
         conv_id = _create_conversation(client)
         with _mock_google_token(), _mock_anthropic_stream("Sure.") as mock_client:
@@ -1377,4 +1404,4 @@ class TestMaxTokensFloor:
                 json={"content": message, "user_email": "streamtest@example.com", "id_token": "tok"},
             )
         used_max_tokens = mock_client.messages.stream.call_args.kwargs["max_tokens"]
-        assert used_max_tokens == _estimate_max_tokens(message)
+        assert used_max_tokens == _estimate_max_tokens(message) == 8192
