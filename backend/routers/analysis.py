@@ -348,12 +348,23 @@ def generate_report(ticker: str, id_token: str, background_tasks: BackgroundTask
     client = anthropic.Anthropic(api_key=api_key)
     resp = client.messages.create(
         model="claude-sonnet-5",
-        max_tokens=1500,
+        # Sonnet 5 can spontaneously prepend an unprompted thinking block before the
+        # actual report — no thinking param is set here, same behavior seen throughout
+        # the chat pipeline. Confirmed live: content[0] is that ThinkingBlock (no
+        # .text attribute) often enough to have crashed this endpoint 4 times in
+        # production. Raised from 1500 (real reports alone need ~1400 output tokens,
+        # leaving ~0 headroom for thinking to land in front of them without truncating
+        # the report itself) — Anthropic bills by tokens generated, not the ceiling, so
+        # this costs nothing on the runs that don't think first.
+        max_tokens=8192,
         system=_REPORT_SYSTEM,
         messages=[{"role": "user", "content": prompt}],
     )
     import re
-    content = re.sub(r"~~(.+?)~~", r"\1", resp.content[0].text.strip())
+    text_block = next((b for b in resp.content if getattr(b, "type", "") == "text"), None)
+    if text_block is None:
+        raise HTTPException(status_code=502, detail="AI did not return a report — please try again.")
+    content = re.sub(r"~~(.+?)~~", r"\1", text_block.text.strip())
 
     report = StockReport(
         ticker=ticker,
