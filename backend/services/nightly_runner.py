@@ -98,6 +98,33 @@ def _is_quiet_stock(
     return True
 
 
+def _widen_with_important_days(db: Session, ticker: str, recent_all: list, lookback_days: int = 30) -> list:
+    """recent_all is a plain "last 5 calendar entries" window — a verdict reversal or
+    major catalyst can silently fall out of it the moment a few quiet days push it
+    out, even though it's still the most relevant thing that happened for this ticker
+    recently. Pulls in any is_important_day rows from a bounded lookback that aren't
+    already in the last-5 set, so the Verdict Agent doesn't lose track of something
+    genuinely important just because it wasn't in the last 5 trading days. Bounded
+    window, not an unbounded scan — same rule as everywhere else history gets fed
+    into a prompt. recent_all must be newest-first (as returned by the last-5 query)."""
+    if not recent_all:
+        return list(recent_all)
+
+    oldest_of_last_5 = recent_all[-1].analysis_date
+    important_older = (
+        db.query(StockAnalysis)
+        .filter(
+            StockAnalysis.ticker == ticker,
+            StockAnalysis.is_important_day == True,  # noqa: E712
+            StockAnalysis.analysis_date < oldest_of_last_5,
+            StockAnalysis.analysis_date >= date.today() - timedelta(days=lookback_days),
+        )
+        .order_by(StockAnalysis.analysis_date.desc())
+        .all()
+    )
+    return list(recent_all) + important_older
+
+
 def _build_performance_retrospective(recent: list, current_price: float | None) -> str:
     """Factual check: what actually happened after each past verdict. recent is newest-first."""
     if len(recent) < 2:
@@ -253,6 +280,7 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
     logger.info(f"[{ticker}] Running Verdict agent...")
     try:
         stock_mem = await get_stock_memory(ticker, db)
+        context_rows = _widen_with_important_days(db, ticker, recent_all)
         recent_analyses = [
             {
                 "date": str(r.analysis_date),
@@ -261,7 +289,7 @@ async def _analyze_single_ticker(ticker: str, is_leveraged: bool, sector: str, c
                 "is_important_day": r.is_important_day,
                 "importance_reason": r.importance_reason,
             }
-            for r in recent_all
+            for r in context_rows
         ]
         # Find most recent BUY price to power the don't-panic check
         last_buy = next((r for r in recent_all if r.verdict == "BUY" and r.current_price), None)
