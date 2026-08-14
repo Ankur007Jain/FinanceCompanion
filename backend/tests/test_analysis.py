@@ -193,6 +193,72 @@ class TestHistory:
         assert all(row["time_horizon_fit"] == "BOTH" for row in rows)
 
 
+class TestGenerateReport:
+    """Regression: production crashed with AttributeError('ThinkingBlock' object has no
+    attribute 'text') whenever Sonnet 5 spontaneously prepended an unprompted thinking
+    block before the report — no thinking param is set on this call, same behavior seen
+    throughout the chat pipeline. Hit 4 times in production (routers/analysis.py:356
+    blindly indexed resp.content[0])."""
+
+    def _mock_report_response(self, blocks):
+        from unittest.mock import AsyncMock, MagicMock
+        resp = MagicMock(content=blocks, usage=MagicMock(output_tokens=10))
+        mock_client = MagicMock()
+        mock_client.messages.create = MagicMock(return_value=resp)
+        return patch("routers.analysis.anthropic.Anthropic", return_value=mock_client)
+
+    def test_thinking_block_before_text_does_not_crash(self, client: TestClient):
+        from unittest.mock import MagicMock
+        thinking_block = MagicMock(type="thinking")
+        text_block = MagicMock(type="text", text="**VRT Report**\n\nSolid momentum play.")
+
+        _ingest(client, "VRTREP1")
+        with _mock_user(), \
+             self._mock_report_response([thinking_block, text_block]), \
+             patch("routers.analysis.update_memory_from_report", return_value=None):
+            r = client.post("/analysis/VRTREP1/report", params={"id_token": "fake"})
+
+        assert r.status_code == 200
+        assert r.json()["content"] == "**VRT Report**\n\nSolid momentum play."
+
+    def test_thinking_only_no_text_block_returns_502_not_a_crash(self, client: TestClient):
+        from unittest.mock import MagicMock
+        thinking_block = MagicMock(type="thinking")
+
+        _ingest(client, "VRTREP2")
+        with _mock_user(), self._mock_report_response([thinking_block]):
+            r = client.post("/analysis/VRTREP2/report", params={"id_token": "fake"})
+
+        assert r.status_code == 502
+
+    def test_plain_text_only_still_works(self, client: TestClient):
+        """Baseline: the common case (no thinking block at all) must be unaffected."""
+        from unittest.mock import MagicMock
+        text_block = MagicMock(type="text", text="Plain report, no thinking.")
+
+        _ingest(client, "VRTREP3")
+        with _mock_user(), \
+             self._mock_report_response([text_block]), \
+             patch("routers.analysis.update_memory_from_report", return_value=None):
+            r = client.post("/analysis/VRTREP3/report", params={"id_token": "fake"})
+
+        assert r.status_code == 200
+        assert r.json()["content"] == "Plain report, no thinking."
+
+    def test_strikethrough_markdown_still_stripped(self, client: TestClient):
+        from unittest.mock import MagicMock
+        text_block = MagicMock(type="text", text="Was ~~a buy~~ now a hold.")
+
+        _ingest(client, "VRTREP4")
+        with _mock_user(), \
+             self._mock_report_response([text_block]), \
+             patch("routers.analysis.update_memory_from_report", return_value=None):
+            r = client.post("/analysis/VRTREP4/report", params={"id_token": "fake"})
+
+        assert r.status_code == 200
+        assert r.json()["content"] == "Was a buy now a hold."
+
+
 class TestAdminTickers:
     def test_bad_secret_returns_401(self, client: TestClient):
         r = client.get("/jobs/admin/tickers", params={"x_admin_secret": "wrong"})
