@@ -1,0 +1,507 @@
+<title>FinanceCompanion — Build Report</title>
+<style>
+  .viz-root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page:           #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --border:         rgba(11,11,11,0.10);
+    --success:        #006300;
+    --series-1:       #2a78d6;   /* blue */
+    --series-2:       #eb6834;   /* orange */
+    --series-3:       #1baf7a;   /* aqua */
+    --series-4:       #eda100;   /* yellow */
+    --seq-100:        #cde2fb;
+    --seq-450:        #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) .viz-root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page:           #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --border:         rgba(255,255,255,0.10);
+      --success:        #0ca30c;
+      --series-1:       #3987e5;
+      --series-2:       #d95926;
+      --series-3:       #199e70;
+      --series-4:       #c98500;
+      --seq-100:        #184f95;
+      --seq-450:        #3987e5;
+    }
+  }
+  :root[data-theme="dark"] .viz-root {
+    color-scheme: dark;
+    --surface-1:      #1a1a19;
+    --page:           #0d0d0d;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #898781;
+    --gridline:       #2c2c2a;
+    --baseline:       #383835;
+    --border:         rgba(255,255,255,0.10);
+    --success:        #0ca30c;
+    --series-1:       #3987e5;
+    --series-2:       #d95926;
+    --series-3:       #199e70;
+    --series-4:       #c98500;
+    --seq-100:        #184f95;
+    --seq-450:        #3987e5;
+  }
+
+  .viz-root {
+    background: var(--page);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    padding: 32px 20px 64px;
+    max-width: 1080px;
+    margin: 0 auto;
+  }
+  * { box-sizing: border-box; }
+
+  .hero { margin-bottom: 36px; }
+  .hero h1 { font-size: 26px; font-weight: 650; margin: 0 0 6px; letter-spacing: -0.01em; }
+  .hero p { color: var(--text-secondary); margin: 0; font-size: 14px; }
+
+  .section { margin-bottom: 40px; }
+  .section-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 14px; flex-wrap: wrap; gap: 6px; }
+  .section-head h2 { font-size: 15px; font-weight: 650; margin: 0; }
+  .section-head .note { font-size: 12px; color: var(--text-muted); }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+  }
+
+  .stat-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .stat-grid.n3 { grid-template-columns: repeat(3, 1fr); }
+  .stat-grid.n6 { grid-template-columns: repeat(3, 1fr); }
+  @media (max-width: 720px) { .stat-grid, .stat-grid.n3, .stat-grid.n6 { grid-template-columns: repeat(2, 1fr); } }
+
+  .stat-tile {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 16px 14px;
+  }
+  .stat-tile .label { font-size: 12px; color: var(--text-secondary); margin-bottom: 6px; }
+  .stat-tile .value { font-size: 24px; font-weight: 650; letter-spacing: -0.01em; }
+  .stat-tile .sub { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; line-height: 1.4; }
+  .stat-tile .delta { font-size: 12px; font-weight: 600; margin-top: 4px; }
+  .stat-tile .delta.good { color: var(--success); }
+
+  /* bar chart */
+  .chart-wrap { overflow-x: auto; }
+  svg text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .axis-label { fill: var(--text-muted); font-size: 10.5px; }
+  .grid-line { stroke: var(--gridline); stroke-width: 1; }
+  .baseline { stroke: var(--baseline); stroke-width: 1; }
+  .bar { rx: 4; }
+  .bar-value { fill: var(--text-secondary); font-size: 10.5px; font-weight: 600; }
+  .bar-cat { fill: var(--text-muted); font-size: 10.5px; }
+  .hoverbar { fill: transparent; }
+  .hoverbar:hover + .bar-pair .bar { filter: brightness(1.08); }
+
+  .tooltip {
+    position: absolute;
+    pointer-events: none;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    font-size: 12px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.12);
+    opacity: 0;
+    transition: opacity 0.1s;
+    white-space: nowrap;
+    z-index: 10;
+  }
+  .tooltip .t-title { font-weight: 650; margin-bottom: 3px; }
+  .tooltip .t-row { display: flex; gap: 8px; justify-content: space-between; color: var(--text-secondary); }
+  .tooltip .t-row .swatch { display:inline-block; width:8px; height:8px; border-radius:2px; margin-right:5px; }
+
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 10px; }
+  .legend .item { display: flex; align-items: center; gap: 6px; }
+  .legend .swatch { width: 10px; height: 10px; border-radius: 2px; }
+
+  .feature-list { display: flex; flex-direction: column; gap: 0; }
+  .feature-row {
+    display: flex; align-items: baseline; gap: 10px;
+    padding: 9px 0; border-bottom: 1px solid var(--gridline);
+    font-size: 13px;
+  }
+  .feature-row:last-child { border-bottom: none; }
+  .feature-row .month {
+    flex: 0 0 66px; color: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums;
+  }
+  .feature-row .txt { color: var(--text-primary); }
+
+  .pill-row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .pill {
+    font-size: 12px; padding: 5px 11px; border-radius: 999px;
+    background: var(--surface-1); border: 1px solid var(--border); color: var(--text-secondary);
+  }
+
+  .stack-bar { display: flex; height: 28px; border-radius: 6px; overflow: hidden; width: 100%; }
+  .stack-seg { display: flex; align-items: center; justify-content: center; font-size: 11.5px; font-weight: 650; color: #fff; }
+
+  .foot { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--gridline); font-size: 11.5px; color: var(--text-muted); }
+</style>
+
+<div class="viz-root">
+
+  <div class="hero">
+    <h1>FinanceCompanion — Build Effort &amp; Usage Report</h1>
+    <p>Jun 20 – Aug 13, 2026 · 8 weeks of active development · generated Aug 13, 2026</p>
+  </div>
+
+  <!-- ============ DEVELOPMENT EFFORT ============ -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Development effort</h2>
+      <span class="note">full commit history, this repository</span>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-tile">
+        <div class="label">Commits</div>
+        <div class="value">298</div>
+        <div class="sub">since Jun 20, 2026</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Pull requests merged</div>
+        <div class="value">114</div>
+        <div class="sub">41 features · 48 fixes · 25 other</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Lines of code</div>
+        <div class="value">21.6K</div>
+        <div class="sub">12.5K backend (Python) · 4.5K frontend (TS/TSX)</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Net lines shipped</div>
+        <div class="value">+36.3K</div>
+        <div class="sub">44.1K added − 7.8K removed, all-time</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ WEEKLY ACTIVITY CHART ============ -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Weekly commits &amp; merged PRs</h2>
+      <span class="note">8 calendar weeks</span>
+    </div>
+    <div class="card">
+      <div class="legend">
+        <span class="item"><span class="swatch" style="background:var(--series-1)"></span>Commits</span>
+        <span class="item"><span class="swatch" style="background:var(--series-2)"></span>PRs merged</span>
+      </div>
+      <div class="chart-wrap">
+        <svg id="chart-weekly" width="1040" height="260" viewBox="0 0 1040 260"></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ TOKEN USAGE & COST SAVINGS ============ -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Claude token usage &amp; cost savings — last 7 days</h2>
+      <span class="note">this project's Claude Code sessions</span>
+    </div>
+    <div class="stat-grid">
+      <div class="stat-tile">
+        <div class="label">Tokens processed</div>
+        <div class="value">521M</div>
+        <div class="sub">905K output · 8.0M cache writes · 512M cache reads</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Est. value at API rates</div>
+        <div class="value">$197</div>
+        <div class="sub">what this usage would cost metered, with caching applied</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Saved by prompt caching</div>
+        <div class="value">$1,377</div>
+        <div class="delta good">↓ 87.5% vs. no caching</div>
+        <div class="sub">cache reads billed ~90% below fresh input</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Billed to metered API</div>
+        <div class="value">$0</div>
+        <div class="sub">covered by flat Claude Code subscription</div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:12px;">
+      <div class="legend">
+        <span class="item"><span class="swatch" style="background:var(--series-1)"></span>Daily API-equivalent cost</span>
+      </div>
+      <div class="chart-wrap">
+        <svg id="chart-cost" width="1040" height="220" viewBox="0 0 1040 220"></svg>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ DATA GENERATED ============ -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Data generated</h2>
+      <span class="note">live production database</span>
+    </div>
+    <div class="stat-grid n6" style="grid-template-columns: repeat(6,1fr);">
+      <div class="stat-tile">
+        <div class="label">Tickers analyzed</div>
+        <div class="value">126</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Stock analyses</div>
+        <div class="value">2,215</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Correlation pairs</div>
+        <div class="value">2,415</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Market snapshots</div>
+        <div class="value">2,058</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">Chat messages</div>
+        <div class="value">882</div>
+      </div>
+      <div class="stat-tile">
+        <div class="label">AI reports</div>
+        <div class="value">25</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ PR MIX ============ -->
+  <div class="section">
+    <div class="section-head">
+      <h2>What the 114 merged PRs were</h2>
+    </div>
+    <div class="card">
+      <div class="stack-bar">
+        <div class="stack-seg" style="background:var(--series-1); width:36%;">41 features</div>
+        <div class="stack-seg" style="background:var(--series-2); width:42%;">48 fixes</div>
+        <div class="stack-seg" style="background:var(--series-3); width:22%;">25 other</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ============ FEATURES SHIPPED ============ -->
+  <div class="section">
+    <div class="section-head">
+      <h2>Features shipped</h2>
+      <span class="note">selected, chronological</span>
+    </div>
+    <div class="card">
+      <div class="feature-list" id="feature-list"></div>
+    </div>
+  </div>
+
+  <!-- ============ STACK / AUTOMATION ============ -->
+  <div class="section">
+    <div class="section-head">
+      <h2>System at a glance</h2>
+    </div>
+    <div class="pill-row">
+      <span class="pill">19 database tables</span>
+      <span class="pill">59 API endpoints</span>
+      <span class="pill">6 nightly AI agents</span>
+      <span class="pill">8 GitHub Actions workflows</span>
+      <span class="pill">48 backend tests</span>
+      <span class="pill">Next.js + FastAPI + Claude Sonnet 5</span>
+    </div>
+  </div>
+
+  <div class="foot">
+    Commit/PR data from local git history and GitHub (gh CLI). Token usage from local Claude Code session logs for this project, last 7 days. Cost figures are estimates at standard Claude Sonnet API rates ($3/M input, $15/M output, $3.75/M cache write, $0.30/M cache read) — actual spend is covered by a flat Claude Code subscription, not metered per-token billing.
+  </div>
+
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+(function(){
+  const NS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs) {
+    const e = document.createElementNS(NS, tag);
+    for (const k in attrs) e.setAttribute(k, attrs[k]);
+    return e;
+  }
+  const tooltip = document.getElementById('tooltip');
+  function showTip(evt, html) {
+    tooltip.innerHTML = html;
+    tooltip.style.opacity = 1;
+    const r = document.body.getBoundingClientRect();
+    tooltip.style.left = (evt.clientX - r.left + 14) + 'px';
+    tooltip.style.top = (evt.clientY - r.top - 10) + 'px';
+  }
+  function hideTip() { tooltip.style.opacity = 0; }
+
+  const css = getComputedStyle(document.querySelector('.viz-root'));
+  const c1 = css.getPropertyValue('--series-1').trim();
+  const c2 = css.getPropertyValue('--series-2').trim();
+  const grid = css.getPropertyValue('--gridline').trim();
+  const baseline = css.getPropertyValue('--baseline').trim();
+  const muted = css.getPropertyValue('--text-muted').trim();
+  const secondary = css.getPropertyValue('--text-secondary').trim();
+
+  // ---------- Weekly commits + PRs grouped bar chart ----------
+  (function(){
+    const data = [
+      {wk:'W25', commits:49, prs:9},
+      {wk:'W26', commits:110, prs:44},
+      {wk:'W27', commits:42, prs:12},
+      {wk:'W28', commits:0, prs:4},
+      {wk:'W29', commits:36, prs:14},
+      {wk:'W30', commits:13, prs:8},
+      {wk:'W31', commits:20, prs:7},
+      {wk:'W32', commits:19, prs:8},
+      {wk:'W33', commits:11, prs:7},
+    ];
+    const svg = document.getElementById('chart-weekly');
+    const W = 1040, H = 260, padL = 34, padR = 10, padT = 12, padB = 30;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const maxV = Math.max(...data.map(d=>Math.max(d.commits,d.prs)));
+    const niceMax = Math.ceil(maxV/20)*20;
+    const groupW = plotW / data.length;
+    const barW = Math.min(22, groupW/2 - 6);
+
+    [0,0.25,0.5,0.75,1].forEach(f=>{
+      const y = padT + plotH * (1-f);
+      svg.appendChild(el('line',{x1:padL,x2:W-padR,y1:y,y2:y,class:'grid-line'}));
+      const t = el('text',{x:padL-8,y:y+3,class:'axis-label','text-anchor':'end'});
+      t.textContent = Math.round(niceMax*f);
+      svg.appendChild(t);
+    });
+    svg.appendChild(el('line',{x1:padL,x2:W-padR,y1:padT+plotH,y2:padT+plotH,class:'baseline'}));
+
+    data.forEach((d,i)=>{
+      const gx = padL + i*groupW;
+      const cx = gx + groupW/2 - barW - 2;
+      const px = gx + groupW/2 + 2;
+      const ch = (d.commits/niceMax)*plotH;
+      const ph = (d.prs/niceMax)*plotH;
+
+      const rc = el('rect',{x:cx,y:padT+plotH-ch,width:barW,height:Math.max(ch,1),fill:c1,rx:4});
+      svg.appendChild(rc);
+      const rp = el('rect',{x:px,y:padT+plotH-ph,width:barW,height:Math.max(ph,1),fill:c2,rx:4});
+      svg.appendChild(rp);
+
+      const hb = el('rect',{x:gx+2,y:padT,width:groupW-4,height:plotH,fill:'transparent',style:'cursor:pointer'});
+      hb.addEventListener('mousemove',(e)=>{
+        showTip(e, `<div class="t-title">${d.wk}, 2026</div>
+          <div class="t-row"><span><span class="swatch" style="background:${c1}"></span>Commits</span><span>${d.commits}</span></div>
+          <div class="t-row"><span><span class="swatch" style="background:${c2}"></span>PRs merged</span><span>${d.prs}</span></div>`);
+      });
+      hb.addEventListener('mouseleave', hideTip);
+      svg.appendChild(hb);
+
+      const lbl = el('text',{x:gx+groupW/2,y:padT+plotH+18,class:'bar-cat','text-anchor':'middle'});
+      lbl.textContent = d.wk;
+      svg.appendChild(lbl);
+    });
+  })();
+
+  // ---------- Daily cost chart ----------
+  (function(){
+    const data = [
+      {day:'Aug 9', cost:94.79, tokens:'270.2M'},
+      {day:'Aug 10', cost:75.72, tokens:'189.0M'},
+      {day:'Aug 11', cost:9.54, tokens:'17.6M'},
+      {day:'Aug 13', cost:17.21, tokens:'44.4M'},
+    ];
+    const svg = document.getElementById('chart-cost');
+    const W = 1040, H = 220, padL = 46, padR = 10, padT = 12, padB = 30;
+    const plotW = W - padL - padR, plotH = H - padT - padB;
+    const maxV = Math.max(...data.map(d=>d.cost));
+    const niceMax = Math.ceil(maxV/20)*20;
+    const slotW = plotW / data.length;
+    const barW = Math.min(56, slotW - 40);
+
+    [0,0.25,0.5,0.75,1].forEach(f=>{
+      const y = padT + plotH * (1-f);
+      svg.appendChild(el('line',{x1:padL,x2:W-padR,y1:y,y2:y,class:'grid-line'}));
+      const t = el('text',{x:padL-8,y:y+3,class:'axis-label','text-anchor':'end'});
+      t.textContent = '$'+Math.round(niceMax*f);
+      svg.appendChild(t);
+    });
+    svg.appendChild(el('line',{x1:padL,x2:W-padR,y1:padT+plotH,y2:padT+plotH,class:'baseline'}));
+
+    data.forEach((d,i)=>{
+      const gx = padL + i*slotW;
+      const bx = gx + slotW/2 - barW/2;
+      const h = (d.cost/niceMax)*plotH;
+
+      const r = el('rect',{x:bx,y:padT+plotH-h,width:barW,height:Math.max(h,1),fill:c1,rx:4});
+      svg.appendChild(r);
+
+      const val = el('text',{x:gx+slotW/2,y:padT+plotH-h-8,class:'bar-value','text-anchor':'middle'});
+      val.textContent = '$'+d.cost.toFixed(0);
+      svg.appendChild(val);
+
+      const hb = el('rect',{x:gx+4,y:padT,width:slotW-8,height:plotH,fill:'transparent',style:'cursor:pointer'});
+      hb.addEventListener('mousemove',(e)=>{
+        showTip(e, `<div class="t-title">${d.day}, 2026</div>
+          <div class="t-row"><span>API-equiv. cost</span><span>$${d.cost.toFixed(2)}</span></div>
+          <div class="t-row"><span>Tokens processed</span><span>${d.tokens}</span></div>`);
+      });
+      hb.addEventListener('mouseleave', hideTip);
+      svg.appendChild(hb);
+
+      const lbl = el('text',{x:gx+slotW/2,y:padT+plotH+18,class:'bar-cat','text-anchor':'middle'});
+      lbl.textContent = d.day;
+      svg.appendChild(lbl);
+    });
+  })();
+
+  // ---------- Feature list ----------
+  const features = [
+    ["Jun 20", "Initial scaffold — full-stack AI stock advisor"],
+    ["Jun 20", "Nightly analysis pipeline via GitHub Actions + claude-code-action"],
+    ["Jun 21", "Dashboard redesign, nightly agent fix, auto-detect leveraged ETFs"],
+    ["Jun 23", "Fundamentals extraction, market data caching, UI polish"],
+    ["Jun 26", "GET /conversations/by-ticker + watchlist remove + /analysis/important"],
+    ["Jun 28", "UI redesign 2 — signal checklist, sortable table, mobile drawer"],
+    ["Jul 2", "Verdict trust layer — entry quality, 90-day scenarios, hold-and-forget"],
+    ["Jul 3", "Mobile card layout + session token auto-refresh"],
+    ["Jul 4", "Verdict grouping, stock memories, events calendar fix"],
+    ["Jul 5", "Dynamic sort/group control in My Stocks"],
+    ["Jul 13", "Dual-agent verdict fields on StockAnalysis (Phase 1)"],
+    ["Jul 15", "Support/resistance levels + sticky search/filter on My Stocks"],
+    ["Jul 18", "Unread tracking, sticky filter, Finnhub cross-validation"],
+    ["Jul 19", "My Stocks UI redesign — conviction hero, sparkline, 52w range"],
+    ["Jul 21", "Past analysis history panel + on-demand AI report"],
+    ["Jul 23", "Enrich history rows — day change, RSI, reasoning, conviction label"],
+    ["Aug 1", "My Stocks portfolio tab — import, positions, P&L, CSV parser"],
+    ["Aug 2", "Sector/category tags + ripple snippet in ticker context"],
+    ["Aug 3", "Statistically rigorous ticker correlation matrix"],
+    ["Aug 3", "Chat Quality Sentinel + Production Fix Agent audit pipeline"],
+    ["Aug 4", "Extended thinking, verdict-consistency checks"],
+    ["Aug 5", "Long-term vs. short-term holding fit, signal convergence"],
+    ["Aug 9", "Chat memory loop — capped history, cross-conversation retrieval"],
+    ["Aug 10", "Cache-topology fix, ticker-scoped learnings, Memory UI"],
+    ["Aug 10", "Full rollout of Sonnet 5 across nightly + on-demand paths"],
+  ];
+  const list = document.getElementById('feature-list');
+  features.forEach(([m,t])=>{
+    const row = document.createElement('div');
+    row.className = 'feature-row';
+    row.innerHTML = `<span class="month">${m}</span><span class="txt">${t}</span>`;
+    list.appendChild(row);
+  });
+})();
+</script>
