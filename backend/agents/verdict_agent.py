@@ -150,7 +150,10 @@ async def generate_verdict(
 
     history_block = ""
     if recent_analyses:
-        lines = ["=== RECENT HISTORY (last 5 trading days) ==="]
+        # Last 5 trading days, plus any earlier ⭐ IMPORTANT day from the past 30 that
+        # would otherwise have silently fallen out of a plain last-5 window (see
+        # nightly_runner.py) — not strictly "last 5" anymore, hence the softer header.
+        lines = ["=== RECENT HISTORY (last 5 trading days, plus any earlier important day) ==="]
         for a in recent_analyses:
             flag = " ⭐ IMPORTANT" if a.get("is_important_day") else ""
             lines.append(
