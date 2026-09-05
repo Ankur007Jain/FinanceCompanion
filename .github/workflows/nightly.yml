@@ -393,7 +393,7 @@ jobs:
 
             Price field mapping: price→current_price, change_pct→price_change_pct,
             hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct,
-            ma50→ma50, ma200→ma200, analyst→analyst_consensus, analyst_count→analyst_count,
+            ma50→ma50, ma200→ma200, rsi→rsi, analyst→analyst_consensus, analyst_count→analyst_count,
             upside_pct→analyst_upside_pct, target_mean→target_price_mean,
             target_high→target_price_high, target_low→target_price_low,
             support_20d→support_20d, resistance_20d→resistance_20d,
