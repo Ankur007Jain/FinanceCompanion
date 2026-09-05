@@ -40,6 +40,27 @@ def _run_memory_update(ticker: str, verdict: str, reasoning: str, news_summary: 
         session.close()
 
 
+# The nightly.yml prompt's "CONVICTION FLOOR: signal_convergence_score < 5 -> verdict
+# MUST be WATCH" is only ever a written instruction to the LLM agent that runs the
+# batch — nothing enforced it server-side, the same reliability gap that let rsi
+# silently vanish from ~65-95% of nightly posts (see the nightly.yml rsi
+# field-mapping fix). Checked against real production BUY outcomes (5d forward
+# return, 124 calls, 45-day window): score 5 is a coin flip (47.1% win rate), score 6
+# is actively negative (-2.16% avg return, 29.3% win rate — the single worst band),
+# while 7+ shows a real, monotonic edge (56.2% -> 62.5% -> 100% at n=48/16/2).
+# Raised the floor to 7 and enforce it here, deterministically, regardless of what
+# the agent submitted — "less but stronger" is the explicit design goal (see
+# [[project_trust_over_volume_principle]]), and the data says 5-6 aren't stronger,
+# they're actively worse than doing nothing.
+_BUY_SIGNAL_FLOOR = 7
+
+
+def _enforce_buy_signal_floor(verdict: str | None, signal_convergence_score: int | None) -> str | None:
+    if verdict == "BUY" and signal_convergence_score is not None and signal_convergence_score < _BUY_SIGNAL_FLOOR:
+        return "WATCH"
+    return verdict
+
+
 def _check_target_sanity(verdict, current_price, entry_target, exit_target, stop_loss) -> list[str]:
     """Flags nonsensical target combinations — a stop above current price on a BUY, an exit
     below entry, an entry wildly far from the actual price. Doesn't block ingest (a missing
@@ -134,7 +155,7 @@ def ingest_analysis(body: IngestAnalysisRequest, background_tasks: BackgroundTas
         "market_cap": body.market_cap,
         "sector": body.sector,
         "industry": body.industry,
-        "verdict": body.verdict,
+        "verdict": _enforce_buy_signal_floor(body.verdict, body.signal_convergence_score),
         "entry_target": body.entry_target,
         "exit_target": body.exit_target,
         "stop_loss": body.stop_loss,

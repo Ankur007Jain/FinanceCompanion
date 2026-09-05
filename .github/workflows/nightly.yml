@@ -190,7 +190,12 @@ jobs:
             spec this step used to ask you to self-score. Read it as fixed, read-only context in
             Step 3a; do not recompute, restate a different value, or adjust these flags yourself.
 
-            CONVICTION FLOOR: signal_convergence_score < 5 → verdict MUST be WATCH.
+            CONVICTION FLOOR: signal_convergence_score < 7 → verdict MUST be WATCH. (Checked
+            against real production BUY outcomes: 5-6 are a coin flip or actively negative
+            expected return; 7+ is where a real edge starts. The backend also enforces this
+            floor deterministically at ingest regardless of what you submit here — this
+            instruction exists so you don't spend effort writing full BUY reasoning for a
+            call that gets downgraded anyway.)
 
             ## Step 2b — Self-derived fundamentals trend (precomputed, read-only)
 
