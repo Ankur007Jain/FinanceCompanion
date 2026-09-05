@@ -68,6 +68,20 @@ def _fmt(v, decimals=2):
     return f"{v:.{decimals}f}" if v is not None else "N/A"
 
 
+def _pct_vs_ma(price: Optional[float], ma: Optional[float]) -> str:
+    """Precomputed % above/below a moving average, so the model never has to do this
+    arithmetic live. Issue #135, confirmed live: asked to state "% below MA200" from
+    the same raw price/MA200 dollar figures already in this dossier, Sonnet 5 computed
+    the *dollar* gap correctly one message, then miscalculated the *percentage* version
+    of the identical numbers the very next message (~10% stated vs. 6.7% actual) — a
+    real arithmetic slip, not a data problem. Precomputing it removes the need for that
+    arithmetic in the common case."""
+    if price is None or ma is None or ma == 0:
+        return ""
+    pct = (price - ma) / ma * 100
+    return f" ({'+' if pct >= 0 else ''}{pct:.1f}%)"
+
+
 def _format_analysis(a: StockAnalysis, position_line: str) -> str:
     direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
     conv = f"  Conviction:   {a.conviction_score}/100  ({a.risk_level or 'N/A'} risk, {a.confidence or 'N/A'} confidence)\n" if a.conviction_score is not None else ""
@@ -77,7 +91,7 @@ def _format_analysis(a: StockAnalysis, position_line: str) -> str:
         f"{conv}"
         f"  Price:        ${_fmt(a.current_price)}  {direction}{abs(a.day_change_pct or 0):.1f}%\n"
         f"  52-Wk Range:  ${_fmt(a.week_52_low)} – ${_fmt(a.week_52_high)}  ({_fmt(a.range_position_pct, 0)}% position)\n"
-        f"  MA50/MA200:   ${_fmt(a.ma_50)} / ${_fmt(a.ma_200)}\n"
+        f"  MA50/MA200:   ${_fmt(a.ma_50)}{_pct_vs_ma(a.current_price, a.ma_50)} / ${_fmt(a.ma_200)}{_pct_vs_ma(a.current_price, a.ma_200)}\n"
         f"  RSI:          {a.rsi or 'N/A'}\n"
         f"  Analysts:     {a.analyst_consensus} ({a.analyst_count})  target ${a.target_price_mean or 'N/A'}\n"
         f"  Reasoning:    {a.reasoning or ''}\n"
@@ -135,7 +149,7 @@ def _format_analysis_compact(a: StockAnalysis, position_line: str) -> str:
         f"{a.verdict}{flag}{sector}  {position}  "
         f"${_fmt(a.current_price)} {direction}{abs(a.day_change_pct or 0):.1f}%  "
         f"Conv {conv}  RSI {a.rsi or 'N/A'}  52wk-pos {_fmt(a.range_position_pct, 0)}%  "
-        f"MA50/200 ${_fmt(a.ma_50)}/${_fmt(a.ma_200)}  "
+        f"MA50/200 ${_fmt(a.ma_50)}{_pct_vs_ma(a.current_price, a.ma_50)}/${_fmt(a.ma_200)}{_pct_vs_ma(a.current_price, a.ma_200)}  "
         f"targets: entry ${a.entry_target or 'N/A'} exit ${a.exit_target or 'N/A'} stop ${a.stop_loss or 'N/A'}  "
         f"Analyst {a.analyst_consensus or 'N/A'} tgt ${a.target_price_mean or 'N/A'}{events}{ripple}"
     )
@@ -154,7 +168,7 @@ def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnal
     lines += [
         f"Targets:        entry ${a.entry_target or 'N/A'}  exit ${a.exit_target or 'N/A'}  stop ${a.stop_loss or 'N/A'}  hold {a.hold_period or 'N/A'}",
         f"Price:          ${_fmt(a.current_price)}  {direction}{abs(a.day_change_pct or 0):.1f}%   52wk ${_fmt(a.week_52_low)}–${_fmt(a.week_52_high)} ({_fmt(a.range_position_pct, 0)}% of range)",
-        f"Technicals:     MA50 ${_fmt(a.ma_50)}  MA200 ${_fmt(a.ma_200)}  RSI {a.rsi or 'N/A'}",
+        f"Technicals:     MA50 ${_fmt(a.ma_50)}{_pct_vs_ma(a.current_price, a.ma_50)}  MA200 ${_fmt(a.ma_200)}{_pct_vs_ma(a.current_price, a.ma_200)}  RSI {a.rsi or 'N/A'}",
         f"Long-term:      1yr {_pctnum(a.stock_52w_change)} (S&P {_pctnum(a.sp500_52w_change)})   5yr {_pctnum(a.stock_5y_change)} (S&P {_pctnum(a.sp500_5y_change)})",
         f"Valuation:      P/E {a.pe_trailing or 'N/A'} (fwd {a.pe_forward or 'N/A'})  |  analyst {a.analyst_consensus} ({a.analyst_count or 'N/A'}) target ${a.target_price_mean or 'N/A'} (${a.target_price_low or 'N/A'}–${a.target_price_high or 'N/A'})",
         f"Fundamentals:   rev growth {_pct(a.revenue_growth)}  net margin {_pct(a.profit_margin)}  ROE {_pct(a.return_on_equity)}  D/E {a.debt_to_equity or 'N/A'}  FCF {a.free_cashflow or 'N/A'}  beta {a.beta or 'N/A'}",

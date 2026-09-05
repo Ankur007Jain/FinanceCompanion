@@ -272,6 +272,52 @@ class TestBuildTickerDossier:
         assert "Correlated in your portfolio" not in dossier
 
 
+class TestPctVsMA:
+    """Issue #135: asked to state "% below MA200" from the raw price/MA200 dollar
+    figures already in the dossier, Sonnet 5 got the dollar gap right one message then
+    miscalculated the percentage of the identical numbers the next message (~10% vs.
+    the real 6.7%). Precomputing % above/below each MA removes the need for that
+    arithmetic in the common case — verified present in all three formatters that
+    show MA50/MA200, not just the focus-ticker deep dossier."""
+
+    def test_pct_vs_ma_helper_computes_correctly(self):
+        from services.prompt_builder import _pct_vs_ma
+        assert _pct_vs_ma(344.0, 368.86) == " (-6.7%)"
+        assert _pct_vs_ma(110.0, 100.0) == " (+10.0%)"
+
+    def test_pct_vs_ma_handles_missing_data_without_crashing(self):
+        from services.prompt_builder import _pct_vs_ma
+        assert _pct_vs_ma(None, 100.0) == ""
+        assert _pct_vs_ma(100.0, None) == ""
+        assert _pct_vs_ma(100.0, 0.0) == ""
+
+    # _seed_analysis's defaults (current_price=100.0, ma_200=95.0) give a clean,
+    # unambiguous (100-95)/95*100 = +5.3% — used as-is below since the helper doesn't
+    # support overriding a field it already hardcodes.
+
+    def test_focus_ticker_dossier_shows_precomputed_pct(self, db_session):
+        _seed_analysis(db_session, "PBPCT1")
+        from services.prompt_builder import build_ticker_dossier
+        dossier = build_ticker_dossier("PBPCT1", db_session, "u@example.com")
+        assert "MA200 $95.00 (+5.3%)" in dossier
+
+    def test_full_detail_no_focus_format_shows_precomputed_pct(self, db_session):
+        _seed_analysis(db_session, "PBPCT2")
+        db_session.add(WatchlistItem(user_email="u3@example.com", ticker="PBPCT2"))
+        db_session.commit()
+        _, dynamic = build_system_prompt("u3@example.com", db_session)
+        assert "$95.00 (+5.3%)" in dynamic
+
+    def test_compact_other_ticker_format_shows_precomputed_pct(self, db_session):
+        _seed_analysis(db_session, "PBPCT3", conviction_score=70)
+        _seed_analysis(db_session, "PBPCT4")
+        db_session.add(WatchlistItem(user_email="u4@example.com", ticker="PBPCT3"))
+        db_session.add(WatchlistItem(user_email="u4@example.com", ticker="PBPCT4"))
+        db_session.commit()
+        _, dynamic = build_system_prompt("u4@example.com", db_session, conversation_ticker="PBPCT3")
+        assert "95.00 (+5.3%)" in dynamic
+
+
 class TestCompactOtherTickers:
     """In a ticker-scoped conversation, every tracked ticker should be a cheap numeric
     line — keeping everything needed for portfolio-wide screening, dropping only
