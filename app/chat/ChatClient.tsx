@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -7,6 +7,8 @@ import Logo from "../components/Logo";
 import { ExpandedDetail, VERDICT_META, MONO } from "@/app/components/StockDetail";
 import type { Analysis } from "@/app/components/StockDetail";
 import { handleUnauthorized } from "@/app/components/authFetch";
+import { remarkTickerLinks, tickerFromHref } from "./tickerLinks";
+import PositionEditor from "./PositionEditor";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 
@@ -55,6 +57,13 @@ export default function ChatClient({
   // component as the Stocks tab) opens beside the chat so there's no back-and-forth.
   const [stockPanelOpen, setStockPanelOpen] = useState(false);
   const [tickerAnalysis, setTickerAnalysis] = useState<Analysis | null>(null);
+  // A ticker clicked inside an answer opens ITS card in the same panel, without changing
+  // which ticker the conversation itself is scoped to. null = show the conversation's own ticker.
+  const [linkedPanel, setLinkedPanel] = useState<{ ticker: string; analysis: Analysis } | null>(null);
+  const [watchlistItems, setWatchlistItems] = useState<{ ticker: string; shares: number | null; avg_cost: number | null }[]>([]);
+  const [tickerNote, setTickerNote] = useState("");
+  const linkReqRef = useRef(0);
+  const [chatSearch, setChatSearch] = useState("");
   const txCacheRef = useRef<Record<string, Record<string, string | null>>>({});
   const canViewPrompt = userEmail === "ankur07jain@gmail.com";
   const messagesContainerRef = useRef<HTMLDivElement>(null);
@@ -85,11 +94,97 @@ export default function ChatClient({
 
   useEffect(() => { loadConversations(); }, []);
   useEffect(() => {
+    // Only tickers the user tracks get linked in answers — an all-caps word that merely looks
+    // like a symbol is left as plain text.
+    (async () => {
+      const r = await fetch(`${API}/watchlist?id_token=${encodeURIComponent(idToken)}`);
+      if (!r.ok) { handleUnauthorized(r.status); return; }
+      setWatchlistItems(await r.json());
+    })().catch(() => {});
+  }, [idToken]);
+  useEffect(() => { setLinkedPanel(null); }, [activeConvId]);
+  useEffect(() => {
     if (activeConvId) loadMessages(activeConvId);
     else setMessages([]);
   }, [activeConvId]);
 
   const activeTicker = conversations.find(c => c.id === activeConvId)?.ticker ?? null;
+  const knownTickers = useMemo(() => {
+    const set = new Set(watchlistItems.map(i => i.ticker));
+    conversations.forEach(c => { if (c.ticker) set.add(c.ticker); });
+    return set;
+  }, [watchlistItems, conversations]);
+  const tickerLinkPlugin = useMemo(() => remarkTickerLinks(knownTickers), [knownTickers]);
+  const panelTicker = linkedPanel?.ticker ?? activeTicker;
+  const panelAnalysis = linkedPanel?.analysis ?? tickerAnalysis;
+
+  async function reloadWatchlist() {
+    const r = await fetch(`${API}/watchlist?id_token=${encodeURIComponent(idToken)}`).catch(() => null);
+    if (r && r.ok) setWatchlistItems(await r.json());
+  }
+
+  // Same endpoints as the Stocks tab (PATCH /watchlist/{t}/portfolio, /sell), so the position
+  // updates in place. Optimistic: the editor reflects the change immediately, and a failed
+  // save reloads the real state. A ticker that isn't on the watchlist yet is added first.
+  async function savePosition(ticker: string, shares: number, avgCost: number | null): Promise<boolean> {
+    const existed = watchlistItems.some(i => i.ticker === ticker);
+    setWatchlistItems(prev => existed
+      ? prev.map(i => i.ticker === ticker ? { ...i, shares, avg_cost: avgCost } : i)
+      : [...prev, { ticker, shares, avg_cost: avgCost }]);
+    try {
+      if (!existed) {
+        const a = await fetch(`${API}/watchlist?id_token=${encodeURIComponent(idToken)}`, {
+          method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ticker }),
+        });
+        if (!a.ok && a.status !== 409) throw new Error(String(a.status));
+      }
+      const r = await fetch(`${API}/watchlist/${encodeURIComponent(ticker)}/portfolio?id_token=${encodeURIComponent(idToken)}`, {
+        method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ shares, avg_cost: avgCost }),
+      });
+      if (!r.ok) { handleUnauthorized(r.status); throw new Error(String(r.status)); }
+      return true;
+    } catch {
+      await reloadWatchlist();
+      return false;
+    }
+  }
+
+  async function clearPosition(ticker: string): Promise<boolean> {
+    setWatchlistItems(prev => prev.map(i => i.ticker === ticker ? { ...i, shares: null, avg_cost: null } : i));
+    try {
+      const r = await fetch(`${API}/watchlist/${encodeURIComponent(ticker)}/sell?id_token=${encodeURIComponent(idToken)}`, { method: "PATCH" });
+      if (!r.ok) { handleUnauthorized(r.status); throw new Error(String(r.status)); }
+      return true;
+    } catch {
+      await reloadWatchlist();
+      return false;
+    }
+  }
+
+  async function openTickerCard(ticker: string) {
+    if (ticker === activeTicker && tickerAnalysis) {
+      setLinkedPanel(null);
+      setStockPanelOpen(true);
+      return;
+    }
+    const req = ++linkReqRef.current;
+    const r = await fetch(`${API}/analysis/${ticker}/latest?id_token=${encodeURIComponent(idToken)}`).catch(() => null);
+    if (req !== linkReqRef.current) return;
+    if (r && r.ok) {
+      setLinkedPanel({ ticker, analysis: await r.json() });
+      setStockPanelOpen(true);
+      return;
+    }
+    if (r && handleUnauthorized(r.status)) return;
+    setTickerNote(`No analysis for ${ticker} yet`);
+    setTimeout(() => setTickerNote(""), 3000);
+  }
+
+  const searchTerms = chatSearch.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const visibleConversations = searchTerms.length === 0 ? conversations : conversations.filter(c => {
+    const hay = `${c.ticker ?? ""} ${c.title ?? ""}`.toLowerCase();
+    return searchTerms.every(t => hay.includes(t));
+  });
   useEffect(() => {
     setStockPanelOpen(false);
     setTickerAnalysis(null);
@@ -473,7 +568,36 @@ export default function ChatClient({
               <button onClick={() => setShowSidebar(false)} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 16, color: "var(--t-text-muted)", lineHeight: 1 }}>✕</button>
             </div>
           )}
-          {conversations.map((c) => (
+          <div style={{ position: "sticky", top: 0, zIndex: 1, background: "var(--t-surface)", padding: "0 0.5rem 0.4rem" }}>
+            <div style={{ position: "relative" }}>
+              <input
+                data-testid="chat-search"
+                value={chatSearch}
+                onChange={(e) => setChatSearch(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") setChatSearch(""); }}
+                placeholder="Search chats…"
+                aria-label="Search chats"
+                style={{
+                  width: "100%", boxSizing: "border-box", padding: "0.4rem 1.6rem 0.4rem 0.6rem",
+                  fontSize: "0.8rem", borderRadius: "0.35rem", border: "1px solid var(--t-border)",
+                  background: "var(--t-bg)", color: "var(--t-text)", outline: "none",
+                }}
+              />
+              {chatSearch && (
+                <button
+                  onClick={() => setChatSearch("")}
+                  aria-label="Clear search"
+                  style={{ position: "absolute", right: 4, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--t-text-muted)", fontSize: 13, lineHeight: 1, padding: "2px 4px" }}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          </div>
+          {searchTerms.length > 0 && visibleConversations.length === 0 && (
+            <div data-testid="chat-search-empty" style={{ padding: "0.5rem 1rem", fontSize: "0.8rem", color: "var(--t-text-muted)" }}>No chats match “{chatSearch.trim()}”</div>
+          )}
+          {visibleConversations.map((c) => (
             <div
               key={c.id}
               style={{
@@ -520,7 +644,11 @@ export default function ChatClient({
           {activeTicker && (
             <button
               data-testid="ticker-strip"
-              onClick={() => tickerAnalysis && setStockPanelOpen(o => !o)}
+              onClick={() => {
+                if (!tickerAnalysis) return;
+                if (linkedPanel) { setLinkedPanel(null); setStockPanelOpen(true); }
+                else setStockPanelOpen(o => !o);
+              }}
               style={{
                 display: "flex", alignItems: "center", gap: "0.75rem", width: "100%",
                 padding: isMobile ? "0.55rem 1rem" : "0.55rem 1.5rem", flexShrink: 0,
@@ -555,7 +683,7 @@ export default function ChatClient({
                     </span>
                   )}
                   <span style={{ marginLeft: "auto", fontSize: "0.75rem", color: "var(--t-accent)", flexShrink: 0 }}>
-                    {stockPanelOpen ? "Hide details ✕" : "View details →"}
+                    {stockPanelOpen && !linkedPanel ? "Hide details ✕" : "View details →"}
                   </span>
                 </>
               ) : (
@@ -607,8 +735,27 @@ export default function ChatClient({
                     <span style={{ whiteSpace: "pre-wrap" }}>{msg.content}</span>
                   ) : msg.content ? (
                     <ReactMarkdown
-                      remarkPlugins={[remarkGfm]}
+                      remarkPlugins={[remarkGfm, tickerLinkPlugin]}
                       components={{
+                        a: ({ href, children, node: _node, ...props }) => {
+                          const ticker = tickerFromHref(href);
+                          if (!ticker) return <a href={href} {...props}>{children}</a>;
+                          return (
+                            <button
+                              type="button"
+                              data-testid="ticker-link"
+                              onClick={() => openTickerCard(ticker)}
+                              title={`Open ${ticker} details`}
+                              style={{
+                                background: "none", border: "none", padding: 0, margin: 0, font: "inherit",
+                                color: "var(--t-accent)", cursor: "pointer",
+                                textDecoration: "underline dotted", textUnderlineOffset: 3,
+                              }}
+                            >
+                              {children}
+                            </button>
+                          );
+                        },
                         h1: ({ children }) => (
                           <h1 style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "1rem", fontWeight: 700, margin: "1rem 0 0.5rem", color: "var(--t-text)" }}>
                             <span style={{ width: 3, height: 20, borderRadius: 2, background: "var(--t-accent)", flexShrink: 0, display: "inline-block" }} />
@@ -708,6 +855,10 @@ export default function ChatClient({
               </div>
             ))}
 
+            {tickerNote && (
+              <div style={{ color: "var(--t-text-muted)", fontSize: "0.82rem", padding: "0.5rem 0" }}>{tickerNote}</div>
+            )}
+
             {searchingLabel && (
               <div style={{ color: "var(--t-text-muted)", fontSize: "0.82rem", padding: "0.5rem 0", display: "flex", alignItems: "center", gap: "0.4rem" }}>
                 <span style={{ animation: "spin 1s linear infinite", display: "inline-block" }}>🔍</span>
@@ -783,7 +934,7 @@ export default function ChatClient({
         {/* Stock detail panel — same ExpandedDetail component as the Stocks tab.
             Desktop: non-modal side panel so the chat stays visible and usable.
             Mobile: full-screen sheet. */}
-        {stockPanelOpen && tickerAnalysis && (
+        {stockPanelOpen && panelAnalysis && (
           <div
             data-testid="stock-panel"
             style={isMobile ? {
@@ -796,7 +947,7 @@ export default function ChatClient({
           >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "0.65rem 1rem", borderBottom: "1px solid var(--t-border)", background: "var(--t-surface)", flexShrink: 0 }}>
               <span style={{ fontWeight: 700, fontFamily: MONO, fontSize: "0.9rem", color: "var(--t-text)" }}>
-                {activeTicker} · {tickerAnalysis.analysis_date}
+                {panelTicker} · {panelAnalysis.analysis_date}
               </span>
               <button
                 onClick={() => setStockPanelOpen(false)}
@@ -806,11 +957,20 @@ export default function ChatClient({
                 ✕
               </button>
             </div>
+            {panelTicker && (
+              <PositionEditor
+                key={panelTicker}
+                ticker={panelTicker}
+                position={watchlistItems.find(i => i.ticker === panelTicker) ?? null}
+                onSave={(sh, cost) => savePosition(panelTicker, sh, cost)}
+                onClear={() => clearPosition(panelTicker)}
+              />
+            )}
             <div style={{ flex: 1, overflowY: "auto" }}>
               {/* isMobile here means "narrow container": the 540px panel needs the stacked
                   story-above-rail layout just like a phone does, or the story column gets
                   squeezed to ~230px next to the data rail. */}
-              <ExpandedDetail a={tickerAnalysis} isMobile={true} idToken={idToken} txCacheRef={txCacheRef} />
+              <ExpandedDetail key={panelTicker} a={panelAnalysis} isMobile={true} idToken={idToken} txCacheRef={txCacheRef} />
             </div>
           </div>
         )}

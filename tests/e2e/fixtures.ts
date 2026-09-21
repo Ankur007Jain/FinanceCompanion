@@ -35,7 +35,9 @@ export async function ingestAnalysis(
         conviction_score: 72,
         risk_level: "MED",
         confidence: "High",
-        signal_convergence_score: 5,
+        // The backend downgrades BUY to WATCH below signal_convergence_score 7 (see
+        // _enforce_buy_signal_floor), so a BUY fixture needs a passing score to stay a BUY.
+        signal_convergence_score: verdict === "BUY" ? 8 : 5,
         entry_quality: "FAIR",
         hold_and_forget_rating: "CHECK_MONTHLY",
         position_size_pct: "5-8%",
