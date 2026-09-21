@@ -631,6 +631,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchContainerRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const toolbarRef = useRef<HTMLDivElement>(null);
 
   function showToast(message: string) {
     if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
@@ -671,6 +672,35 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  function clearSearch() {
+    setQuery(""); setTicker(""); setCompanyName(""); setSuggestions([]); setShowSuggestions(false); setError("");
+  }
+
+  // Once someone has searched and then clicks anywhere outside the search/sort toolbar — a
+  // ticker row, a heading, blank space — the filter has done its job, so drop it instead of
+  // leaving the list mysteriously narrowed. Listens for "click" (not "mousedown") on purpose:
+  // clearing on mousedown re-lays-out the list under the pointer and the click never lands
+  // on the row that was being clicked. Clicks inside the toolbar (typing, sort, Add,
+  // suggestion picks) are excluded, and so is a click on something React already removed.
+  useEffect(() => {
+    if (!query && !ticker) return;
+    function handleClick(e: MouseEvent) {
+      const t = e.target as Node;
+      if (!t.isConnected) return;
+      if (toolbarRef.current?.contains(t)) return;
+      clearSearch();
+    }
+    document.addEventListener("click", handleClick);
+    return () => document.removeEventListener("click", handleClick);
+  }, [query, ticker]);
+
+  // The filter hid every other row, so clearing it reflows the list — keep the row that was
+  // just clicked where the user is looking.
+  function keepRowInView(tk: string) {
+    if (!query && !ticker) return;
+    setTimeout(() => document.getElementById(`stock-row-${tk}`)?.scrollIntoView({ behavior: "smooth", block: "start" }), 120);
+  }
 
   async function fetchDigest(silent = false) {
     if (!silent) setLoading(true);
@@ -1412,6 +1442,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 const isExpanding = expanded !== item.ticker;
                 if (!isExpanding && item.change_summary) setDigest(prev => prev.map(d => d.ticker === item.ticker ? { ...d, change_summary: null } : d));
                 setExpanded(isExpanding ? item.ticker : null);
+                if (isExpanding) keepRowInView(item.ticker);
                 if (isExpanding && item.has_unread) handleMarkRead(item.ticker);
               }}
               onChat={handleChat} onRemove={handleRemove} isMobile={isMobile}
@@ -1433,6 +1464,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                 const isExpanding = expanded !== item.ticker;
                 if (!isExpanding && item.change_summary) setDigest(prev => prev.map(d => d.ticker === item.ticker ? { ...d, change_summary: null } : d));
                 setExpanded(isExpanding ? item.ticker : null);
+                if (isExpanding) keepRowInView(item.ticker);
                 if (isExpanding && item.has_unread) handleMarkRead(item.ticker);
               }}
               onChat={handleChat} onRemove={handleRemove} isMobile={isMobile}
@@ -1445,7 +1477,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
           <h1 style={{ margin: "0 0 16px", fontFamily: SERIF, fontWeight: 600, fontSize: 25, color: "var(--t-text)" }}>Stocks</h1>
 
           {/* ── Unified search + sort toolbar — filters/sorts both sections below ── */}
-          <div style={{ position: "sticky", top: 60, zIndex: 30, background: "var(--t-bg)", margin: isMobile ? "0 -16px" : "0 -32px", padding: isMobile ? "8px 16px 12px" : "8px 32px 12px" }}>
+          <div ref={toolbarRef} style={{ position: "sticky", top: 60, zIndex: 30, background: "var(--t-bg)", margin: isMobile ? "0 -16px" : "0 -32px", padding: isMobile ? "8px 16px 12px" : "8px 32px 12px" }}>
             <form onSubmit={handleAdd} style={{ display: "flex", gap: "0.5rem", padding: "0.75rem 1rem", background: "var(--t-surface)", border: "1px solid var(--t-border)", borderRadius: 11, alignItems: "center", flexWrap: "wrap", boxShadow: "0 2px 8px rgba(32,33,28,0.07)" }}>
               <div ref={searchContainerRef} style={{ position: "relative", flex: "1 1 260px" }}>
                 <input
@@ -1457,7 +1489,7 @@ export default function DashboardClient({ userName, idToken }: { userName: strin
                   style={{ width: "100%", padding: "0.5rem 2rem 0.5rem 0.75rem", background: "var(--t-surface-2)", border: "1px solid var(--t-border)", borderRadius: 7, color: "var(--t-text)", fontSize: "0.88rem", fontFamily: SANS, outline: "none", boxSizing: "border-box" }}
                 />
                 {query && (
-                  <button type="button" onClick={() => { setQuery(""); setTicker(""); setCompanyName(""); setSuggestions([]); setShowSuggestions(false); setError(""); }}
+                  <button type="button" onClick={clearSearch}
                     style={{ position: "absolute", right: 8, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "var(--t-text-muted)", fontSize: 16, padding: "0 2px", lineHeight: 1 }}>×</button>
                 )}
                 {showSuggestions && suggestions.length > 0 && (
