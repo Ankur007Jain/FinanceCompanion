@@ -47,14 +47,25 @@ jobs:
             python3 scripts/scorecard_compute.py
             ```
             This replays the last 45 days of verdicts against actual prices and prints a JSON
-            report (also saved to /tmp/scorecard.json): forward returns by verdict, BUY returns
-            by conviction band, target-vs-stop resolution, and notable failures.
+            report (also saved to /tmp/scorecard.json): forward returns by verdict (absolute AND
+            excess vs. the same-day average across all tracked tickers), BUY returns by
+            conviction band / signal score / 52-week range position / entry_quality / price vs.
+            entry_target, target-vs-stop resolution, and notable failures.
             If it exits non-zero (price data unavailable / rate-limited), do NOT publish
             anything — print the failure reason and stop; a hollow scorecard is worse than none.
 
             ## Step 2 — Analyze
             Read the report and answer, with numbers:
-            - Are BUYs outperforming WATCHes? If not, that's the headline.
+            - Are BUYs outperforming? Lead with EXCESS return (avg_excess_5d_pct / avg_excess_21d_pct),
+              not raw BUY-vs-WATCH. WATCH is ~1,900 names and moves with the market, while BUY is a
+              concentrated ~5/day basket, so in a market pullback raw BUY-vs-WATCH looks terrible
+              even when BUY beat the universe. Report both, but say which one is regime and which
+              is selection.
+            - Entry-position tracking (pre-registered hypotheses from the 2026-09 review, being
+              forward-tested — report the numbers, don't rewrite the rules): BUYs in the top third
+              of the 52-week range (70+) vs below; entry_quality GREAT vs FAIR; price more than 1%
+              above entry_target vs at/below; and buy_by_gate (signal score >=7 AND range <70).
+              State plainly whether each still holds this week and how many BUYs it has.
             - Is higher conviction actually predicting better returns (70+ vs 50-69 vs <50)?
               A conviction inversion is a calibration bug — call it out plainly.
             - Target-vs-stop ratio: are stops being hit more than targets?
@@ -69,13 +80,11 @@ jobs:
             target-vs-stop ratio, your 2-3 sentence honest verdict on calibration, and the
             notable failures list. Lead with the single most important finding. No fluff.
 
-            ## Step 4 — Feed systematic failures into stock memory (max 3 per run)
-            ONLY for clear patterns — a ticker with 3+ failed BUYs, or a repeated same-mistake
-            pattern (e.g. buying oversold in a downtrend that kept falling). For each (max 3):
-            ```bash
-            curl -s -X POST "$BACKEND_URL/jobs/admin/memories/TICKER/lesson?x_admin_secret=$ADMIN_SECRET" \
-              -H "Content-Type: application/json" \
-              -d '{"lesson": "<one specific sentence: what was called, what happened, what to weigh differently>"}'
-            ```
-            The lesson must cite actual numbers (dates, prices, returns). Skip this step
-            entirely if no pattern clears the bar — a noisy memory is worse than no memory.
+            ## Step 4 — Stock memory: SKIP (do not write lessons)
+            Do not write per-ticker lessons from repeat failures. Checked against ~11 weeks of
+            data: repeat BUYs on the same ticker did no worse than first BUYs, and BUYs well
+            below their 50-day average did best while BUYs near highs did worst — so "3+ failed
+            BUYs on one ticker" stories and "buying oversold in a downtrend" are anecdote, not a
+            pattern, and lessons built on them teach the model the wrong thing. Entry-position
+            effects are system-wide (see Step 2), not per-ticker, so they don't belong in
+            per-ticker memory either.

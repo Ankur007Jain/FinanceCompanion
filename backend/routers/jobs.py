@@ -516,6 +516,10 @@ def verdict_history(x_admin_secret: str = "", days: int = 45, db: Session = Depe
             "exit_target": r.exit_target,
             "stop_loss": r.stop_loss,
             "hold_period": r.hold_period,
+            "signal_score": r.signal_convergence_score,
+            "range_pos": r.range_position_pct,
+            "ma50": r.ma_50,
+            "entry_quality": r.entry_quality,
         }
         for r in rows
     ]}
