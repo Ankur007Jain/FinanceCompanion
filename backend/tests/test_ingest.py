@@ -184,6 +184,57 @@ class TestIngestUpsert:
         assert len(hist.json()) == 2
 
 
+class TestBuySignalFloor:
+    """Regression: the nightly.yml prompt's "CONVICTION FLOOR: signal_convergence_score
+    < 5 -> WATCH" was only ever a written instruction to the LLM agent — nothing
+    enforced it server-side, the same gap that let rsi silently vanish from most
+    nightly posts. Checked against real production BUY outcomes: score 5-6 are a coin
+    flip or actively negative, 7+ shows a real edge. Raised the floor to 7 and enforce
+    it deterministically at ingest, regardless of what the agent submitted."""
+
+    def test_buy_below_floor_is_downgraded_to_watch(self, client: TestClient):
+        from unittest.mock import patch
+        payload = {**_BASE, "ticker": "FLOOR1", "analysis_date": str(date.today()),
+                   "verdict": "BUY", "signal_convergence_score": 6}
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        with patch("routers.auth.id_token.verify_oauth2_token",
+                   return_value={"email": "floor1@example.com", "name": "Floor"}):
+            hist = client.get("/analysis/FLOOR1/history", params={"id_token": "fake"})
+        assert hist.json()[0]["verdict"] == "WATCH"
+
+    def test_buy_at_floor_is_kept(self, client: TestClient):
+        from unittest.mock import patch
+        payload = {**_BASE, "ticker": "FLOOR2", "analysis_date": str(date.today()),
+                   "verdict": "BUY", "signal_convergence_score": 7}
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        with patch("routers.auth.id_token.verify_oauth2_token",
+                   return_value={"email": "floor2@example.com", "name": "Floor"}):
+            hist = client.get("/analysis/FLOOR2/history", params={"id_token": "fake"})
+        assert hist.json()[0]["verdict"] == "BUY"
+
+    def test_buy_with_no_score_is_not_touched(self, client: TestClient):
+        """No signal_convergence_score at all (e.g. an older/different code path) must
+        not be treated as "below floor" — only an explicit low score downgrades."""
+        from unittest.mock import patch
+        payload = {**_BASE, "ticker": "FLOOR3", "analysis_date": str(date.today()), "verdict": "BUY"}
+        payload.pop("signal_convergence_score", None)
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        with patch("routers.auth.id_token.verify_oauth2_token",
+                   return_value={"email": "floor3@example.com", "name": "Floor"}):
+            hist = client.get("/analysis/FLOOR3/history", params={"id_token": "fake"})
+        assert hist.json()[0]["verdict"] == "BUY"
+
+    def test_non_buy_verdicts_are_never_touched_by_the_floor(self, client: TestClient):
+        from unittest.mock import patch
+        payload = {**_BASE, "ticker": "FLOOR4", "analysis_date": str(date.today()),
+                   "verdict": "WATCH", "signal_convergence_score": 2}
+        client.post("/jobs/ingest-analysis", params={"x_job_secret": GOOD_SECRET}, json=payload)
+        with patch("routers.auth.id_token.verify_oauth2_token",
+                   return_value={"email": "floor4@example.com", "name": "Floor"}):
+            hist = client.get("/analysis/FLOOR4/history", params={"id_token": "fake"})
+        assert hist.json()[0]["verdict"] == "WATCH"
+
+
 class TestAnalyzedToday:
     def test_bad_admin_secret_returns_401(self, client: TestClient):
         r = client.get("/jobs/admin/analyzed-today", params={"x_admin_secret": "bad"})
