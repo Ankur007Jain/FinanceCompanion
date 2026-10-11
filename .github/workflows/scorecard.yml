@@ -61,11 +61,20 @@ jobs:
               concentrated ~5/day basket, so in a market pullback raw BUY-vs-WATCH looks terrible
               even when BUY beat the universe. Report both, but say which one is regime and which
               is selection.
-            - Entry-position tracking (pre-registered hypotheses from the 2026-09 review, being
-              forward-tested — report the numbers, don't rewrite the rules): BUYs in the top third
-              of the 52-week range (70+) vs below; entry_quality GREAT vs FAIR; price more than 1%
-              above entry_target vs at/below; and buy_by_gate (signal score >=7 AND range <70).
-              State plainly whether each still holds this week and how many BUYs it has.
+            - Entry-position tracking — pre-registered hypotheses from the 2026-09 review, being
+              forward-tested. Report the numbers, don't rewrite the rules. Each hypothesis has a
+              PREDICTED DIRECTION; "holds" means the data matches that direction, "reversed" means
+              the opposite bucket did better, "flat" means the gap is under ~0.5pt on both
+              horizons. A real difference in the wrong direction is REVERSED, never "holds":
+                1. buy_by_range_position — predicted: 70+ does WORSE than <50 and 50-69.
+                2. buy_by_entry_quality — predicted: GREAT does BETTER than FAIR.
+                3. buy_by_price_vs_entry_target — predicted: "within 1% of entry_target (or below)"
+                   does BETTER than "more than 1% above entry_target".
+                4. buy_by_gate — predicted: "score>=7 & range<70" does BETTER than "everything else".
+              Report one row per hypothesis: predicted direction, observed excess_5d / excess_21d
+              for each bucket with n, and a verdict of holds / reversed / flat. Note that this
+              45-day window overlaps last week's by ~85%, so consecutive weeks are not independent
+              confirmations — don't describe a result as "holding for N weeks".
             - Is higher conviction actually predicting better returns (70+ vs 50-69 vs <50)?
               A conviction inversion is a calibration bug — call it out plainly.
             - Target-vs-stop ratio: are stops being hit more than targets?
