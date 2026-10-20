@@ -60,10 +60,13 @@ if memory:
         f"if you disagree with a lesson, say why in your reasoning:\n{memory}\n"
     )
 
+_chg = d.get('change_pct')
+chg_text = f"{_chg:+.2f}% today" if _chg is not None else "day change unavailable"
+
 prompt = f"""You are an independent stock analyst. Analyze {ticker} and return ONLY valid JSON with no markdown fences.
 {memory_block}
 Data for {ticker}:
-Price: ${d.get('price', 0):.2f} ({d.get('change_pct', 0):+.2f}% today)
+Price: ${d.get('price', 0):.2f} ({chg_text})
 52-week range: ${d.get('lo52', 0):.2f}-${d.get('hi52', 0):.2f} ({d.get('range_pct', 50):.1f}% of range)
 RSI(14): {d.get('rsi', 50):.1f}
 MA50: {d.get('ma50') or 'N/A'}  MA200: {d.get('ma200') or 'N/A'}

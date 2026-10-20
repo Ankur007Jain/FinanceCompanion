@@ -3,12 +3,12 @@ Prompt Builder — builds the chatbot system prompt with full stock context inje
 Static base is cached. Dynamic context (today's analyses, portfolios) is per-turn.
 """
 import json
-from datetime import date
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from models import StockAnalysis, StockMemory, SimulationPortfolio, WatchlistItem, TickerCorrelation, UserLearning
+from models import MarketDataCache, StockAnalysis, StockMemory, SimulationPortfolio, WatchlistItem, TickerCorrelation, UserLearning
 
 _STATIC_SYSTEM = """<role>
 You are Finance Companion, a confident, data-driven AI financial advisor for busy working professionals. Internally you reason like an institutional investment committee; externally you talk like a sharp, direct friend texting a quick take.
@@ -69,6 +69,42 @@ def _fmt(v, decimals=2):
     return f"{v:.{decimals}f}" if v is not None else "N/A"
 
 
+def _day_move(pct: Optional[float]) -> str:
+    """A missing day change renders as N/A — never as a fake flat "▲0.0%" day."""
+    if pct is None:
+        return "day change N/A"
+    return f"{'▲' if pct >= 0 else '▼'}{abs(pct):.2f}%"
+
+
+def _quote_dates(ticker: str, rows: list[StockAnalysis], db: Session) -> dict:
+    """analysis_date -> the trading day the stored price actually closed on.
+
+    A row's analysis_date is the date of the nightly RUN, which mostly lands in US pre-market,
+    so its price is usually the PREVIOUS trading day's close (STX's "2026-10-15" row holds the
+    Oct 14 close). Labeling history by run date made every date-specific claim in chat off by a
+    trading day. The raw snapshot saved by that same run records the quote's real timestamp
+    (regularMarketTime). Only trusted when the snapshot is the same quote as the stored price."""
+    by_date = {r.analysis_date: r for r in rows if r.current_price}
+    if not by_date:
+        return {}
+    snaps = (
+        db.query(MarketDataCache.cache_date, MarketDataCache.info_json)
+        .filter(MarketDataCache.ticker == ticker, MarketDataCache.cache_date.in_(list(by_date)))
+        .all()
+    )
+    out = {}
+    for d, info_json in snaps:
+        try:
+            info = json.loads(info_json or "{}")
+            ts, quote = info.get("regularMarketTime"), info.get("regularMarketPrice")
+            price = by_date[d].current_price
+            if ts and quote and abs(quote - price) / price <= 0.005:
+                out[d] = datetime.fromtimestamp(ts, timezone.utc).date()
+        except (TypeError, ValueError, AttributeError):
+            continue
+    return out
+
+
 def _pct_vs_ma(price: Optional[float], ma: Optional[float]) -> str:
     """Precomputed % above/below a moving average, so the model never has to do this
     arithmetic live. Issue #135, confirmed live: asked to state "% below MA200" from
@@ -84,13 +120,12 @@ def _pct_vs_ma(price: Optional[float], ma: Optional[float]) -> str:
 
 
 def _format_analysis(a: StockAnalysis, position_line: str) -> str:
-    direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
     conv = f"  Conviction:   {a.conviction_score}/100  ({a.risk_level or 'N/A'} risk, {a.confidence or 'N/A'} confidence)\n" if a.conviction_score is not None else ""
     return (
         f"  Verdict:      {a.verdict}  (entry ${a.entry_target or 'N/A'}, exit ${a.exit_target or 'N/A'})\n"
         f"  {position_line.rstrip(chr(10))}\n"
         f"{conv}"
-        f"  Price:        ${_fmt(a.current_price)}  {direction}{abs(a.day_change_pct or 0):.1f}%\n"
+        f"  Price:        ${_fmt(a.current_price)}  {_day_move(a.day_change_pct)}\n"
         f"  52-Wk Range:  ${_fmt(a.week_52_low)} – ${_fmt(a.week_52_high)}  ({_fmt(a.range_position_pct, 0)}% position)\n"
         f"  MA50/MA200:   ${_fmt(a.ma_50)}{_pct_vs_ma(a.current_price, a.ma_50)} / ${_fmt(a.ma_200)}{_pct_vs_ma(a.current_price, a.ma_200)}\n"
         f"  RSI:          {a.rsi or 'N/A'}\n"
@@ -128,7 +163,6 @@ def _format_analysis_compact(a: StockAnalysis, position_line: str) -> str:
     tokens across a whole watchlist) but enough for the model to make a cross-ticker
     connection unprompted (e.g. MU's ripple text naming NVIDIA, with NVDA sitting right
     there in the same list) instead of needing a separate classifier to find it."""
-    direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
     flag = " ⭐" if a.is_important_day else ""
     conv = f"{a.conviction_score}/100" if a.conviction_score is not None else "N/A"
     position = position_line.strip().removeprefix("Position:").strip()
@@ -148,7 +182,7 @@ def _format_analysis_compact(a: StockAnalysis, position_line: str) -> str:
         ripple = f"  Ripple: {snippet}{'…' if len(a.ripple_analysis.strip()) > 120 else ''}"
     return (
         f"{a.verdict}{flag}{sector}  {position}  "
-        f"${_fmt(a.current_price)} {direction}{abs(a.day_change_pct or 0):.1f}%  "
+        f"${_fmt(a.current_price)} {_day_move(a.day_change_pct)}  "
         f"Conv {conv}  RSI {a.rsi or 'N/A'}  52wk-pos {_fmt(a.range_position_pct, 0)}%  "
         f"MA50/200 ${_fmt(a.ma_50)}{_pct_vs_ma(a.current_price, a.ma_50)}/${_fmt(a.ma_200)}{_pct_vs_ma(a.current_price, a.ma_200)}  "
         f"targets: entry ${a.entry_target or 'N/A'} exit ${a.exit_target or 'N/A'} stop ${a.stop_loss or 'N/A'}  "
@@ -156,9 +190,10 @@ def _format_analysis_compact(a: StockAnalysis, position_line: str) -> str:
     )
 
 
-def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnalysis], position_line: str) -> str:
+def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnalysis], position_line: str, quote_dates: Optional[dict] = None) -> str:
     """Full institutional dossier for the ticker currently in focus."""
-    direction = "▲" if (a.day_change_pct or 0) >= 0 else "▼"
+    quote_dates = quote_dates or {}
+    close_of = quote_dates.get(a.analysis_date)
     lines = [
         f"=== {a.ticker} — FULL ANALYSIS (as of {a.analysis_date.isoformat()}) ===",
         f"Verdict:        {a.verdict}",
@@ -168,7 +203,7 @@ def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnal
         lines.append(f"Conviction:     {a.conviction_score}/100  |  Risk: {a.risk_level or 'N/A'}  |  Confidence: {a.confidence or 'N/A'}")
     lines += [
         f"Targets:        entry ${a.entry_target or 'N/A'}  exit ${a.exit_target or 'N/A'}  stop ${a.stop_loss or 'N/A'}  hold {a.hold_period or 'N/A'}",
-        f"Price:          ${_fmt(a.current_price)}  {direction}{abs(a.day_change_pct or 0):.1f}%   52wk ${_fmt(a.week_52_low)}–${_fmt(a.week_52_high)} ({_fmt(a.range_position_pct, 0)}% of range)",
+        f"Price:          ${_fmt(a.current_price)}  {_day_move(a.day_change_pct)}" + (f" (close of {close_of.isoformat()})" if close_of else "") + f"   52wk ${_fmt(a.week_52_low)}–${_fmt(a.week_52_high)} ({_fmt(a.range_position_pct, 0)}% of range)",
         f"Technicals:     MA50 ${_fmt(a.ma_50)}{_pct_vs_ma(a.current_price, a.ma_50)}  MA200 ${_fmt(a.ma_200)}{_pct_vs_ma(a.current_price, a.ma_200)}  RSI {a.rsi or 'N/A'}",
         f"Long-term:      1yr {_pctnum(a.stock_52w_change)} (S&P {_pctnum(a.sp500_52w_change)})   5yr {_pctnum(a.stock_5y_change)} (S&P {_pctnum(a.sp500_5y_change)})",
         f"Valuation:      P/E {a.pe_trailing or 'N/A'} (fwd {a.pe_forward or 'N/A'})  |  analyst {a.analyst_consensus} ({a.analyst_count or 'N/A'}) target ${a.target_price_mean or 'N/A'} (${a.target_price_low or 'N/A'}–${a.target_price_high or 'N/A'})",
@@ -200,10 +235,15 @@ def _format_analysis_deep(a: StockAnalysis, memory: str, history: list[StockAnal
     if memory:
         lines.append(f"Memory:         {memory[:500]}")
     if history:
-        lines.append("Recent history (newest first):")
+        # Each line: the trading day the price closed on (not the run date — see _quote_dates),
+        # that day's precomputed move (the model must never subtract rows itself — issue #152),
+        # and the verdict from that night's run.
+        lines.append("Recent history (newest first — date = trading day of the close; % = that day's move; verdict = that night's call):")
         for h in history:
             flag = " ⭐" if h.is_important_day else ""
-            lines.append(f"  {h.analysis_date.isoformat()}:{flag} {h.verdict} ${_fmt(h.current_price)}" + (f"  [{h.importance_reason}]" if h.importance_reason else ""))
+            d = quote_dates.get(h.analysis_date)
+            label = f"{d.isoformat()} close" if d else f"{h.analysis_date.isoformat()} run"
+            lines.append(f"  {label}:{flag} ${_fmt(h.current_price)} ({_day_move(h.day_change_pct)}) → {h.verdict}" + (f"  [{h.importance_reason}]" if h.importance_reason else ""))
     return "\n".join(lines)
 
 
@@ -240,7 +280,7 @@ def build_ticker_dossier(ticker: str, db: Session, user_email: str) -> str:
         _format_position(wl, analysis.current_price)
         if wl else "Position:       Not in user's watchlist.\n"
     )
-    dossier = _format_analysis_deep(analysis, memory, history, position_line)
+    dossier = _format_analysis_deep(analysis, memory, history, position_line, _quote_dates(ticker, [analysis] + history, db))
     correlated = _correlated_tickers_section(ticker, db, user_email)
     ticker_learnings = _ticker_learnings_section(ticker, db, user_email)
     return dossier + correlated + ticker_learnings
