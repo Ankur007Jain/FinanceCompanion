@@ -7,6 +7,7 @@ import sys, json, os
 import requests
 import yfinance as yf
 from price_series_client import fetch_series
+from quote_fields import regular_session_quote
 
 _BACKEND = os.environ["BACKEND_URL"]
 _JOB_SECRET = os.environ["JOB_SECRET"]
@@ -58,9 +59,12 @@ try:
 except Exception:
     cashflow_free = None
 
-price = fi.last_price or info.get("currentPrice", 0) or 0
-prev  = fi.previous_close or info.get("previousClose", price) or price
-chg   = ((price - prev) / prev * 100) if prev else 0
+try:
+    _fi_last = fi.last_price
+except Exception:
+    _fi_last = None
+price, prev, chg = regular_session_quote(info, fallback_price=_fi_last)
+price = price or 0
 hi52  = fi.year_high or info.get("fiftyTwoWeekHigh", 0) or 0
 lo52  = fi.year_low  or info.get("fiftyTwoWeekLow",  0) or 0
 rng   = ((price - lo52) / (hi52 - lo52) * 100) if (hi52 - lo52) > 0 else 50
@@ -136,7 +140,7 @@ except Exception:
 try:
     sect = _fetch_series(sector_etf_ticker)  # last 2 rows are all that's used below — same as the old 25d pull
     sector_day_chg = round(((float(sect["Close"].iloc[-1]) - float(sect["Close"].iloc[-2])) / float(sect["Close"].iloc[-2])) * 100, 2)
-    relative_strength_1d = round(chg - sector_day_chg, 2)
+    relative_strength_1d = round(chg - sector_day_chg, 2) if chg is not None else None
 except Exception:
     sector_day_chg = relative_strength_1d = None
 
@@ -178,7 +182,7 @@ if fh_key and fh_key not in ("placeholder", "test-key", ""):
     data_conflicts_str = "; ".join(_conflicts) if _conflicts else None
 
 _summary = {
-    "ticker": ticker, "price": round(price, 2), "change_pct": round(chg, 2),
+    "ticker": ticker, "price": round(price, 2), "change_pct": round(chg, 2) if chg is not None else None,
     "hi52": round(hi52, 2), "lo52": round(lo52, 2), "range_pct": round(rng, 1),
     "ma50": round(ma50, 2) if ma50 else None,
     "ma200": round(ma200, 2) if ma200 else None,
