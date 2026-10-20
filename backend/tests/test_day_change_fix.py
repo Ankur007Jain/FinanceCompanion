@@ -57,6 +57,12 @@ class TestCorrectedFields:
     def test_no_snapshot_quote(self):
         assert corrected_fields(713.54, 3.35, None, None, {})[0] == "no_quote"
 
+    def test_nan_relative_strength_is_cleared_once_then_ok(self):
+        nan = float("nan")
+        status, chg, rel = corrected_fields(713.54, -4.5, nan, nan, STX_OCT14)
+        assert (status, chg, rel) == ("fix", -4.5, None)
+        assert corrected_fields(713.54, -4.5, nan, None, STX_OCT14)[0] == "ok"
+
     def test_missing_sector_keeps_existing_relative_strength(self):
         _, _, rel = corrected_fields(713.54, 3.35, None, 9.9, STX_OCT14)
         assert rel == 9.9
@@ -106,6 +112,23 @@ class TestBackfillRun:
                           "old_relative_strength_1d": 6.33, "new_relative_strength_1d": -1.52}]
         summary, _ = run(eng)
         assert summary["to_fix"] == 0  # idempotent
+
+    def test_apply_in_multiple_batches_updates_every_row(self, tmp_path, monkeypatch):
+        import backfill_day_change
+        from models import StockAnalysis, MarketDataCache
+        monkeypatch.setattr(backfill_day_change, "_BATCH", 2)
+        eng, s = self._engine(tmp_path)
+        d = date(2026, 10, 16)
+        for n in range(5):
+            t = f"BAT{n}"
+            s.add(StockAnalysis(ticker=t, analysis_date=d, current_price=110.0, day_change_pct=0.0, sector_day_chg=1.0, verdict="HOLD"))
+            s.add(MarketDataCache(ticker=t, cache_date=d, info_json=json.dumps({"regularMarketPrice": 110.0, "previousClose": 100.0})))
+        s.commit()
+        run(eng, apply=True, backup=str(tmp_path / "b.json"))
+        s.expire_all()
+        rows = s.query(StockAnalysis).filter(StockAnalysis.ticker.like("BAT%")).all()
+        assert [(r.day_change_pct, r.relative_strength_1d) for r in rows] == [(10.0, 9.0)] * 5
+        assert s.query(StockAnalysis).filter_by(ticker="OKAY").one().day_change_pct == 1.0  # untouched
 
 
 class TestDossierDailyMovesAndDates:

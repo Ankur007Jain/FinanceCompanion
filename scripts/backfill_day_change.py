@@ -16,6 +16,7 @@ Usage (from repo root):
 """
 import argparse
 import json
+import math
 import os
 import sys
 from collections import Counter
@@ -25,11 +26,25 @@ from sqlalchemy import create_engine, text
 from quote_fields import regular_session_quote
 
 _SAME_QUOTE_TOLERANCE = 0.005
+# One UPDATE per batch instead of one per row: over Railway's public proxy a round trip is
+# ~120ms, so 6,173 single-row updates held one transaction open ~12 minutes and the proxy
+# dropped the connection (rolled back cleanly, nothing written). 150 rows x 5 params stays
+# under SQLite's bind-parameter limit too.
+_BATCH = 150
+
+
+def _real(v):
+    """NaN -> None. One 2026-07-15 run stored NaN (not NULL) for sector change / relative
+    strength; NaN never equals itself, so without this those rows look 'unfixed' forever."""
+    return None if v is None or (isinstance(v, float) and math.isnan(v)) else v
 
 
 def corrected_fields(current_price, day_change_pct, sector_day_chg, relative_strength_1d, info):
     """Returns (status, new_day_change_pct, new_relative_strength_1d). status is one of
     'fix', 'ok', 'no_quote', 'different_quote'."""
+    day_change_pct, sector_day_chg = _real(day_change_pct), _real(sector_day_chg)
+    stored_rel = relative_strength_1d
+    relative_strength_1d = _real(relative_strength_1d)
     if not current_price:
         return "no_quote", None, None
     snap_price, prev, _ = regular_session_quote(info)
@@ -39,11 +54,29 @@ def corrected_fields(current_price, day_change_pct, sector_day_chg, relative_str
         return "different_quote", None, None
     new_chg = round((current_price - prev) / prev * 100, 2)
     new_rel = round(new_chg - sector_day_chg, 2) if sector_day_chg is not None else relative_strength_1d
-    unchanged = (
-        day_change_pct is not None and abs(day_change_pct - new_chg) < 0.01
-        and (new_rel is None or (relative_strength_1d is not None and abs(relative_strength_1d - new_rel) < 0.01))
-    )
+    if new_rel is None:
+        rel_ok = stored_rel is None
+    else:
+        rel_ok = relative_strength_1d is not None and abs(relative_strength_1d - new_rel) < 0.01
+    unchanged = day_change_pct is not None and abs(day_change_pct - new_chg) < 0.01 and rel_ok
     return ("ok" if unchanged else "fix"), new_chg, new_rel
+
+
+def _update_batch(conn, batch):
+    params, chg_cases, rel_cases, ids = {}, [], [], []
+    for n, f in enumerate(batch):
+        params[f"id{n}"] = f["id"]
+        params[f"c{n}"] = f["new_day_change_pct"]
+        params[f"r{n}"] = f["new_relative_strength_1d"]
+        chg_cases.append(f"WHEN :id{n} THEN :c{n}")
+        rel_cases.append(f"WHEN :id{n} THEN :r{n}")
+        ids.append(f":id{n}")
+    conn.execute(text(
+        f"UPDATE stock_analyses SET "
+        f"day_change_pct = CAST(CASE id {' '.join(chg_cases)} END AS DOUBLE PRECISION), "
+        f"relative_strength_1d = CAST(CASE id {' '.join(rel_cases)} END AS DOUBLE PRECISION) "
+        f"WHERE id IN ({', '.join(ids)})"
+    ), params)
 
 
 def run(engine, apply=False, backup=None, since="2000-01-01"):
@@ -90,12 +123,8 @@ def run(engine, apply=False, backup=None, since="2000-01-01"):
             with open(backup, "w") as f:
                 json.dump(fixes, f, indent=1)
         with engine.begin() as c:
-            c.execute(
-                text("UPDATE stock_analyses SET day_change_pct = :new_day_change_pct, "
-                     "relative_strength_1d = :new_relative_strength_1d WHERE id = :id"),
-                [{"id": f["id"], "new_day_change_pct": f["new_day_change_pct"],
-                  "new_relative_strength_1d": f["new_relative_strength_1d"]} for f in fixes],
-            )
+            for i in range(0, len(fixes), _BATCH):
+                _update_batch(c, fixes[i:i + _BATCH])
     return summary, fixes
 
 
