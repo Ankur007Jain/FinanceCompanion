@@ -4,11 +4,13 @@ analysis (agents/yf_fetcher.py, agents/news_agent.py).
 
 yfinance's Ticker.news started returning [] for every ticker on 2026-10-02 (1.5.2 and 1.7.0
 alike), and the pipeline ran for three weeks with no news before anyone noticed — agents
-wrote "no ticker-specific news was captured tonight" and moved on. Google News RSS is the
-primary source: in a side-by-side on the watchlist it was the most on-topic (75% of
-headlines name the company vs 53% for the old yfinance feed) and it also covers NSE/BSE
-listings, which Yahoo has no news for. Yahoo search is the fallback (mutual funds, or
-Google refusing a runner's IP).
+wrote "no ticker-specific news was captured tonight" and moved on.
+
+Both sources are always fetched and merged. Google News RSS is the most on-topic (75% of
+headlines name the company vs 53% for the old yfinance feed) and also covers NSE/BSE
+listings, which Yahoo has no news for. Yahoo search still adds ~3.6 company stories per
+ticker that Google's list misses (earnings-call write-ups, analyst notes), and either
+source keeps news flowing if the other goes down.
 
 Items are flat dicts — {title, publisher, link, published} — the shape news_agent already
 reads from market_data_cache.news_json.
@@ -61,10 +63,22 @@ def _google(query: str) -> list[dict]:
     return items
 
 
-def _yahoo(ticker: str) -> list[dict]:
+def names_company(title: str, ticker: str, name: str | None) -> bool:
+    """The ticker as an uppercase word, or the first word of the company name."""
+    first = company_query_name(name or "").split()[:1]
+    return bool(re.search(rf"\b{re.escape(ticker)}\b", title)
+                or (first and len(first[0]) >= 3 and re.search(rf"\b{re.escape(first[0])}", title, re.I)))
+
+
+def _yahoo(ticker: str, name: str | None) -> list[dict]:
+    """About half of Yahoo's search news is market-wide, and its relatedTickers tag alone is
+    loose ("Qualcomm is cutting jobs" comes back tagged AAPL) — an item must be tagged with
+    the ticker AND name the company in its headline."""
     import yfinance as yf
     items = []
     for n in yf.Search(ticker, news_count=MAX_ITEMS, max_results=0).news or []:
+        if ticker not in (n.get("relatedTickers") or []) or not names_company(n.get("title", ""), ticker, name):
+            continue
         ts = n.get("providerPublishTime")
         items.append({
             "title": n.get("title", ""), "publisher": n.get("publisher", ""), "link": n.get("link", ""),
@@ -74,7 +88,7 @@ def _yahoo(ticker: str) -> list[dict]:
 
 
 def clean(items: list[dict]) -> list[dict]:
-    """Drops non-news pages and the same wire story syndicated to several sites."""
+    """Drops non-news pages and the same story syndicated to several sites (first copy wins)."""
     seen, out = set(), []
     for it in items:
         key = re.sub(r"[^a-z0-9]", "", it["title"].lower())
@@ -82,19 +96,23 @@ def clean(items: list[dict]) -> list[dict]:
             continue
         seen.add(key)
         out.append(it)
-    return out[:MAX_ITEMS]
+    return out
+
+
+def _safe(fetch) -> list[dict]:
+    try:
+        return fetch()
+    except Exception:
+        return []
 
 
 def fetch_headlines(ticker: str, name: str | None = None, quote_type: str | None = None) -> list[dict]:
-    """Never raises — a news outage must not take down the fetch it's part of."""
-    for source in (lambda: _google(search_query(ticker, name, quote_type)), lambda: _yahoo(ticker)):
-        try:
-            items = clean(source())
-        except Exception:
-            items = []
-        if items:
-            return items
-    return []
+    """Google's top stories plus the Yahoo ones it missed, newest first (undated last).
+    Never raises — a news outage must not take down the fetch it's part of."""
+    google = clean(_safe(lambda: _google(search_query(ticker, name, quote_type))))[:MAX_ITEMS]
+    merged = clean(google + _safe(lambda: _yahoo(ticker, name)))
+    merged.sort(key=lambda it: it["published"] or "", reverse=True)  # stable: Google first within a day
+    return merged[:MAX_ITEMS]
 
 
 def headline_text(item: dict) -> str:

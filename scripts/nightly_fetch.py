@@ -79,7 +79,7 @@ gain  = delta.clip(lower=0).rolling(14).mean()
 loss  = (-delta.clip(upper=0)).rolling(14).mean()
 rsi   = float(100 - 100 / (1 + gain.iloc[-1] / loss.iloc[-1])) if loss.iloc[-1] != 0 else 50
 
-news_titles = [headline_text(n) for n in raw_news[:5]]
+news_titles = [headline_text(n) for n in raw_news]  # up to news_feed.MAX_ITEMS, newest first
 rec = (info.get("recommendationKey") or "hold").upper()
 rec_count = info.get("numberOfAnalystOpinions")
 tgt, tgt_hi, tgt_lo = info.get("targetMeanPrice"), info.get("targetHighPrice"), info.get("targetLowPrice")

@@ -55,9 +55,13 @@ class TestQuery:
         assert nf.search_query("XYZ", None, None) == "XYZ stock when:3d"
 
 
+NO_YAHOO = SimpleNamespace(news=[])
+OCT21, OCT19 = 1792543020, 1792370220  # providerPublishTime epochs (UTC dates)
+
+
 class TestGoogle:
     def test_parses_and_cleans_the_feed(self):
-        with patch.object(nf.requests, "get", return_value=_resp()):
+        with patch.object(nf.requests, "get", return_value=_resp()), patch("yfinance.Search", return_value=NO_YAHOO):
             items = nf.fetch_headlines("AAPL", "Apple Inc.", "EQUITY")
         assert [i["title"] for i in items] == [
             "Apple gets a downgrade from Loop Capital on fears of slow iPhone sales",
@@ -72,29 +76,66 @@ class TestGoogle:
         many = b"<rss><channel>" + b"".join(
             f"<item><title>Story {i} - Pub</title><source>Pub</source></item>".encode() for i in range(20)
         ) + b"</channel></rss>"
-        with patch.object(nf.requests, "get", return_value=_resp(many)):
+        with patch.object(nf.requests, "get", return_value=_resp(many)), patch("yfinance.Search", return_value=NO_YAHOO):
             assert len(nf.fetch_headlines("AAPL", "Apple Inc.")) == nf.MAX_ITEMS
 
 
-class TestFallback:
-    YAHOO = [{"title": "Fund flows rise", "publisher": "Reuters", "link": "https://y/1", "providerPublishTime": 1792543020}]
+class TestMerge:
+    """Both sources, every time: Yahoo adds ~3.6 company stories per ticker Google misses."""
+    YAHOO = [
+        {"title": "Apple's foldable iPhone hits stores Friday", "publisher": "TheStreet", "link": "https://y/1",
+         "providerPublishTime": OCT21, "relatedTickers": ["AAPL"]},
+        {"title": "Apple gets a downgrade from Loop Capital on fears of slow iPhone sales", "publisher": "Yahoo",
+         "link": "https://y/dup", "providerPublishTime": OCT21, "relatedTickers": ["AAPL"]},
+        {"title": "Qualcomm Is Cutting Jobs as Its AI Pivot Accelerates", "publisher": "GuruFocus", "link": "https://y/2",
+         "providerPublishTime": OCT21, "relatedTickers": ["AAPL", "QCOM"]},
+        {"title": "Apple supplier shares slide", "publisher": "Reuters", "link": "https://y/3",
+         "providerPublishTime": OCT21, "relatedTickers": ["TSM"]},
+        {"title": "AAPL options activity jumps", "publisher": "Benzinga", "link": "https://y/4",
+         "providerPublishTime": OCT19, "relatedTickers": ["AAPL"]},
+    ]
 
-    def test_yahoo_used_when_google_has_nothing(self):
-        empty = _resp(b"<rss><channel></channel></rss>")
-        with patch.object(nf.requests, "get", return_value=empty), \
-             patch("yfinance.Search", return_value=SimpleNamespace(news=self.YAHOO)):
-            items = nf.fetch_headlines("VITSX", "Vanguard Total Stock Market", "MUTUALFUND")
-        assert items == [{"title": "Fund flows rise", "publisher": "Reuters", "link": "https://y/1", "published": "2026-10-21"}]
+    def _fetch(self, google=None, yahoo=None):
+        g = patch.object(nf.requests, "get", **({"return_value": _resp()} if google is None else google))
+        y = patch("yfinance.Search", **({"return_value": SimpleNamespace(news=self.YAHOO)} if yahoo is None else yahoo))
+        with g, y:
+            return nf.fetch_headlines("AAPL", "Apple Inc.", "EQUITY")
 
-    def test_yahoo_used_when_google_errors(self):
-        with patch.object(nf.requests, "get", side_effect=nf.requests.ConnectionError("blocked")), \
-             patch("yfinance.Search", return_value=SimpleNamespace(news=self.YAHOO)):
-            assert nf.fetch_headlines("AAPL", "Apple Inc.")[0]["publisher"] == "Reuters"
+    def test_adds_what_google_missed_newest_first(self):
+        items = self._fetch()
+        assert [(i["title"][:28], i["publisher"]) for i in items] == [
+            ("Apple's foldable iPhone hits", "TheStreet"),       # Oct 21 — newest leads
+            ("Apple gets a downgrade from ", "CNBC"),            # Oct 20 — Google's copy wins over Yahoo's
+            ("Bigbearai Holdings stock hit", "Investing.com UK"),  # Oct 19, Google before Yahoo within a day
+            ("AAPL options activity jumps", "Benzinga"),         # Oct 19
+            ("Prediction: Apple's Stock Is", "The Motley Fool"),  # undated last
+        ]
+
+    def test_yahoo_needs_both_its_ticker_tag_and_the_company_in_the_headline(self):
+        titles = [i["title"] for i in self._fetch()]
+        assert not any("Qualcomm" in t for t in titles)          # tagged AAPL, but about Qualcomm
+        assert "Apple supplier shares slide" not in titles        # names Apple, but not tagged AAPL
+
+    def test_google_down_yahoo_still_delivers(self):
+        items = self._fetch(google={"side_effect": nf.requests.ConnectionError("blocked")})
+        assert [i["publisher"] for i in items] == ["TheStreet", "Yahoo", "Benzinga"]
+
+    def test_yahoo_down_or_empty_google_still_delivers(self):
+        """Empty is the normal case for NSE/BSE listings — Yahoo has no news for them."""
+        assert len(self._fetch(yahoo={"side_effect": RuntimeError("down")})) == 3
+        assert len(self._fetch(yahoo={"return_value": NO_YAHOO})) == 3
 
     def test_never_raises_when_every_source_fails(self):
-        with patch.object(nf.requests, "get", side_effect=RuntimeError("down")), \
-             patch("yfinance.Search", side_effect=RuntimeError("down")):
-            assert nf.fetch_headlines("AAPL", "Apple Inc.") == []
+        assert self._fetch(google={"side_effect": RuntimeError("down")}, yahoo={"side_effect": RuntimeError("down")}) == []
+
+    @pytest.mark.parametrize("title,ticker,name,expected", [
+        ("SoundHound's Q2 revenues soar", "SOUN", "SoundHound AI, Inc.", True),   # possessive still matches
+        ("Lilly leads XLV buying (LLY)", "LLY", "Eli Lilly and Company", True),   # ticker as a word
+        ("Markets rally on jobs data", "ON", "ON Semiconductor Corporation", False),  # lowercase "on" isn't the ticker
+        ("Fund flows hit a record", "VITSX", "Vanguard Total Stock Market Index", False),
+    ])
+    def test_names_company(self, title, ticker, name, expected):
+        assert nf.names_company(title, ticker, name) is expected
 
 
 def test_headline_text_carries_source_and_date():
