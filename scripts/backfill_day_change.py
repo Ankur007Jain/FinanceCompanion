@@ -73,7 +73,8 @@ def _update_batch(conn, batch):
         chg_cases.append(f"WHEN :id{n} THEN :c{n}")
         rel_cases.append(f"WHEN :id{n} THEN :r{n}")
         ids.append(f":id{n}")
-    conn.execute(text(
+    # Only placeholder names (:id0, :c0, ...) are formatted into the SQL; every value is bound.
+    conn.execute(text(  # nosemgrep: python.sqlalchemy.security.audit.avoid-sqlalchemy-text.avoid-sqlalchemy-text
         f"UPDATE stock_analyses SET "
         f"day_change_pct = CAST(CASE id {' '.join(chg_cases)} END AS DOUBLE PRECISION), "
         f"relative_strength_1d = CAST(CASE id {' '.join(rel_cases)} END AS DOUBLE PRECISION) "
