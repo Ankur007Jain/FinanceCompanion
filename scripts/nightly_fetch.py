@@ -9,6 +9,9 @@ import yfinance as yf
 from price_series_client import fetch_series
 from quote_fields import regular_session_quote
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend"))
+from services.news_feed import fetch_headlines, headline_text  # noqa: E402 — shared with new-ticker analysis
+
 _BACKEND = os.environ["BACKEND_URL"]
 _JOB_SECRET = os.environ["JOB_SECRET"]
 
@@ -26,7 +29,7 @@ t = yf.Ticker(ticker)
 info = t.info or {}
 hist = _fetch_series(ticker)  # covers 1y and 5y trend context from one call
 fi = t.fast_info
-raw_news = t.news or []
+raw_news = fetch_headlines(ticker, info.get("longName") or info.get("shortName"), info.get("quoteType"))
 try:
     calendar = t.calendar or {}
 except Exception:
@@ -76,7 +79,7 @@ gain  = delta.clip(lower=0).rolling(14).mean()
 loss  = (-delta.clip(upper=0)).rolling(14).mean()
 rsi   = float(100 - 100 / (1 + gain.iloc[-1] / loss.iloc[-1])) if loss.iloc[-1] != 0 else 50
 
-news_titles = [n.get("content", {}).get("title") or n.get("title", "") for n in raw_news[:5]]
+news_titles = [headline_text(n) for n in raw_news[:5]]
 rec = (info.get("recommendationKey") or "hold").upper()
 rec_count = info.get("numberOfAnalystOpinions")
 tgt, tgt_hi, tgt_lo = info.get("targetMeanPrice"), info.get("targetHighPrice"), info.get("targetLowPrice")

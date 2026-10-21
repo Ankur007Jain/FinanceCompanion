@@ -1,14 +1,15 @@
 """
-News Agent — fetches headlines from yfinance and Finnhub, deduplicates,
-then uses Claude Haiku to produce a concise sentiment summary.
+News Agent — fetches headlines from the shared news feed (services/news_feed.py) and
+Finnhub, deduplicates, then uses Claude Haiku to produce a concise sentiment summary.
 """
 import os
 import asyncio
 from typing import Optional
 
 import finnhub
-import yfinance as yf
 import anthropic
+
+from services.news_feed import fetch_headlines
 
 _HAIKU = "claude-haiku-4-5-20251001"
 
@@ -20,7 +21,12 @@ def _finnhub_client() -> Optional[finnhub.Client]:
 
 def _yf_news(ticker: str, yf_data=None) -> list[str]:
     try:
-        items = (yf_data.news if yf_data is not None else yf.Ticker(ticker).news) or []
+        items = yf_data.news if yf_data is not None else []
+        if not items:
+            # Cache rows written during a feed outage hold [] — fetch live rather than
+            # analysing a brand-new ticker blind.
+            info = yf_data.info if yf_data is not None else {}
+            items = fetch_headlines(ticker, info.get("longName") or info.get("shortName"), info.get("quoteType"))
         lines = []
         for n in items[:8]:
             # yfinance nests fields under "content" as of ~1.x; fall back to the old flat
@@ -33,6 +39,8 @@ def _yf_news(ticker: str, yf_data=None) -> list[str]:
                 or (content.get("clickThroughUrl") or {}).get("url")
                 or n.get("link") or n.get("url") or ""
             )
+            if "news.google.com" in url:
+                url = ""  # opaque ~250-char redirect — the summary is user-facing prose
             if url:
                 lines.append(f"{title} [{publisher}] — {url}")
             else:
@@ -100,7 +108,7 @@ async def fetch_news(ticker: str, company_name: str = "", yf_data=None) -> tuple
         f"Raw headlines (with source URLs where available):\n{raw}\n\n"
         "Write a 3-4 sentence summary for a busy professional who is not a finance expert. "
         "Plain English only — no jargon. "
-        "For the single most important story, name the source and include its URL in parentheses at the end of that sentence. "
+        "For the single most important story, name the source, and if a URL is listed for it, include that URL in parentheses at the end of that sentence. "
         "Cover: what actually happened, whether it's good or bad for the stock, and any upcoming event to watch."
     )
     resp = await client.messages.create(
