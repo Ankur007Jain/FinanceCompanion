@@ -12,6 +12,8 @@ from typing import Optional
 import yfinance as yf
 import pandas as pd
 
+from services.news_feed import fetch_headlines
+
 logger = logging.getLogger(__name__)
 
 
@@ -84,10 +86,7 @@ def _fetch_from_api(ticker: str, retries: int = 3, backoff: float = 10.0) -> YFD
                 hist = t.history(period="1y")
             except Exception:
                 hist = pd.DataFrame()
-            try:
-                news = t.news or []
-            except Exception:
-                news = []
+            news = fetch_headlines(ticker, info.get("longName") or info.get("shortName"), info.get("quoteType"))
             try:
                 calendar = t.calendar
             except Exception:

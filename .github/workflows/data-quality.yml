@@ -43,8 +43,9 @@ jobs:
             ```bash
             python3 scripts/data_quality_stats.py
             ```
-            Returns per-analysis-date NULL percentages for key columns over the last 7 days,
-            plus which expected tickers are missing from the latest run.
+            Returns per-analysis-date NULL percentages for key columns over the last 7 days
+            (plus `news`: % of tickers with no headlines that night), and which expected
+            tickers are missing from the latest run.
 
             ## Step 2 — Judge (be calibrated, not alarmist)
             Flag as a REGRESSION only if:
@@ -52,6 +53,11 @@ jobs:
               recent baseline (e.g. pe_trailing was ~5% null all week, today 80%).
             - More than 20% of expected tickers are missing from the latest run.
             - The latest run has zero rows on a weekday (pipeline didn't run at all).
+            - `news` (share of tickers whose snapshot had NO headlines) is above 50% on the
+              latest date — even if it has been that high all week. A news outage that
+              persists is still a regression, never a "known gap" (2026-10-02 it went to
+              100% and stayed there unnoticed for 3 weeks). ~5-10% is normal: mutual funds
+              rarely have news.
             NOT regressions: weekends/holidays with no run; columns that are consistently
             null every day (pre-existing, already known); reasoning_simple lagging a few
             percent (it fills in asynchronously after ingest); single-ticker gaps (rate limits).

@@ -3,6 +3,7 @@ import json
 import os
 from datetime import date
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 
 from database import get_db, SessionLocal
@@ -551,12 +552,23 @@ def data_quality(x_admin_secret: str = "", days: int = 7, db: Session = Depends(
     for r in rows:
         by_date.setdefault(r.analysis_date.isoformat(), []).append(r)
 
+    # A news outage never shows up as a NULL: the snapshot stores "[]" and the agent fills
+    # news_summary with "no news captured" prose. That hid a 3-week outage (2026-10-02 on),
+    # so the share of tickers whose snapshot had no headlines is reported as "news".
+    no_news = func.sum(case((or_(MarketDataCache.news_json.is_(None), MarketDataCache.news_json.in_(["", "[]", "null"])), 1), else_=0))
+    news_by_date = {
+        d.isoformat(): round(100 * (empty or 0) / n, 1)
+        for d, n, empty in db.query(MarketDataCache.cache_date, func.count(), no_news)
+        .filter(MarketDataCache.cache_date >= cutoff).group_by(MarketDataCache.cache_date)
+    }
+
     null_rates = {
         d: {
             "rows": len(drows),
             "null_pct": {
-                col: round(100 * sum(1 for r in drows if getattr(r, col) is None) / len(drows), 1)
-                for col in _DQ_COLUMNS
+                **{col: round(100 * sum(1 for r in drows if getattr(r, col) is None) / len(drows), 1)
+                   for col in _DQ_COLUMNS},
+                **({"news": news_by_date[d]} if d in news_by_date else {}),
             },
         }
         for d, drows in sorted(by_date.items())
