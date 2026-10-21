@@ -359,88 +359,30 @@ jobs:
             Reads /tmp/summary_TICKER.json (from Step 1) and writes /tmp/verdict_b_TICKER.json.
             Writes {"verdict": null} if Gemini is unavailable — treat that as "verdict_b: null" in Step 3c/4.
 
-            ## Step 3c — Judge: reconcile both verdicts
+            ## Step 3c — Disagreement note (only when needed)
 
-            Read /tmp/verdict_a_TICKER.json and /tmp/verdict_b_TICKER.json and apply this agreement table
-            to produce final_verdict, verdict_agreement (true/false/null), and split_reason:
+            The agreement table is applied in code by Step 4's script (A/B the same → that verdict;
+            BUY vs HOLD/SELL/WATCH → WATCH; HOLD vs SELL/WATCH → WATCH; SELL vs WATCH → SELL;
+            Gemini unavailable → verdict_a). Your only job here: compare /tmp/verdict_a_TICKER.json
+            with /tmp/verdict_b_TICKER.json, and when the two verdicts DIFFER, or they agree but
+            their conviction_score values differ by 30+ points, write ONE sentence explaining the key
+            disagreement to /tmp/split_reason_TICKER.txt, e.g. "Claude sees oversold RSI as a buy
+            signal; Gemini flags near-term earnings risk as bearish." Skip the file otherwise.
 
-            | Verdict A  | Verdict B  | Final verdict | verdict_agreement |
-            |------------|------------|---------------|-------------------|
-            | X          | X (same)   | X             | true              |
-            | BUY        | HOLD       | WATCH         | false             |
-            | BUY        | SELL       | WATCH         | false             |
-            | BUY        | WATCH      | WATCH         | false             |
-            | HOLD       | SELL       | WATCH         | false             |
-            | HOLD       | WATCH      | WATCH         | false             |
-            | SELL       | WATCH      | SELL          | false             |
-            | WATCH      | SELL       | SELL          | false             |
-            | (any)      | null       | verdict_a     | null (Gemini N/A) |
+            ## Step 4 — Save each result (fixed script — never hand-build the payload)
 
-            When verdict_agreement=false, write split_reason as one sentence explaining the key disagreement
-            (e.g. "Claude sees oversold RSI as a buy signal; Gemini flags near-term earnings risk as bearish").
-
-            **Even when verdict_agreement=true**, compare verdict_a's and verdict_b's conviction_score. If
-            they differ by 30+ points, still write split_reason noting the confidence gap (e.g. "Both models
-            say BUY, but confidence diverges: Claude 75/100 vs Gemini 40/100 — Gemini sees more risk in the
-            setup"). Agreeing on the verdict isn't the same as agreeing on how strongly to hold it — surface
-            the gap rather than silently averaging or picking one.
-
-            Store final_verdict, verdict_a, verdict_b, verdict_agreement, split_reason in working memory
-            for Step 4. The `verdict` field in Step 4 must be final_verdict (the judge's output).
-
-            ## Step 4 — POST each result to the backend
-
+            Run per ticker:
             ```bash
-            curl -s -X POST "${{ secrets.BACKEND_URL }}/jobs/ingest-analysis?x_job_secret=${{ secrets.JOB_SECRET }}" \
-              -H "Content-Type: application/json" \
-              -d '<full JSON: ticker, analysis_date, price fields + all verdict fields>'
+            python3 scripts/nightly_ingest_analysis.py TICKER
             ```
+            It reads the Step 1/2/3 files, applies the agreement table, maps every field, and POSTs
+            to the backend (BACKEND_URL/JOB_SECRET are in the environment). Do NOT write your own
+            payload script or curl to /jobs/ingest-analysis — that is how fields like rsi and
+            reasoning went missing before.
 
-            Price field mapping: price→current_price, change_pct→price_change_pct,
-            hi52→week52_high, lo52→week52_low, range_pct→week52_position_pct,
-            ma50→ma50, ma200→ma200, rsi→rsi, analyst→analyst_consensus, analyst_count→analyst_count,
-            upside_pct→analyst_upside_pct, target_mean→target_price_mean,
-            target_high→target_price_high, target_low→target_price_low,
-            support_20d→support_20d, resistance_20d→resistance_20d,
-            pivot→pivot_point, piv_r1→pivot_r1, piv_s1→pivot_s1,
-            sector→sector, industry→industry,
-            sp500_day_chg→sp500_day_chg, sector_etf→sector_etf,
-            sector_day_chg→sector_day_chg, relative_strength_1d→relative_strength_1d,
-            sp500_52w_change→sp500_52w_change, stock_52w_change→stock_52w_change,
-            sp500_5y_change→sp500_5y_change, stock_5y_change→stock_5y_change,
-            fh_price→fh_price, fh_analyst→fh_analyst_consensus,
-            data_conflicts→data_conflicts (include if not null, else omit).
-
-            Fundamentals field mapping (from the same summary JSON — pass through as-is, null if missing):
-            pe_trailing→pe_trailing, pe_forward→pe_forward, revenue_growth→revenue_growth,
-            earnings_growth→earnings_growth, profit_margin→profit_margin, debt_to_equity→debt_to_equity,
-            free_cashflow→free_cashflow, return_on_equity→return_on_equity, beta→beta,
-            short_float_pct→short_float_pct, short_ratio→short_ratio,
-            inst_ownership_pct→inst_ownership_pct, insider_ownership_pct→insider_ownership_pct,
-            dividend_yield→dividend_yield, market_cap→market_cap.
-
-            Include ALL verdict fields: stop_loss, hold_period, conviction_score, risk_level,
-            confidence, bull_case, bear_case, thesis_invalidation, entry_quality,
-            hold_and_forget_rating, position_size_pct, all scenario_* fields, dont_panic_note.
-
-            Also send conviction_score_raw = the same value as verdict_a's conviction_score
-            (the backend calibrates conviction_score itself using signal_convergence_score —
-            this field preserves your original, uncalibrated number for audit).
-
-            signal_convergence_score and convergence_details come from /tmp/convergence_TICKER.json
-            (Step 2), NOT from verdict_a — pass them through as-is; convergence_details should be
-            the JSON-stringified object from that file.
-
-            Include dual-agent fields from Step 3c: verdict_a, verdict_b, verdict_agreement,
-            split_reason. Use null for verdict_b/verdict_agreement/split_reason if Gemini was unavailable.
-            The `verdict` field MUST be final_verdict from Step 3c (judge output), not raw verdict_a.
-
-            Include gemini_tokens_input and gemini_tokens_output from verdict_b's usage metadata
-            (Step 3b — these are Gemini's own real token counts, not an estimate). Omit both if
-            Gemini was unavailable or didn't return usage_metadata. Do not compute or invent a
-            dollar cost — the backend derives that from these raw counts.
-
-            Also include earnings_date (the raw string from yfinance, e.g. "2026-07-15") if available, else omit it.
+            If it prints "NOT SAVED" and exits non-zero, read the reason (usually a missing or invalid
+            field in /tmp/verdict_a_TICKER.json, e.g. empty reasoning), fix that file, and re-run the
+            script for that ticker. Add `--dry-run` to inspect the payload without posting.
 
             ## Step 5 — Print summary
 

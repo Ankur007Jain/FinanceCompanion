@@ -32,11 +32,13 @@ class TestGroundingLanguagePresent:
 
 class TestJudgeConvictionDivergence:
     def test_judge_step_flags_conviction_gap_even_on_agreement(self):
+        # The agreement table + gap check moved into scripts/nightly_ingest_analysis.py (see
+        # test_nightly_ingest_analysis.py::TestJudge); the prompt still asks the agent for the
+        # explanatory sentence when the models agree but confidence differs by 30+.
         content = (REPO_ROOT / ".github" / "workflows" / "nightly.yml").read_text()
-        assert "conviction_score" in content
-        assert "30" in content
-        idx = content.find("Even when verdict_agreement=true")
-        assert idx != -1
+        assert "agree but" in content and "30+ points" in content
+        script = (REPO_ROOT / "scripts" / "nightly_ingest_analysis.py").read_text()
+        assert "_CONVICTION_GAP = 30" in script
 
 
 class TestDataConflictsSurfacedToAskAI:
