@@ -52,7 +52,9 @@ def corrected_fields(current_price, day_change_pct, sector_day_chg, relative_str
         return "no_quote", None, None
     if abs(snap_price - current_price) / current_price > _SAME_QUOTE_TOLERANCE:
         return "different_quote", None, None
-    new_chg = round((current_price - prev) / prev * 100, 2)
+    # The snapshot's own price, not the stored one: stored prices are rounded to cents, which
+    # for a sub-$1 stock (BLNK $0.42 vs the real $0.4211) skews the move by up to ~1pt.
+    new_chg = round((snap_price - prev) / prev * 100, 2)
     new_rel = round(new_chg - sector_day_chg, 2) if sector_day_chg is not None else relative_strength_1d
     if new_rel is None:
         rel_ok = stored_rel is None

@@ -57,6 +57,11 @@ class TestCorrectedFields:
     def test_no_snapshot_quote(self):
         assert corrected_fields(713.54, 3.35, None, None, {})[0] == "no_quote"
 
+    def test_penny_stock_uses_unrounded_snapshot_price(self):
+        # Real BLNK 2026-10-20 row: stored price rounded to 0.42; true move 0.4211/0.4235 = -0.57%.
+        info = {"regularMarketPrice": 0.4211, "regularMarketPreviousClose": 0.4235}
+        assert corrected_fields(0.42, -0.57, -0.64, 0.07, info) == ("ok", -0.57, 0.07)
+
     def test_nan_relative_strength_is_cleared_once_then_ok(self):
         nan = float("nan")
         status, chg, rel = corrected_fields(713.54, -4.5, nan, nan, STX_OCT14)
