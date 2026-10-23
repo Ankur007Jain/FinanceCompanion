@@ -71,6 +71,10 @@ jobs:
                 3. buy_by_price_vs_entry_target — predicted: "within 1% of entry_target (or below)"
                    does BETTER than "more than 1% above entry_target".
                 4. buy_by_gate — predicted: "score>=7 & range<70" does BETTER than "everything else".
+              RSI changed definition on 2026-10-23 (simple-average → standard Wilder), which moves
+              signal_convergence_score's "RSI < 50" point on ~15% of ticker-days. While the window
+              spans that date, say so next to the signal-score breakdown and hypothesis 4, and don't
+              read a shift across it as a calibration change on its own.
               Report one row per hypothesis: predicted direction, observed excess_5d / excess_21d
               for each bucket with n, and a verdict of holds / reversed / flat. Note that this
               45-day window overlaps last week's by ~85%, so consecutive weeks are not independent

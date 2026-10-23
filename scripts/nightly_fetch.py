@@ -8,6 +8,7 @@ import requests
 import yfinance as yf
 from price_series_client import fetch_series
 from quote_fields import regular_session_quote
+from indicators import wilder_rsi
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "backend"))
 from services.news_feed import fetch_headlines, headline_text  # noqa: E402 — shared with new-ticker analysis
@@ -74,10 +75,7 @@ rng   = ((price - lo52) / (hi52 - lo52) * 100) if (hi52 - lo52) > 0 else 50
 ma50  = float(hist["Close"].rolling(50).mean().iloc[-1])  if len(hist) >= 50  else None
 ma200 = float(hist["Close"].rolling(200).mean().iloc[-1]) if len(hist) >= 200 else None
 
-delta = hist["Close"].diff()
-gain  = delta.clip(lower=0).rolling(14).mean()
-loss  = (-delta.clip(upper=0)).rolling(14).mean()
-rsi   = float(100 - 100 / (1 + gain.iloc[-1] / loss.iloc[-1])) if loss.iloc[-1] != 0 else 50
+rsi   = float(wilder_rsi(hist["Close"]).iloc[-1])
 
 news_titles = [headline_text(n) for n in raw_news]  # up to news_feed.MAX_ITEMS, newest first
 rec = (info.get("recommendationKey") or "hold").upper()
