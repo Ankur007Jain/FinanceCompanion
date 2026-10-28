@@ -12,6 +12,7 @@ import asyncio
 import json
 import logging
 import os
+import time
 from datetime import datetime
 
 import anthropic
@@ -37,6 +38,16 @@ logger = logging.getLogger(__name__)
 # a hard failure, not just rising cost. get_chat_history is the safety valve for
 # whatever this trims off (see below) — verbatim retrieval, not silent data loss.
 _MAX_LIVE_HISTORY = 20
+
+# conversation_id -> (token, monotonic start) for the reply currently being generated. A
+# second message that arrived mid-generation was answered from history missing the
+# still-unsaved first reply — a duplicate, double-billed answer (#164: a phone dropped the
+# first stream after 0.6s, the backend kept going and saved it, the app showed a blank
+# bubble, and the user's "Continue" got the whole question answered again). Railway runs a
+# single uvicorn process, so an in-process map is enough; entries past the cap are ignored
+# so a wedged generation can't lock a conversation.
+_IN_FLIGHT: dict[str, tuple[object, float]] = {}
+_IN_FLIGHT_MAX_AGE_SECONDS = 600
 
 # How often to send a keep-alive SSE event while genuinely waiting on Anthropic mid-turn
 # (a long thinking phase, a slow web search) — distinct from having nothing to say.
@@ -341,6 +352,9 @@ async def stream_message(
     conv = db.get(Conversation, conversation_id)
     if not conv or conv.user_email != user.email:
         raise HTTPException(status_code=404, detail="Conversation not found.")
+    running = _IN_FLIGHT.get(conversation_id)
+    if running and time.monotonic() - running[1] < _IN_FLIGHT_MAX_AGE_SECONDS:
+        raise HTTPException(status_code=409, detail="Still writing the previous answer in this chat — it'll appear in a moment.")
 
     # Free-tier token cap disabled until there's an admin page to manage tiers/limits —
     # tokens_used is still tracked below for when that lands.
@@ -463,6 +477,8 @@ async def stream_message(
         total_in = total_out = total_cr = total_cw = 0
         persisted = False
         reached_end_turn = False
+        in_flight_token = object()
+        _IN_FLIGHT[conversation_id] = (in_flight_token, time.monotonic())
 
         def persist():
             # Saves whatever was generated so far. Called both on the happy path and
@@ -813,5 +829,9 @@ async def stream_message(
         finally:
             persist()
             session.close()
+            # Released only after persist(), so a message that was turned away with 409
+            # finds the finished reply already in history when it's sent again.
+            if _IN_FLIGHT.get(conversation_id, (None, 0))[0] is in_flight_token:
+                del _IN_FLIGHT[conversation_id]
 
     return StreamingResponse(generate(), media_type="text/event-stream")

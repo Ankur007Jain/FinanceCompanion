@@ -9,6 +9,7 @@ import type { Analysis } from "@/app/components/StockDetail";
 import { handleUnauthorized } from "@/app/components/authFetch";
 import { remarkTickerLinks, tickerFromHref } from "./tickerLinks";
 import PositionEditor from "./PositionEditor";
+import { waitForSavedReply, type ServerMessage } from "./recoverReply";
 
 const API = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8001";
 
@@ -18,6 +19,13 @@ interface Message {
   searching?: string;
   createdAt?: string;
 }
+
+const toMessage = (m: ServerMessage): Message => ({ role: m.role as Message["role"], content: m.content, createdAt: m.created_at });
+
+// A non-2xx reply (402, 404, 500...): the request was answered, so show its error. Anything
+// else thrown while sending is the connection itself failing — handled by fetching the
+// saved reply instead.
+class HttpError extends Error {}
 
 function formatMessageTime(iso?: string): string {
   if (!iso) return "";
@@ -72,10 +80,12 @@ export default function ChatClient({
   // Reset to true whenever they send a message (they clearly want to see the reply).
   const stickToBottomRef = useRef(true);
   const readerRef = useRef<ReadableStreamDefaultReader | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+  const stoppedByUserRef = useRef(false);
   // Watchdog — mobile browsers can silently drop or suspend a long-lived streaming
   // connection (backgrounding, screen lock, WiFi/cellular handoff) without the fetch
   // ever rejecting, leaving the UI stuck on "Analysing..." forever. Reset on every SSE
-  // event received; if it fires, treat the stream as dead and surface an error.
+  // event received; if it fires, treat the stream as dead and fetch the saved reply.
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const pendingRef = useRef("");
   // RAF throttle: accumulate chunks between frames, flush once per paint cycle instead of
@@ -235,7 +245,7 @@ export default function ChatClient({
       const msgs = await r.json();
       scrollOnNextRenderRef.current = true;
       stickToBottomRef.current = true;
-      setMessages(msgs.map((m: { role: string; content: string; created_at?: string }) => ({ role: m.role, content: m.content, createdAt: m.created_at })));
+      setMessages(msgs.map(toMessage));
     } else {
       handleUnauthorized(r.status);
     }
@@ -297,19 +307,54 @@ export default function ChatClient({
     clearWatchdog();
     watchdogRef.current = setTimeout(() => {
       watchdogRef.current = null;
+      // Cut the dead connection; send() then falls back to fetching the saved reply.
+      abortRef.current?.abort();
       readerRef.current?.cancel().catch(() => {});
-      flushChunk();
-      setMessages(prev => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last?.role === "assistant" && !last.content) {
-          updated[updated.length - 1] = { ...last, content: "Error: No response — the connection may have dropped. Please try again." };
-        }
-        return updated;
-      });
-      setStreaming(false);
-      setSearchingLabel("");
     }, 30000);
+  }
+
+  function setLastAssistant(update: (content: string) => string) {
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last?.role !== "assistant") return prev;
+      const updated = [...prev];
+      updated[updated.length - 1] = { ...last, content: update(last.content) };
+      return updated;
+    });
+  }
+
+  async function fetchServerMessages(convId: string): Promise<ServerMessage[] | null> {
+    const r = await fetch(`${API}/conversations/${convId}/messages?id_token=${encodeURIComponent(idToken)}`);
+    return r.ok ? r.json() : null;
+  }
+
+  // The stream ended without the server finishing the turn — a dropped connection, the
+  // watchdog, or a 409 because the previous reply is still being written. The backend
+  // usually still finishes and saves that reply, so show it instead of a blank bubble
+  // (#164: a blank bubble led to a "Continue" that got the question answered twice).
+  async function recoverSavedReply(convId: string, assistantCountBefore: number, previousStillWriting: boolean) {
+    if (stoppedByUserRef.current) return;
+    clearWatchdog();
+    flushChunk();
+    stopReveal();
+    setSearchingLabel("");
+    const waiting = previousStillWriting
+      ? "_Still finishing your previous answer — it'll show here in a moment…_"
+      : "_Connection dropped — fetching your answer…_";
+    setLastAssistant(c => (c ? `${c}\n\n${waiting}` : waiting));
+    const saved = await waitForSavedReply(() => fetchServerMessages(convId), assistantCountBefore, {
+      isCancelled: () => stoppedByUserRef.current,
+    });
+    if (saved) {
+      scrollOnNextRenderRef.current = true;
+      setMessages(saved.map(toMessage));
+    } else if (stoppedByUserRef.current) {
+      setLastAssistant(c => c.replace(waiting, "_Stopped waiting — reopen this chat in a bit to see the answer._"));
+    } else {
+      setLastAssistant(() => previousStillWriting
+        ? "Your previous answer is still being written — send your message again in a moment."
+        : "Error: No response — the connection may have dropped. Please try again.");
+    }
   }
 
   async function newConversation() {
@@ -347,6 +392,7 @@ export default function ChatClient({
     if (!convId) return;
 
     const userMsg: Message = { role: "user", content: input, createdAt: new Date().toISOString() };
+    const assistantCountBefore = messages.filter(m => m.role === "assistant").length;
     scrollOnNextRenderRef.current = true;
     stickToBottomRef.current = true;
     setMessages((prev) => [...prev, userMsg]);
@@ -360,6 +406,11 @@ export default function ChatClient({
     pendingRef.current = "";
     bufferReadyRef.current = false;
     rafPendingRef.current = false;
+    stoppedByUserRef.current = false;
+    const controller = new AbortController();
+    abortRef.current = controller;
+    // Set once the server ends the turn itself ("done" or "error").
+    let finished = false;
     armWatchdog();
 
     try {
@@ -367,6 +418,7 @@ export default function ChatClient({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ content: userMsg.content, user_email: userEmail, id_token: idToken }),
+        signal: controller.signal,
       });
 
       if (!res.ok) {
@@ -377,7 +429,14 @@ export default function ChatClient({
         if (res.status === 401 && handleUnauthorized(res.status)) return;
         let detail = `Request failed (${res.status})`;
         try { detail = (await res.json())?.detail || detail; } catch {}
-        throw new Error(detail);
+        if (res.status === 409) {
+          // The previous reply in this chat is still being written; this message wasn't
+          // saved, so hand the text back for resending.
+          setInput(userMsg.content);
+          await recoverSavedReply(convId, assistantCountBefore, true);
+          return;
+        }
+        throw new HttpError(detail);
       }
       if (!res.body) throw new Error("No stream body");
       const reader = res.body.getReader();
@@ -411,10 +470,12 @@ export default function ChatClient({
             } else if (event.type === "title") {
               loadConversations();
             } else if (event.type === "done") {
+              finished = true;
               flushChunk();
               scrollOnNextRenderRef.current = true;
               setSearchingLabel("");
             } else if (event.type === "error") {
+              finished = true;
               flushChunk();
               setMessages(prev => {
                 const updated = [...prev];
@@ -425,29 +486,30 @@ export default function ChatClient({
           } catch {}
         }
       }
+      if (!finished) await recoverSavedReply(convId, assistantCountBefore, false);
     } catch (err) {
-      stopReveal();
-      const message = (err instanceof Error ? err.message : "Connection lost").replace(/\.+$/, "");
-      setMessages(prev => {
-        const updated = [...prev];
-        const last = updated[updated.length - 1];
-        if (last?.role === "assistant") {
-          updated[updated.length - 1] = { ...last, content: last.content || `Error: ${message}. Please try again.` };
-        }
-        return updated;
-      });
+      if (err instanceof HttpError) {
+        stopReveal();
+        const message = err.message.replace(/\.+$/, "");
+        setLastAssistant(c => c || `Error: ${message}. Please try again.`);
+      } else {
+        await recoverSavedReply(convId, assistantCountBefore, false);
+      }
     } finally {
       clearWatchdog();
       stopReveal();
       setStreaming(false);
       setSearchingLabel("");
       readerRef.current = null;
+      abortRef.current = null;
     }
   }
 
   function stopStream() {
+    stoppedByUserRef.current = true;
     clearWatchdog();
-    readerRef.current?.cancel();
+    abortRef.current?.abort();
+    readerRef.current?.cancel().catch(() => {});
     stopReveal();
     setStreaming(false);
     setSearchingLabel("");

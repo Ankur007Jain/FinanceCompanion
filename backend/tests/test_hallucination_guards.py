@@ -62,3 +62,31 @@ class TestHardFinancialFigureGrounding:
         # Must instruct the model to sanity-check magnitudes rather than parroting a
         # confidently-wrong figure.
         assert "sanity-check" in content.lower() or "order of magnitude" in content.lower()
+
+
+class TestWebSearchNumberRules:
+    """Issue #165 (STX, 2026-10-28): the chat relayed MarketBeat's "58.61% upside" — computed
+    against the article's ~$630 snapshot — right after quoting $667.85 itself; dropped
+    Citigroup, which the user asked about, for an unrequested firm; and called MarketBeat's
+    average target "down from" the dossier's Yahoo mean."""
+
+    def _system(self):
+        import sys
+        sys.path.insert(0, str(REPO_ROOT / "backend"))
+        from services.prompt_builder import _STATIC_SYSTEM
+        return _STATIC_SYSTEM
+
+    def test_price_derived_percentages_are_recomputed(self):
+        s = self._system()
+        assert "Never relay it as-is: recompute it" in s
+        assert "must reconcile with the price you've stated" in s
+
+    def test_named_items_are_each_answered_never_swapped(self):
+        s = self._system()
+        assert "answer each one they named" in s and "never drop it silently" in s
+        assert "never fill its slot with a firm or ticker they didn't ask about" in s
+
+    def test_cross_source_figures_are_not_a_trend(self):
+        s = self._system()
+        assert "Figures from different sources are not a time series" in s
+        assert 'never call one "down from" or "up from" the other' in s
