@@ -1457,3 +1457,50 @@ class TestMaxTokensFlatBudget:
             )
         used_max_tokens = mock_client.messages.stream.call_args.kwargs["max_tokens"]
         assert used_max_tokens == _estimate_max_tokens(message) == 8192
+
+
+class TestOneReplyAtATime:
+    """#164: a second message sent while the first reply was still generating got answered
+    from history that didn't include that reply yet — a duplicate, double-billed answer."""
+
+    def _send(self, client, conv_id, text="Continue"):
+        return client.post(
+            f"/conversations/{conv_id}/messages/stream",
+            json={"content": text, "user_email": "streamtest@example.com", "id_token": "tok"},
+        )
+
+    def test_second_message_mid_reply_is_turned_away_and_not_saved(self, client: TestClient):
+        import time
+        from routers import streaming
+        conv_id = _create_conversation(client)
+        streaming._IN_FLIGHT[conv_id] = (object(), time.monotonic())
+        try:
+            with _mock_google_token(), _mock_anthropic_stream("dup") as mock_client:
+                r = self._send(client, conv_id)
+        finally:
+            streaming._IN_FLIGHT.pop(conv_id, None)
+        assert r.status_code == 409 and "previous answer" in r.json()["detail"]
+        mock_client.messages.stream.assert_not_called()
+        with _mock_google_token():
+            assert client.get(f"/conversations/{conv_id}/messages", params={"id_token": "tok"}).json() == []
+
+    def test_a_wedged_entry_does_not_lock_the_conversation(self, client: TestClient):
+        import time
+        from routers import streaming
+        conv_id = _create_conversation(client)
+        streaming._IN_FLIGHT[conv_id] = (object(), time.monotonic() - streaming._IN_FLIGHT_MAX_AGE_SECONDS - 1)
+        with _mock_google_token(), _mock_anthropic_stream("ok"):
+            assert self._send(client, conv_id).status_code == 200
+        assert conv_id not in streaming._IN_FLIGHT
+
+    def test_released_once_the_reply_is_saved(self, client: TestClient):
+        from routers import streaming
+        conv_id = _create_conversation(client)
+        with _mock_google_token(), _mock_anthropic_stream("first"):
+            assert self._send(client, conv_id, "hi").status_code == 200
+        assert conv_id not in streaming._IN_FLIGHT
+        with _mock_google_token(), _mock_anthropic_stream("second"):
+            assert self._send(client, conv_id, "and?").status_code == 200
+        with _mock_google_token():
+            roles = [m["role"] for m in client.get(f"/conversations/{conv_id}/messages", params={"id_token": "tok"}).json()]
+        assert roles == ["user", "assistant", "user", "assistant"]
