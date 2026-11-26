@@ -29,6 +29,7 @@ jobs:
     outputs:
       batches: ${{ steps.compute.outputs.batches }}
       has_work: ${{ steps.compute.outputs.has_work }}
+      run_date: ${{ steps.compute.outputs.run_date }}
     steps:
       - name: Compute ticker batches
         id: compute
@@ -39,6 +40,7 @@ jobs:
         run: |
           python3 << 'PYEOF'
           import json, subprocess, os
+          from datetime import datetime, timezone
 
           backend = os.environ['BACKEND_URL']
           secret  = os.environ['ADMIN_SECRET']
@@ -79,6 +81,7 @@ jobs:
           with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
               f.write(f"batches={json.dumps(batches)}\n")
               f.write(f"has_work={has_work}\n")
+              f.write(f"run_date={datetime.now(timezone.utc).date().isoformat()}\n")
           PYEOF
 
   # ── Job 2: one parallel job per batch of 5 ──────────────────────────────────
@@ -104,9 +107,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+          cache-dependency-path: scripts/requirements-nightly.txt
 
       - name: Install data deps
-        run: pip install yfinance pandas pandas-ta finnhub-python requests google-genai
+        run: pip install -r scripts/requirements-nightly.txt   # pinned — see the file header
 
       - name: Analyze batch
         uses: anthropics/claude-code-action@beta
@@ -393,3 +397,21 @@ jobs:
             ```
 
             On any per-ticker error, log it and continue — never abort the batch.
+
+  # ── Job 3: fail the run if a whole data source is missing ───────────────────
+  health-check:
+    name: "Data health check"
+    needs: [split, analyze]
+    # Runs even when some batches failed — a partial run can still show a dead source.
+    # No-op retry runs (nothing to analyze) don't alert again.
+    if: ${{ !cancelled() && needs.split.outputs.has_work == 'true' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Gemini and news present in today's analyses
+        env:
+          BACKEND_URL: ${{ secrets.BACKEND_URL }}
+          ADMIN_SECRET: ${{ secrets.ADMIN_SECRET }}
+        run: python3 scripts/nightly_health_check.py --since "${{ needs.split.outputs.run_date }}"

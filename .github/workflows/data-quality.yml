@@ -53,11 +53,13 @@ jobs:
               recent baseline (e.g. pe_trailing was ~5% null all week, today 80%).
             - More than 20% of expected tickers are missing from the latest run.
             - The latest run has zero rows on a weekday (pipeline didn't run at all).
-            - `news` (share of tickers whose snapshot had NO headlines) is above 50% on the
-              latest date — even if it has been that high all week. A news outage that
-              persists is still a regression, never a "known gap" (2026-10-02 it went to
-              100% and stayed there unnoticed for 3 weeks). ~5-10% is normal: mutual funds
-              rarely have news.
+            - `news` (share of tickers whose snapshot had NO headlines) or `verdict_b` (the
+              Gemini second opinion) is above 50% on the latest date — even if it has been
+              that high all week, and even if an older issue already mentions it. A source
+              outage that persists is still a regression, never a "known gap": news was 100%
+              missing for 3 weeks from 2026-10-02, and verdict_b for 3 weeks from 2026-11-06
+              while this check reported it as known. Normal is ~0% for verdict_b and 5-10%
+              for news (mutual funds rarely have any).
             NOT regressions: weekends/holidays with no run; columns that are consistently
             null every day (pre-existing, already known); reasoning_simple lagging a few
             percent (it fills in asynchronously after ingest); single-ticker gaps (rate limits).
