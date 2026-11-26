@@ -91,7 +91,10 @@ Reply with exactly this JSON object and nothing else:
   "bear_case": "one sentence"
 }}"""
 
-client = genai.Client(api_key=api_key)
+# api_version is explicit because the library's default is not ours to rely on: google-genai
+# 3.0.0 moved to v1, which rejects thinking_config ("Thinking is not enabled for api version
+# v1") and silently took every Gemini verdict to null from 2026-11-06.
+client = genai.Client(api_key=api_key, http_options=types.HttpOptions(api_version="v1beta"))
 verdict_b = None
 
 for attempt in range(3):
@@ -100,7 +103,8 @@ for attempt in range(3):
             model="gemini-2.5-flash",
             contents=prompt,
             config=types.GenerateContentConfig(
-                thinking_config=types.ThinkingConfig(thinking_budget=0)
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
+                response_mime_type="application/json",  # no code fences or half-formed JSON to retry
             ),
         )
         raw = resp.text.strip()
